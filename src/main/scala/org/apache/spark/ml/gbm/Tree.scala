@@ -126,7 +126,7 @@ private[gbm] object Tree extends Logging {
   }
 
   /**
-    * Compute the histogram of root node or the left leaves with nodeId larger than minNodeId
+    * Compute the histogram of root node or the left leaves with nodeId greater than minNodeId
     *
     * @param data      instances appended with nodeId, containing (nodeId, grad, hess, bins)
     * @param minNodeId minimum nodeId
@@ -225,7 +225,8 @@ private[gbm] object Tree extends Logging {
         i += 2
       }
 
-      nnz > 1 && hessSum > minNodeHess
+      /** leaves with hess no more than minNodeHess * 2 can no grow */
+      nnz > 1 && hessSum > minNodeHess * 2
     }
   }
 

@@ -8,7 +8,7 @@ import org.apache.spark.sql.SparkSession
 
 /**
   * Example of rdd-based API
-  * spark-submit --class example.GBMExample target/SparkGBM-0.0.1.jar
+  * spark-submit --class example.GBMExample target/SparkGBM-0.0.1.jar 2>/dev/null
   */
 object GBMExample {
 
@@ -78,6 +78,7 @@ object GBMExample {
     gbm.setMaxIter(10)
       .setMaxDepth(5)
       .setStepSize(0.2)
+      .setNumericalBinType("depth")
       .setObjectiveFunc(obj)
       .setEvaluateFunc(Array(r2Eval, maeEval))
       .setCallbackFunc(Array(printer))

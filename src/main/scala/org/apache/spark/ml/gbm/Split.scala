@@ -87,11 +87,11 @@ private[gbm] object Split {
     }
 
     val split = if (treeConfig.isSeq(featureId)) {
-      Split.splitSeq(featureId, gradSeq, hessSeq, boostConfig)
+      splitSeq(featureId, gradSeq, hessSeq, boostConfig)
     } else if (nnz <= boostConfig.maxBruteBins) {
-      Split.splitSetBrute(featureId, gradSeq, hessSeq, boostConfig)
+      splitSetBrute(featureId, gradSeq, hessSeq, boostConfig)
     } else {
-      Split.splitSetHeuristic(featureId, gradSeq, hessSeq, boostConfig)
+      splitSetHeuristic(featureId, gradSeq, hessSeq, boostConfig)
     }
 
     if (split.isEmpty) {
@@ -99,7 +99,7 @@ private[gbm] object Split {
     }
 
     val values = Array(split.get.gain, split.get.leftWeight, split.get.rightWeight)
-    if (Split.validate(values)) {
+    if (validate(values)) {
       split
     } else {
       None
@@ -139,7 +139,7 @@ private[gbm] object Split {
     } else {
       /** missing go right */
       /** find best split on indices of [i1, i2, i3, i4, i0] */
-      Split.seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConfig)
+      seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConfig)
     }
 
     (search1, search2) match {
@@ -187,7 +187,7 @@ private[gbm] object Split {
         grad / (hess + epsion)
       }.unzip3
 
-    val search = Split.seqSearch(sortedGradSeq, sortedHessSeq, boostConfig)
+    val search = seqSearch(sortedGradSeq, sortedHessSeq, boostConfig)
 
     if (search.isEmpty) {
       return None
@@ -196,7 +196,7 @@ private[gbm] object Split {
     val (cut, gain, weight1, weight2) = search.get
     val indices1 = sortedIndices.take(cut + 1)
 
-    val split = Split.createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, weight1, weight2)
+    val split = createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, weight1, weight2)
     Some(split)
   }
 
@@ -216,7 +216,7 @@ private[gbm] object Split {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
-    val (_, baseScore) = Split.computeScore(gradSum, hessSum, boostConfig)
+    val (_, baseScore) = computeScore(gradSum, hessSum, boostConfig)
     if (!validate(Array(baseScore))) {
       return None
     }
@@ -275,10 +275,10 @@ private[gbm] object Split {
 
       if (hess1 >= boostConfig.minNodeHess && hess2 >= boostConfig.minNodeHess) {
 
-        val (weight1, score1) = Split.computeScore(grad1, hess1, boostConfig)
-        val (weight2, score2) = Split.computeScore(grad2, hess2, boostConfig)
+        val (weight1, score1) = computeScore(grad1, hess1, boostConfig)
+        val (weight2, score2) = computeScore(grad2, hess2, boostConfig)
 
-        if (Split.validate(Array(weight1, score1, weight2, score2))) {
+        if (validate(Array(weight1, score1, weight2, score2))) {
           val score = score1 + score2
           if (score > bestScore) {
             bestSet1.clear()
@@ -293,7 +293,7 @@ private[gbm] object Split {
       num += 1
     }
 
-    if (!Split.validate(Array(bestScore, bestWeight1, bestWeight2))) {
+    if (!validate(Array(bestScore, bestWeight1, bestWeight2))) {
       return None
     }
 
@@ -303,7 +303,7 @@ private[gbm] object Split {
     }
 
     val indices1 = bestSet1.toArray
-    val split = Split.createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, bestWeight1, bestWeight2)
+    val split = createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, bestWeight1, bestWeight2)
     Some(split)
   }
 
@@ -322,7 +322,7 @@ private[gbm] object Split {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
-    val (_, baseScore) = Split.computeScore(gradSum, hessSum, boostConfig)
+    val (_, baseScore) = computeScore(gradSum, hessSum, boostConfig)
     if (!validate(Array(baseScore))) {
       return None
     }
@@ -348,8 +348,8 @@ private[gbm] object Split {
 
         if (hessLeft >= boostConfig.minNodeHess && hessRight >= boostConfig.minNodeHess) {
 
-          val (weightLeft, scoreLeft) = Split.computeScore(gradLeft, hessLeft, boostConfig)
-          val (weightRight, scoreRight) = Split.computeScore(gradRight, hessRight, boostConfig)
+          val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, boostConfig)
+          val (weightRight, scoreRight) = computeScore(gradRight, hessRight, boostConfig)
 
           if (validate(Array(weightLeft, scoreLeft, weightRight, scoreRight))) {
             val score = scoreLeft + scoreRight

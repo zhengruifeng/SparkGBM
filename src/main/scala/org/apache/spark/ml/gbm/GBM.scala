@@ -587,9 +587,9 @@ private[gbm] object GBM extends Logging {
       }
 
       /** build tree */
-      val start = System.nanoTime()
+      val start = System.nanoTime
       val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter, round, dropped.toSet, colSampleRand)
-      logWarning(s"$logPrefix finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
+      logWarning(s"$logPrefix finish, duration ${(System.nanoTime - start) / 1e9} seconds")
 
       if (tree.isEmpty) {
         /** fail to build a new tree */

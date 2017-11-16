@@ -85,10 +85,10 @@ class ModelCheckpointFunc(val interval: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
-      val start = System.nanoTime()
+      val start = System.nanoTime
       val currentPath = new Path(path, s"model-${model.numTrees}").toString
       GBMModel.save(model, currentPath)
-      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
+      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime - start) / 1e9} seconds")
     }
 
     false
@@ -114,7 +114,7 @@ class ClassificationModelCheckpointFunc(val interval: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
-      val start = System.nanoTime()
+      val start = System.nanoTime
 
       val spark = SparkSession.builder().getOrCreate()
 
@@ -130,7 +130,7 @@ class ClassificationModelCheckpointFunc(val interval: Int,
       val otherPath = new Path(currentPath, "other").toString
       otherDF.write.parquet(otherPath)
 
-      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
+      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime - start) / 1e9} seconds")
     }
 
     false
@@ -151,13 +151,13 @@ class RegressionModelCheckpointFunc(val interval: Int,
                                     val path: String,
                                     val params: Params) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
-  
+
   override def compute(boostConfig: BoostConfig,
                        model: GBMModel,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
-      val start = System.nanoTime()
+      val start = System.nanoTime
 
       val spark = SparkSession.builder().getOrCreate()
 
@@ -173,7 +173,7 @@ class RegressionModelCheckpointFunc(val interval: Int,
       val otherPath = new Path(currentPath, "other").toString
       otherDF.write.parquet(otherPath)
 
-      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
+      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime - start) / 1e9} seconds")
     }
 
     false

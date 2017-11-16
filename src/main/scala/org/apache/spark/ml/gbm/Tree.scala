@@ -47,8 +47,9 @@ private[gbm] object Tree extends Logging {
     logWarning(s"$logPrefix tree building start")
 
     while (!finished) {
-      val depth = root.subtreeDepth
+      val start = System.nanoTime
 
+      val depth = root.subtreeDepth
       logWarning(s"$logPrefix Depth $depth: splitting start")
 
       val instancesWithNodeId = instances.map {
@@ -79,7 +80,7 @@ private[gbm] object Tree extends Logging {
       } else {
         val gains = splits.values.map(_.gain).toArray
         logWarning(s"$logPrefix Depth $depth: splitting finished, ${splits.size}/$numLeaves leaves split, " +
-          s"avgGain=${gains.sum / gains.length}, minGain=${gains.min}, maxGain=${gains.max}")
+          s"avgGain=${gains.sum / gains.length}, duration ${(System.nanoTime - start) / 1e9} seconds")
         numLeaves += splits.size
 
         val nodes = root.nodeIterator.filter { node =>

@@ -34,11 +34,11 @@ class BoostConfig(var maxIter: Int,
                   val rankCols: Set[Int],
                   val initialModel: Option[GBMModel]) extends Serializable {
 
-  def isNum(colIndex: Int): Boolean = !isCat(colIndex) && !isRank(colIndex)
+  private[gbm] def isNum(colIndex: Int): Boolean = !isCat(colIndex) && !isRank(colIndex)
 
-  def isCat(colIndex: Int): Boolean = catCols.contains(colIndex)
+  private[gbm] def isCat(colIndex: Int): Boolean = catCols.contains(colIndex)
 
-  def isRank(colIndex: Int): Boolean = rankCols.contains(colIndex)
+  private[gbm] def isRank(colIndex: Int): Boolean = rankCols.contains(colIndex)
 }
 
 

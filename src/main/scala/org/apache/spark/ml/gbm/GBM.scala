@@ -548,7 +548,7 @@ private[gbm] object GBM extends Logging {
     val testPredsCheckpointer = new Checkpointer[(Double, Array[Double])](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
     var testPreds = sc.emptyRDD[(Double, Array[Double])]
-    if (handleTest) {
+    if (handleTest && boostConfig.getEvaluateFunc.nonEmpty) {
       testPreds = if (initialModel.isDefined) {
         computePrediction(test, trees.zip(weights).toArray, boostConfig.getBaseScore)
       } else {

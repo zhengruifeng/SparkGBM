@@ -78,6 +78,7 @@ class EarlyStopFunc(val iters: Int) extends CallbackFunc {
   */
 class ModelCheckpointFunc(val interval: Int,
                           val path: String) extends CallbackFunc {
+  require(interval >= 1 && path.nonEmpty)
 
   override def compute(boostConfig: BoostConfig,
                        model: GBMModel,
@@ -106,6 +107,7 @@ class ModelCheckpointFunc(val interval: Int,
 class ClassificationModelCheckpointFunc(val interval: Int,
                                         val path: String,
                                         val params: Params) extends CallbackFunc {
+  require(interval >= 1 && path.nonEmpty)
 
   override def compute(boostConfig: BoostConfig,
                        model: GBMModel,
@@ -148,7 +150,8 @@ class ClassificationModelCheckpointFunc(val interval: Int,
 class RegressionModelCheckpointFunc(val interval: Int,
                                     val path: String,
                                     val params: Params) extends CallbackFunc {
-
+  require(interval >= 1 && path.nonEmpty)
+  
   override def compute(boostConfig: BoostConfig,
                        model: GBMModel,
                        trainMetrics: Array[Map[String, Double]],

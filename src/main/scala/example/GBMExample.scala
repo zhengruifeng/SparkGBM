@@ -58,7 +58,7 @@ object GBMExample {
     }
 
     /** User defined callback function */
-    val printer = new CallbackFunc {
+    val lrUpdater = new CallbackFunc {
       override def compute(boostConfig: BoostConfig,
                            model: GBMModel,
                            metrics: Map[String, Boolean],
@@ -87,7 +87,7 @@ object GBMExample {
       .setNumericalBinType("depth")
       .setObjectiveFunc(obj)
       .setEvaluateFunc(Array(r2Eval, maeEval))
-      .setCallbackFunc(Array(printer))
+      .setCallbackFunc(Array(lrUpdater))
 
     /** train with validation */
     val model = gbm.fit(train, test)

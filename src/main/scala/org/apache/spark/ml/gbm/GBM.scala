@@ -670,7 +670,7 @@ private[gbm] object GBM extends Logging {
         if (boostConfig.callbacks.nonEmpty) {
           val snapshot = new GBMModel(discretizer, boostConfig.baseScore, trees.toArray, weights.toArray)
           boostConfig.callbacks.foreach { callback =>
-            if (callback.stop(snapshot, metrics, trainMetricsHistory.toArray, testMetricsHistory.toArray)) {
+            if (callback.compute(boostConfig, snapshot, metrics, trainMetricsHistory.toArray, testMetricsHistory.toArray)) {
               finished = true
               logDebug(s"$logPrefix callback ${callback.name} stop training")
             }

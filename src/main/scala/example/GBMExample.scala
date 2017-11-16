@@ -59,10 +59,16 @@ object GBMExample {
 
     /** User defined callback function */
     val printer = new CallbackFunc {
-      override def stop(model: GBMModel,
-                        metrics: Map[String, Boolean],
-                        trainMetrics: Array[Map[String, Double]],
-                        testMetrics: Array[Map[String, Double]]): Boolean = {
+      override def compute(boostConfig: BoostConfig,
+                           model: GBMModel,
+                           metrics: Map[String, Boolean],
+                           trainMetrics: Array[Map[String, Double]],
+                           testMetrics: Array[Map[String, Double]]): Boolean = {
+        /** learning rate decay */
+        if (boostConfig.stepSize > 0.01) {
+          boostConfig.stepSize *= 0.95
+        }
+
         println(s"Round ${model.numTrees}: train metrics: ${trainMetrics.last}")
         if (testMetrics.nonEmpty) {
           println(s"Round ${model.numTrees}: test metrics: ${testMetrics.last}")
@@ -85,6 +91,8 @@ object GBMExample {
 
     /** train with validation */
     val model = gbm.fit(train, test)
+
+    println(s"weights of trees: ${model.weights.mkString(",")}")
 
     /** label and score */
     val result = test.map {

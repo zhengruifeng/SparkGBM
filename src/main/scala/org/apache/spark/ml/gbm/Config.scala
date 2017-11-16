@@ -2,46 +2,37 @@ package org.apache.spark.ml.gbm
 
 import org.apache.spark.storage.StorageLevel
 
-private[gbm] class BoostConfig(val maxIter: Int,
-                               val maxDepth: Int,
-                               val maxLeaves: Int,
-                               val numCols: Int,
+class BoostConfig(var maxIter: Int,
+                  var maxDepth: Int,
+                  var maxLeaves: Int,
+                  var minGain: Double,
+                  var minNodeHess: Double,
+                  var stepSize: Double,
+                  var regAlpha: Double,
+                  var regLambda: Double,
+                  var subSample: Double,
+                  var colSampleByTree: Double,
+                  var colSampleByLevel: Double,
+                  var maxBruteBins: Int,
+                  var checkpointInterval: Int,
+                  var storageLevel: StorageLevel,
+                  var boostType: String,
+                  var dropRate: Double,
+                  var dropSkip: Double,
+                  var minDrop: Int,
+                  var maxDrop: Int,
+                  var aggregationDepth: Int,
+                  var seed: Long,
+                  var obj: ObjFunc,
+                  var increEvals: Array[IncrementalEvalFunc],
+                  var batchEvals: Array[BatchEvalFunc],
+                  var callbacks: Array[CallbackFunc],
 
-                               val baseScore: Double,
-                               val minGain: Double,
-                               val minNodeHess: Double,
-
-                               val stepSize: Double,
-                               val regAlpha: Double,
-                               val regLambda: Double,
-
-                               val obj: ObjFunc,
-                               val increEvals: Array[IncrementalEvalFunc],
-                               val batchEvals: Array[BatchEvalFunc],
-                               val callbacks: Array[CallbackFunc],
-
-                               val catCols: Set[Int],
-                               val rankCols: Set[Int],
-
-                               val subSample: Double,
-                               val colSampleByTree: Double,
-                               val colSampleByLevel: Double,
-
-                               val checkpointInterval: Int,
-                               val storageLevel: StorageLevel,
-
-                               val boostType: String,
-                               val dropRate: Double,
-                               val dropSkip: Double,
-                               val minDrop: Int,
-                               val maxDrop: Int,
-
-                               val aggregationDepth: Int,
-                               val initialModel: Option[GBMModel],
-
-                               val maxBruteBins: Int,
-
-                               val seed: Long) extends Serializable {
+                  val numCols: Int,
+                  val baseScore: Double,
+                  val catCols: Set[Int],
+                  val rankCols: Set[Int],
+                  val initialModel: Option[GBMModel]) extends Serializable {
 
   def isNum(colIndex: Int): Boolean = !isCat(colIndex) && !isRank(colIndex)
 

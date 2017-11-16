@@ -76,7 +76,7 @@ object GBMExample {
         false
       }
 
-      override def name: String = "Printer"
+      override def name: String = "LearningRateUpdater"
     }
 
 

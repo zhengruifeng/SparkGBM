@@ -17,14 +17,12 @@ trait CallbackFunc extends Logging with Serializable {
     *
     * @param boostConfig  boosting configuration, be careful to update it
     * @param model        snapshot of current model
-    * @param metrics      metrics names and whether it is better for a larger value
     * @param trainMetrics training metric
     * @param testMetrics  validation metric
     * @return whether to stop training
     */
   def compute(boostConfig: BoostConfig,
               model: GBMModel,
-              metrics: Map[String, Boolean],
               trainMetrics: Array[Map[String, Double]],
               testMetrics: Array[Map[String, Double]]): Boolean
 
@@ -43,23 +41,23 @@ class EarlyStopFunc(val iters: Int) extends CallbackFunc {
 
   override def compute(boostConfig: BoostConfig,
                        model: GBMModel,
-                       metrics: Map[String, Boolean],
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     var stop = false
 
     if (testMetrics.length > iters) {
       val len = iters + 1
-      metrics.foreach { case (name, isLargerBetter) =>
-        val values = testMetrics.takeRight(len).map(_ (name))
+
+      boostConfig.getEvaluateFunc.foreach { eval =>
+        val values = testMetrics.takeRight(len).map(_ (eval.name))
         val start = values.head
         val end = values.last
 
-        if (isLargerBetter && start >= end) {
-          logWarning(s"Fail to increase metric $name in the last $len iterations: ${values.mkString("(", ",", ")")}")
+        if (eval.isLargerBetter && start >= end) {
+          logWarning(s"Fail to increase metric ${eval.name} in the last $len iterations: ${values.mkString("(", ",", ")")}")
           stop = true
-        } else if (!isLargerBetter && start <= end) {
-          logWarning(s"Fail to decrease metric $name in the last $len iterations: ${values.mkString("(", ",", ")")}")
+        } else if (!eval.isLargerBetter && start <= end) {
+          logWarning(s"Fail to decrease metric ${eval.name} in the last $len iterations: ${values.mkString("(", ",", ")")}")
           stop = true
         }
       }
@@ -83,7 +81,6 @@ class ModelCheckpointFunc(val interval: Int,
 
   override def compute(boostConfig: BoostConfig,
                        model: GBMModel,
-                       metrics: Map[String, Boolean],
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
@@ -112,7 +109,6 @@ class ClassificationModelCheckpointFunc(val interval: Int,
 
   override def compute(boostConfig: BoostConfig,
                        model: GBMModel,
-                       metrics: Map[String, Boolean],
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
@@ -155,7 +151,6 @@ class RegressionModelCheckpointFunc(val interval: Int,
 
   override def compute(boostConfig: BoostConfig,
                        model: GBMModel,
-                       metrics: Map[String, Boolean],
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {

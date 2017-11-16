@@ -63,7 +63,6 @@ object GBMExample {
     val lrUpdater = new CallbackFunc {
       override def compute(boostConfig: BoostConfig,
                            model: GBMModel,
-                           metrics: Map[String, Boolean],
                            trainMetrics: Array[Map[String, Double]],
                            testMetrics: Array[Map[String, Double]]): Boolean = {
         /** learning rate decay */
@@ -78,12 +77,12 @@ object GBMExample {
         false
       }
 
-      override def name: String = "LearningRateUpdater"
+      override def name: String = "Learning Rate Updater"
     }
 
 
     val gbm = new GBM
-    gbm.setMaxIter(10)
+    gbm.setMaxIter(20)
       .setMaxDepth(5)
       .setStepSize(0.2)
       .setNumericalBinType("depth")

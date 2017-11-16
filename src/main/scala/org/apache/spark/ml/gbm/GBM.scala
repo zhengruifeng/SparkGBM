@@ -13,6 +13,10 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.storage.StorageLevel
 
+
+/**
+  * RDD-based API for gradient boosting machine
+  */
 class GBM extends Logging with Serializable {
 
   /** maximum number of iterations */
@@ -67,7 +71,7 @@ class GBM extends Logging with Serializable {
   private var maxBins: Int = 128
 
   def setMaxBins(value: Int): this.type = {
-    require(value > 2)
+    require(value >= 4)
     maxBins = value
     this
   }
@@ -152,6 +156,7 @@ class GBM extends Logging with Serializable {
 
   def setEvaluateFunc(value: Array[EvalFunc]): this.type = {
     require(value.forall(e => e.isInstanceOf[IncrementalEvalFunc] || e.isInstanceOf[BatchEvalFunc]))
+    require(value.map(_.name).distinct.length == value.length)
     evaluateFunc = value
     this
   }
@@ -163,6 +168,7 @@ class GBM extends Logging with Serializable {
   private var callbackFunc: Array[CallbackFunc] = Array(new EarlyStopFunc)
 
   def setCallbackFunc(value: Array[CallbackFunc]): this.type = {
+    require(value.map(_.name).distinct.length == value.length)
     callbackFunc = value
     this
   }
@@ -276,10 +282,10 @@ class GBM extends Logging with Serializable {
 
 
   /** boosting type */
-  private var boostType: String = "gbtree"
+  private var boostType: String = GBM.GBTree
 
   def setBoostType(value: String): this.type = {
-    require(value == "gbtree" || value == "dart")
+    require(value == GBM.GBTree || value == GBM.Dart)
     boostType = value
     this
   }
@@ -410,19 +416,7 @@ class GBM extends Logging with Serializable {
       Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, aggregationDepth)
     }
 
-    logWarning(s"Number of bins: ${discretizer.numBins.mkString(",")}")
-
-    //    val increEvals = evaluateFunc.flatMap {
-    //      case eval: IncrementalEvalFunc =>
-    //        Some(eval)
-    //      case _ => None
-    //    }
-    //
-    //    val batchEvals = evaluateFunc.flatMap {
-    //      case eval: BatchEvalFunc =>
-    //        Some(eval)
-    //      case _ => None
-    //    }
+    logWarning(s"Number of bins: ${discretizer.numBins.mkString("(", ",", ")")}")
 
     if (initialModel.isDefined &&
       initialModel.get.baseScore != baseScore) {
@@ -458,41 +452,6 @@ class GBM extends Logging with Serializable {
       .setAggregationDepth(aggregationDepth)
       .setMaxBruteBins(maxBruteBins)
       .setSeed(seed)
-
-
-
-
-    //    val boostConfig2 = new BoostConfig(
-    //      maxIter = maxIter,
-    //      maxDepth = maxDepth,
-    //      maxLeaves = maxLeaves,
-    //      numCols = numCols,
-    //      baseScore = baseScore,
-    //      minGain = minGain,
-    //      minNodeHess = minNodeHess,
-    //      stepSize = stepSize,
-    //      regAlpha = regAlpha,
-    //      regLambda = regLambda,
-    //      obj = objectiveFunc,
-    //      increEvals = increEvals,
-    //      batchEvals = batchEvals,
-    //      callbacks = callbackFunc,
-    //      catCols = catCols,
-    //      rankCols = rankCols,
-    //      subSample = subSample,
-    //      colSampleByTree = colSampleByTree,
-    //      colSampleByLevel = colSampleByLevel,
-    //      checkpointInterval = checkpointInterval,
-    //      storageLevel = storageLevel,
-    //      boostType = boostType,
-    //      dropRate = dropRate,
-    //      dropSkip = dropSkip,
-    //      minDrop = minDrop,
-    //      maxDrop = maxDrop,
-    //      aggregationDepth = aggregationDepth,
-    //      initialModel = initialModel,
-    //      maxBruteBins = maxBruteBins,
-    //      seed = seed)
 
     val trainRDD = data.map { case (weight, label, features) =>
       (weight, label, discretizer.transform(features))
@@ -539,7 +498,6 @@ class GBM extends Logging with Serializable {
 private[gbm] object GBM extends Logging {
 
   val GBTree = "gbtree"
-
   val Dart = "dart"
 
   /**
@@ -693,6 +651,8 @@ private[gbm] object GBM extends Logging {
             (eval.name, eval.isLargerBetter)
           }.toMap
           boostConfig.getCallbackFunc.foreach { callback =>
+
+            /** callback can update boosting configuration */
             if (callback.compute(boostConfig, snapshot, metrics, trainMetricsHistory.toArray, testMetricsHistory.toArray)) {
               finished = true
               logWarning(s"$logPrefix callback ${callback.name} stop training")
@@ -867,7 +827,6 @@ private[gbm] object GBM extends Logging {
     * @tparam B
     * @return RDD containing final score and the predictions of each tree
     */
-
   def updatePrediction[B: Integral](instances: RDD[(Double, Double, Array[B])],
                                     preds: RDD[(Double, Array[Double])],
                                     weights: Array[Double],

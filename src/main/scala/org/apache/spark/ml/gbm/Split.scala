@@ -113,7 +113,7 @@ private[gbm] object Split {
     * @return true is all numbers are ok
     */
   def validate(values: Array[Double]): Boolean = {
-    !values.exists(v => v.isInfinity || v.isNaN)
+    values.forall(v => !v.isNaN && !v.isInfinity)
   }
 
   /**

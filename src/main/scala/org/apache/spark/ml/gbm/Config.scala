@@ -370,7 +370,7 @@ class BoostConfig extends Logging with Serializable {
   /** evaluation functions */
   private[gbm] def setEvaluateFunc(value: Array[EvalFunc]): this.type = {
     require(value.forall(e => e.isInstanceOf[IncrementalEvalFunc] || e.isInstanceOf[BatchEvalFunc]))
-
+    require(value.map(_.name).distinct.length == value.length)
     increEvals = value.flatMap {
       case eval: IncrementalEvalFunc =>
         Some(eval)
@@ -399,6 +399,7 @@ class BoostConfig extends Logging with Serializable {
 
   /** callback functions */
   private[gbm] def setCallbackFunc(value: Array[CallbackFunc]): this.type = {
+    require(value.map(_.name).distinct.length == value.length)
     callbacks = value
     this
   }
@@ -441,7 +442,7 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** indices of ranking columns */
-  def setRankCols(value: Set[Int]): this.type = {
+  private[gbm] def setRankCols(value: Set[Int]): this.type = {
     rankCols = value
     this
   }

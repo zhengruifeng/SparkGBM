@@ -48,15 +48,15 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   /**
     * Maximum number of bins used for discretizing continuous features and for choosing how to split
     * on features at each node.  More bins give higher granularity.
-    * Must be >= 2 and >= number of categories in any categorical feature.
+    * Must be >= 4 and >= number of categories in any categorical feature.
     * (default = 128)
     *
     * @group param
     */
   final val maxBins: IntParam =
     new IntParam(this, "maxBins", "Max number of bins for" +
-      " discretizing continuous features.  Must be >=2 and >= number of categories for any" +
-      " categorical feature.", ParamValidators.gtEq(2))
+      " discretizing continuous features.  Must be >=4 and >= number of categories for any" +
+      " categorical feature.", ParamValidators.gtEq(4))
 
   def getMaxBins: Int = $(maxBins)
 

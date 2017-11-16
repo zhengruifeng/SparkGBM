@@ -16,6 +16,8 @@ object GBMClassifierExample {
       .appName("GBMClassifierExample")
       .getOrCreate()
 
+    spark.sparkContext.setLogLevel("WARN")
+
     val train = spark.read.format("libsvm").load("data/a9a")
       .select(((col("label") + 1) / 2).cast("int").as("label"), col("features"))
 

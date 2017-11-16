@@ -42,7 +42,7 @@ private[gbm] object Discretizer extends Logging {
     require(maxBins >= 4)
     require(numCols >= 1)
 
-    logDebug(s"Discretizer building")
+    logWarning(s"Discretizer building")
 
     /** zero bin index is always reserved for missing value */
     val emptyAggs = Array.range(0, numCols).map { col =>
@@ -84,7 +84,7 @@ private[gbm] object Discretizer extends Logging {
 
     val colDiscretizers = aggregated.map(_.toColDiscretizer)
 
-    logDebug(s"Discretizer building finished")
+    logWarning(s"Discretizer building finished")
 
     new Discretizer(colDiscretizers)
   }

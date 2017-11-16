@@ -88,7 +88,7 @@ private[gbm] object Split {
 
     val split = if (treeConfig.isSeq(featureId)) {
       splitSeq(featureId, gradSeq, hessSeq, boostConfig)
-    } else if (nnz <= boostConfig.maxBruteBins) {
+    } else if (nnz <= boostConfig.getMaxBruteBins) {
       splitSetBrute(featureId, gradSeq, hessSeq, boostConfig)
     } else {
       splitSetHeuristic(featureId, gradSeq, hessSeq, boostConfig)
@@ -178,7 +178,7 @@ private[gbm] object Split {
                         boostConfig: BoostConfig): Option[SetSplit] = {
     /** sort the hist according to the relevance of gain */
     /** [g0, g1, g2, g3], [h0, h1, h2, h3] -> [g1, g3, g0, g2], [h1, h3, h0, h2] */
-    val epsion = boostConfig.regLambda / gradSeq.length
+    val epsion = boostConfig.getRegLambda / gradSeq.length
     val (sortedGradSeq, sortedHessSeq, sortedIndices) =
       gradSeq.zip(hessSeq).zipWithIndex
         .map { case ((grad, hess), i) =>
@@ -273,7 +273,7 @@ private[gbm] object Split {
       grad2 = gradSum - grad1
       hess2 = hessSum - hess1
 
-      if (hess1 >= boostConfig.minNodeHess && hess2 >= boostConfig.minNodeHess) {
+      if (hess1 >= boostConfig.getMinNodeHess && hess2 >= boostConfig.getMinNodeHess) {
 
         val (weight1, score1) = computeScore(grad1, hess1, boostConfig)
         val (weight2, score2) = computeScore(grad2, hess2, boostConfig)
@@ -298,7 +298,7 @@ private[gbm] object Split {
     }
 
     val gain = bestScore - baseScore
-    if (gain < boostConfig.minGain) {
+    if (gain < boostConfig.getMinGain) {
       return None
     }
 
@@ -346,7 +346,7 @@ private[gbm] object Split {
         hessLeft += hessSeq(i)
         hessRight = hessSum - hessLeft
 
-        if (hessLeft >= boostConfig.minNodeHess && hessRight >= boostConfig.minNodeHess) {
+        if (hessLeft >= boostConfig.getMinNodeHess && hessRight >= boostConfig.getMinNodeHess) {
 
           val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, boostConfig)
           val (weightRight, scoreRight) = computeScore(gradRight, hessRight, boostConfig)
@@ -371,7 +371,7 @@ private[gbm] object Split {
     }
 
     val gain = bestScore - baseScore
-    if (bestCut >= 0 && gain >= boostConfig.minGain) {
+    if (bestCut >= 0 && gain >= boostConfig.getMinGain) {
       Some((bestCut, gain, bestWeightLeft, bestWeightRight))
     } else {
       None
@@ -389,21 +389,21 @@ private[gbm] object Split {
   def computeScore(gradSum: Double,
                    hessSum: Double,
                    boostConfig: BoostConfig): (Double, Double) = {
-    if (boostConfig.regAlpha == 0) {
-      val weight = -gradSum / (hessSum + boostConfig.regLambda)
-      val loss = (hessSum + boostConfig.regLambda) * weight * weight / 2 + gradSum * weight
+    if (boostConfig.getRegAlpha == 0) {
+      val weight = -gradSum / (hessSum + boostConfig.getRegLambda)
+      val loss = (hessSum + boostConfig.getRegLambda) * weight * weight / 2 + gradSum * weight
       (weight, -loss)
 
     } else {
-      val weight = if (gradSum + boostConfig.regAlpha < 0) {
-        -(boostConfig.regAlpha + gradSum) / (hessSum + boostConfig.regLambda)
-      } else if (gradSum - boostConfig.regAlpha > 0) {
-        (boostConfig.regAlpha - gradSum) / (hessSum + boostConfig.regLambda)
+      val weight = if (gradSum + boostConfig.getRegAlpha < 0) {
+        -(boostConfig.getRegAlpha + gradSum) / (hessSum + boostConfig.getRegLambda)
+      } else if (gradSum - boostConfig.getRegAlpha > 0) {
+        (boostConfig.getRegAlpha - gradSum) / (hessSum + boostConfig.getRegLambda)
       } else {
         0.0
       }
-      val loss = (hessSum + boostConfig.regLambda) * weight * weight / 2 + gradSum * weight +
-        boostConfig.regAlpha * weight.abs
+      val loss = (hessSum + boostConfig.getRegLambda) * weight * weight / 2 + gradSum * weight +
+        boostConfig.getRegAlpha * weight.abs
       (weight, -loss)
     }
   }

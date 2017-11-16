@@ -18,6 +18,8 @@ object GBMExample {
       .appName("GBMExample")
       .getOrCreate()
 
+    spark.sparkContext.setLogLevel("WARN")
+
     val rdd = spark.read.format("libsvm")
       .load("data/housing_scale")
       .select("label", "features")
@@ -65,8 +67,8 @@ object GBMExample {
                            trainMetrics: Array[Map[String, Double]],
                            testMetrics: Array[Map[String, Double]]): Boolean = {
         /** learning rate decay */
-        if (boostConfig.stepSize > 0.01) {
-          boostConfig.stepSize *= 0.95
+        if (boostConfig.getStepSize > 0.01) {
+          boostConfig.updateStepSize(boostConfig.getStepSize * 0.95)
         }
 
         println(s"Round ${model.numTrees}: train metrics: ${trainMetrics.last}")

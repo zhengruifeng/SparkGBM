@@ -24,32 +24,32 @@ private[gbm] object Tree extends Logging {
 
     val sc = instances.sparkContext
 
-    instances.persist(boostConfig.storageLevel)
+    instances.persist(boostConfig.getStorageLevel)
 
     val root = LearningNode.create(1L)
 
     var hists = sc.emptyRDD[((Long, Int), Array[Double])]
     val histsCheckpointer = new Checkpointer[((Long, Int), Array[Double])](sc,
-      boostConfig.checkpointInterval, boostConfig.storageLevel)
+      boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
 
     var minNodeId = 1L
     var numLeaves = 1L
     var finished = false
 
-    if (root.subtreeDepth >= boostConfig.maxDepth) {
+    if (root.subtreeDepth >= boostConfig.getMaxDepth) {
       finished = true
     }
-    if (numLeaves >= boostConfig.maxLeaves) {
+    if (numLeaves >= boostConfig.getMaxLeaves) {
       finished = true
     }
 
     val logPrefix = s"Iter ${treeConfig.iteration}: Tree ${treeConfig.treeIndex}:"
-    logDebug(s"$logPrefix tree building start")
+    logWarning(s"$logPrefix tree building start")
 
     while (!finished) {
       val depth = root.subtreeDepth
 
-      logDebug(s"$logPrefix Depth $depth: splitting start")
+      logWarning(s"$logPrefix Depth $depth: splitting start")
 
       val instancesWithNodeId = instances.map {
         case (grad, hess, bins) =>
@@ -61,24 +61,24 @@ private[gbm] object Tree extends Logging {
       } else {
         val prevHists = hists
         val leftHists = computeHists[B](instancesWithNodeId, minNodeId)
-        hists = subtractHists(prevHists, leftHists, boostConfig.minNodeHess)
+        hists = subtractHists(prevHists, leftHists, boostConfig.getMinNodeHess)
       }
       histsCheckpointer.update(hists)
 
-      val seed = boostConfig.seed + treeConfig.treeIndex + depth
+      val seed = boostConfig.getSeed + treeConfig.treeIndex + depth
       val splits = findSplits(hists, boostConfig, treeConfig, seed)
 
       if (splits.isEmpty) {
-        logDebug(s"$logPrefix Depth $depth: no more splits found, tree building finished")
+        logWarning(s"$logPrefix Depth $depth: no more splits found, tree building finished")
         finished = true
 
-      } else if (numLeaves + splits.size > boostConfig.maxLeaves) {
-        logDebug(s"$logPrefix Depth $depth: maxLeaves=${boostConfig.maxLeaves} reached, tree building finished")
+      } else if (numLeaves + splits.size > boostConfig.getMaxLeaves) {
+        logWarning(s"$logPrefix Depth $depth: maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
         finished = true
 
       } else {
         val gains = splits.values.map(_.gain).toArray
-        logDebug(s"$logPrefix Depth $depth: splitting finished, ${splits.size}/$numLeaves leaves split, " +
+        logWarning(s"$logPrefix Depth $depth: splitting finished, ${splits.size}/$numLeaves leaves split, " +
           s"avgGain=${gains.sum / gains.length}, minGain=${gains.min}, maxGain=${gains.max}")
         numLeaves += splits.size
 
@@ -101,18 +101,18 @@ private[gbm] object Tree extends Logging {
         }
       }
 
-      if (root.subtreeDepth >= boostConfig.maxDepth) {
-        logDebug(s"$logPrefix maxDepth=${boostConfig.maxDepth} reached, tree building finished")
+      if (root.subtreeDepth >= boostConfig.getMaxDepth) {
+        logWarning(s"$logPrefix maxDepth=${boostConfig.getMaxDepth} reached, tree building finished")
         finished = true
       }
-      if (numLeaves >= boostConfig.maxLeaves) {
-        logDebug(s"$logPrefix maxLeaves=${boostConfig.maxLeaves} reached, tree building finished")
+      if (numLeaves >= boostConfig.getMaxLeaves) {
+        logWarning(s"$logPrefix maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
         finished = true
       }
 
       minNodeId <<= 1
     }
-    logDebug(s"$logPrefix tree building finished")
+    logWarning(s"$logPrefix tree building finished")
 
     histsCheckpointer.deleteAllCheckpoints()
     histsCheckpointer.unpersistDataSet()
@@ -225,7 +225,7 @@ private[gbm] object Tree extends Logging {
         i += 2
       }
 
-      /** leaves with hess no more than minNodeHess * 2 can no grow */
+      /** leaves with hess no more than minNodeHess * 2 can not grow */
       nnz > 1 && hessSum > minNodeHess * 2
     }
   }
@@ -245,10 +245,10 @@ private[gbm] object Tree extends Logging {
                  seed: Long): Map[Long, Split] = {
 
     /** column sampling by level */
-    val sampledHists = if (boostConfig.colSampleByLevel == 1) {
+    val sampledHists = if (boostConfig.getColSampleByLevel == 1) {
       nodeHists
     } else {
-      nodeHists.sample(false, boostConfig.colSampleByLevel, seed)
+      nodeHists.sample(false, boostConfig.getColSampleByLevel, seed)
     }
 
     sampledHists.flatMap {
@@ -273,7 +273,7 @@ private[gbm] object Tree extends Logging {
             .map { case (nodeId, splits) =>
               (nodeId, splits.map(_._2).maxBy(_.gain))
             }.toArray
-      }, depth = boostConfig.aggregationDepth)
+      }, depth = boostConfig.getAggregationDepth)
       .toMap
   }
 }

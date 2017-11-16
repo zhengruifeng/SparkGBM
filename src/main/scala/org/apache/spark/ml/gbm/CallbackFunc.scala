@@ -56,10 +56,10 @@ class EarlyStopFunc(val iters: Int) extends CallbackFunc {
         val end = values.last
 
         if (isLargerBetter && start >= end) {
-          logDebug(s"Fail to increase metric $name in the last $len iterations: ${values.mkString("(", ",", ")")}")
+          logWarning(s"Fail to increase metric $name in the last $len iterations: ${values.mkString("(", ",", ")")}")
           stop = true
         } else if (!isLargerBetter && start <= end) {
-          logDebug(s"Fail to decrease metric $name in the last $len iterations: ${values.mkString("(", ",", ")")}")
+          logWarning(s"Fail to decrease metric $name in the last $len iterations: ${values.mkString("(", ",", ")")}")
           stop = true
         }
       }
@@ -90,7 +90,7 @@ class ModelCheckpointFunc(val interval: Int,
       val start = System.nanoTime()
       val currentPath = new Path(path, s"model-${model.numTrees}").toString
       GBMModel.save(model, currentPath)
-      logDebug(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
+      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
     }
 
     false
@@ -132,7 +132,7 @@ class ClassificationModelCheckpointFunc(val interval: Int,
       val otherPath = new Path(currentPath, "other").toString
       otherDF.write.parquet(otherPath)
 
-      logDebug(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
+      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
     }
 
     false
@@ -175,7 +175,7 @@ class RegressionModelCheckpointFunc(val interval: Int,
       val otherPath = new Path(currentPath, "other").toString
       otherDF.write.parquet(otherPath)
 
-      logDebug(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
+      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
     }
 
     false

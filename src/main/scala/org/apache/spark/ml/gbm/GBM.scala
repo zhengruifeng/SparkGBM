@@ -31,7 +31,7 @@ class GBM extends Logging with Serializable {
   private var maxDepth: Int = 5
 
   def setMaxDepth(value: Int): this.type = {
-    require(value > 0)
+    require(value >= 1)
     maxDepth = value
     this
   }
@@ -43,7 +43,7 @@ class GBM extends Logging with Serializable {
   private var maxLeaves: Int = 1000
 
   def setMaxLeaves(value: Int): this.type = {
-    require(value > 0)
+    require(value >= 1)
     maxLeaves = value
     this
   }
@@ -397,7 +397,7 @@ class GBM extends Logging with Serializable {
 
     val discretizer = if (initialModel.isDefined) {
       require(numCols == initialModel.get.discretizer.colDiscretizers.length)
-      logDebug(s"Discretizer is already provided by the initial model, related params (catCols,rankCols,quantileBins) will be ignored")
+      logWarning(s"Discretizer is already provided by the initial model, related params (catCols,rankCols,quantileBins) will be ignored")
       initialModel.get.discretizer
     } else {
       if (catCols.nonEmpty) {
@@ -410,56 +410,89 @@ class GBM extends Logging with Serializable {
       Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, aggregationDepth)
     }
 
-    logDebug(s"Number of bins: ${discretizer.numBins.mkString(",")}")
+    logWarning(s"Number of bins: ${discretizer.numBins.mkString(",")}")
 
-    val increEvals = evaluateFunc.flatMap {
-      case eval: IncrementalEvalFunc =>
-        Some(eval)
-      case _ => None
-    }
-
-    val batchEvals = evaluateFunc.flatMap {
-      case eval: BatchEvalFunc =>
-        Some(eval)
-      case _ => None
-    }
+    //    val increEvals = evaluateFunc.flatMap {
+    //      case eval: IncrementalEvalFunc =>
+    //        Some(eval)
+    //      case _ => None
+    //    }
+    //
+    //    val batchEvals = evaluateFunc.flatMap {
+    //      case eval: BatchEvalFunc =>
+    //        Some(eval)
+    //      case _ => None
+    //    }
 
     if (initialModel.isDefined &&
       initialModel.get.baseScore != baseScore) {
       logWarning(s"Base score not equal to the value in initial model")
     }
 
-    val boostConfig = new BoostConfig(
-      maxIter = maxIter,
-      maxDepth = maxDepth,
-      maxLeaves = maxLeaves,
-      numCols = numCols,
-      baseScore = baseScore,
-      minGain = minGain,
-      minNodeHess = minNodeHess,
-      stepSize = stepSize,
-      regAlpha = regAlpha,
-      regLambda = regLambda,
-      obj = objectiveFunc,
-      increEvals = increEvals,
-      batchEvals = batchEvals,
-      callbacks = callbackFunc,
-      catCols = catCols,
-      rankCols = rankCols,
-      subSample = subSample,
-      colSampleByTree = colSampleByTree,
-      colSampleByLevel = colSampleByLevel,
-      checkpointInterval = checkpointInterval,
-      storageLevel = storageLevel,
-      boostType = boostType,
-      dropRate = dropRate,
-      dropSkip = dropSkip,
-      minDrop = minDrop,
-      maxDrop = maxDrop,
-      aggregationDepth = aggregationDepth,
-      initialModel = initialModel,
-      maxBruteBins = maxBruteBins,
-      seed = seed)
+    val boostConfig = new BoostConfig
+    boostConfig.setMaxIter(maxIter)
+      .setMaxDepth(maxDepth)
+      .setMaxLeaves(maxLeaves)
+      .setNumCols(numCols)
+      .setBaseScore(baseScore)
+      .setMinGain(minGain)
+      .setMinNodeHess(minNodeHess)
+      .setStepSize(stepSize)
+      .setRegAlpha(regAlpha)
+      .setRegLambda(regLambda)
+      .setObjectiveFunc(objectiveFunc)
+      .setEvaluateFunc(evaluateFunc)
+      .setCallbackFunc(callbackFunc)
+      .setCatCols(catCols)
+      .setRankCols(rankCols)
+      .setSubSample(subSample)
+      .setColSampleByTree(colSampleByTree)
+      .setColSampleByLevel(colSampleByLevel)
+      .setCheckpointInterval(checkpointInterval)
+      .setStorageLevel(storageLevel)
+      .setBoostType(boostType)
+      .setDropRate(dropRate)
+      .setDropSkip(dropSkip)
+      .setMinDrop(minDrop)
+      .setMaxDrop(maxDrop)
+      .setAggregationDepth(aggregationDepth)
+      .setMaxBruteBins(maxBruteBins)
+      .setSeed(seed)
+
+
+
+
+    //    val boostConfig2 = new BoostConfig(
+    //      maxIter = maxIter,
+    //      maxDepth = maxDepth,
+    //      maxLeaves = maxLeaves,
+    //      numCols = numCols,
+    //      baseScore = baseScore,
+    //      minGain = minGain,
+    //      minNodeHess = minNodeHess,
+    //      stepSize = stepSize,
+    //      regAlpha = regAlpha,
+    //      regLambda = regLambda,
+    //      obj = objectiveFunc,
+    //      increEvals = increEvals,
+    //      batchEvals = batchEvals,
+    //      callbacks = callbackFunc,
+    //      catCols = catCols,
+    //      rankCols = rankCols,
+    //      subSample = subSample,
+    //      colSampleByTree = colSampleByTree,
+    //      colSampleByLevel = colSampleByLevel,
+    //      checkpointInterval = checkpointInterval,
+    //      storageLevel = storageLevel,
+    //      boostType = boostType,
+    //      dropRate = dropRate,
+    //      dropSkip = dropSkip,
+    //      minDrop = minDrop,
+    //      maxDrop = maxDrop,
+    //      aggregationDepth = aggregationDepth,
+    //      initialModel = initialModel,
+    //      maxBruteBins = maxBruteBins,
+    //      seed = seed)
 
     val trainRDD = data.map { case (weight, label, features) =>
       (weight, label, discretizer.transform(features))
@@ -476,28 +509,28 @@ class GBM extends Logging with Serializable {
     val maxBinIndex = discretizer.numBins.max - 1
 
     if (maxBinIndex <= Byte.MaxValue) {
-      logDebug(s"Data storage for bins: Array[Byte]")
+      logWarning(s"Data storage for bins: Array[Byte]")
       val byteTrainRDD = trainRDD.map { case (weight, label, bins) =>
         (weight, label, bins.map(_.toByte))
       }
       val byteTestRDD = testRDD.map { case (weight, label, bins) =>
         (weight, label, bins.map(_.toByte))
       }
-      GBM.boost[Byte](byteTrainRDD, byteTestRDD, boostConfig, handleTest, discretizer)
+      GBM.boost[Byte](byteTrainRDD, byteTestRDD, boostConfig, handleTest, discretizer, initialModel)
 
     } else if (maxBinIndex <= Short.MaxValue) {
-      logDebug(s"Data storage for bins: Array[Short]")
+      logWarning(s"Data storage for bins: Array[Short]")
       val shortTrainRDD = trainRDD.map { case (weight, label, bins) =>
         (weight, label, bins.map(_.toShort))
       }
       val shortTestRDD = testRDD.map { case (weight, label, bins) =>
         (weight, label, bins.map(_.toShort))
       }
-      GBM.boost[Short](shortTrainRDD, shortTestRDD, boostConfig, handleTest, discretizer)
+      GBM.boost[Short](shortTrainRDD, shortTestRDD, boostConfig, handleTest, discretizer, initialModel)
 
     } else {
-      logDebug(s"Data storage for bins: Array[Int]")
-      GBM.boost[Int](trainRDD, testRDD, boostConfig, handleTest, discretizer)
+      logWarning(s"Data storage for bins: Array[Int]")
+      GBM.boost[Int](trainRDD, testRDD, boostConfig, handleTest, discretizer, initialModel)
     }
   }
 }
@@ -512,11 +545,12 @@ private[gbm] object GBM extends Logging {
   /**
     * Implementation of GBM, train a GBMModel
     *
-    * @param data        training instances containing (weight, label, bins)
-    * @param test        validation instances containing (weight, label, bins)
-    * @param boostConfig boosting configuration
-    * @param handleTest  whether to validate on test data
-    * @param discretizer discretizer to convert raw features into bins
+    * @param data         training instances containing (weight, label, bins)
+    * @param test         validation instances containing (weight, label, bins)
+    * @param boostConfig  boosting configuration
+    * @param handleTest   whether to validate on test data
+    * @param discretizer  discretizer to convert raw features into bins
+    * @param initialModel inital model
     * @tparam B
     * @return the model
     */
@@ -524,42 +558,43 @@ private[gbm] object GBM extends Logging {
                                     test: RDD[(Double, Double, Array[B])],
                                     boostConfig: BoostConfig,
                                     handleTest: Boolean,
-                                    discretizer: Discretizer): GBMModel = {
+                                    discretizer: Discretizer,
+                                    initialModel: Option[GBMModel]): GBMModel = {
     val sc = data.sparkContext
 
-    data.persist(boostConfig.storageLevel)
-    logDebug(s"${data.count} instances in train data")
+    data.persist(boostConfig.getStorageLevel)
+    logWarning(s"${data.count} instances in train data")
 
     if (handleTest) {
-      test.persist(boostConfig.storageLevel)
-      logDebug(s"${test.count} instances in test data")
+      test.persist(boostConfig.getStorageLevel)
+      logWarning(s"${test.count} instances in test data")
     }
 
     val weights = ArrayBuffer[Double]()
     val trees = ArrayBuffer[TreeModel]()
 
-    if (boostConfig.initialModel.isDefined) {
-      weights.appendAll(boostConfig.initialModel.get.weights)
-      trees.appendAll(boostConfig.initialModel.get.trees)
+    if (initialModel.isDefined) {
+      weights.appendAll(initialModel.get.weights)
+      trees.appendAll(initialModel.get.trees)
     }
 
     val trainPredsCheckpointer = new Checkpointer[(Double, Array[Double])](sc,
-      boostConfig.checkpointInterval, boostConfig.storageLevel)
-    var trainPreds = if (boostConfig.initialModel.isDefined) {
-      computePrediction(data, trees.zip(weights).toArray, boostConfig.baseScore)
+      boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
+    var trainPreds = if (initialModel.isDefined) {
+      computePrediction(data, trees.zip(weights).toArray, boostConfig.getBaseScore)
     } else {
-      data.map(_ => (boostConfig.baseScore, Array.emptyDoubleArray))
+      data.map(_ => (boostConfig.getBaseScore, Array.emptyDoubleArray))
     }
     trainPredsCheckpointer.update(trainPreds)
 
     val testPredsCheckpointer = new Checkpointer[(Double, Array[Double])](sc,
-      boostConfig.checkpointInterval, boostConfig.storageLevel)
+      boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
     var testPreds = sc.emptyRDD[(Double, Array[Double])]
     if (handleTest) {
-      testPreds = if (boostConfig.initialModel.isDefined) {
-        computePrediction(test, trees.zip(weights).toArray, boostConfig.baseScore)
+      testPreds = if (initialModel.isDefined) {
+        computePrediction(test, trees.zip(weights).toArray, boostConfig.getBaseScore)
       } else {
-        test.map(_ => (boostConfig.baseScore, Array.emptyDoubleArray))
+        test.map(_ => (boostConfig.getBaseScore, Array.emptyDoubleArray))
       }
       testPredsCheckpointer.update(testPreds)
     }
@@ -567,17 +602,13 @@ private[gbm] object GBM extends Logging {
     /** metrics history recoder */
     val trainMetricsHistory = ArrayBuffer[Map[String, Double]]()
     val testMetricsHistory = ArrayBuffer[Map[String, Double]]()
-    val metrics = (boostConfig.increEvals ++ boostConfig.batchEvals)
-      .map { eval =>
-        (eval.name, eval.isLargerBetter)
-      }.toMap
 
     /** random number generator for drop out */
-    val dartRand = new Random(boostConfig.seed)
+    val dartRand = new Random(boostConfig.getSeed)
     val dropped = mutable.Set[Int]()
 
     /** random number generator for column sampling */
-    val colSampleRand = new Random(boostConfig.seed)
+    val colSampleRand = new Random(boostConfig.getSeed)
 
     var iter = 0
     var finished = false
@@ -588,54 +619,40 @@ private[gbm] object GBM extends Logging {
       val logPrefix = s"Iter $iter: Tree $round:"
 
       /** drop out */
-      if (boostConfig.boostType == Dart) {
-        dropped.clear()
-
-        if (boostConfig.dropSkip < 1 &&
-          dartRand.nextDouble < 1 - boostConfig.dropSkip) {
-          var k = (round * boostConfig.dropRate).ceil.toInt
-          k = math.max(k, boostConfig.minDrop)
-          k = math.min(k, boostConfig.maxDrop)
-          k = math.min(k, round)
-
-          if (k > 0) {
-            dartRand.shuffle(Seq.range(0, round))
-              .take(k).foreach(dropped.add)
-            logDebug(s"$logPrefix ${dropped.size} trees dropped")
-          } else {
-            logDebug(s"$logPrefix skip drop")
-          }
+      if (boostConfig.getBoostType == Dart) {
+        dropTrees(dropped, boostConfig, round, dartRand)
+        if (dropped.nonEmpty) {
+          logWarning(s"$logPrefix ${dropped.size} trees dropped")
         } else {
-          logDebug(s"$logPrefix skip drop")
+          logWarning(s"$logPrefix skip drop")
         }
       }
 
       /** build tree */
       val start = System.nanoTime()
       val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter, round, dropped.toSet, colSampleRand)
-      logDebug(s"$logPrefix finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
-
+      logWarning(s"$logPrefix finish, duration ${(System.nanoTime() - start) / 1e9} seconds")
 
       if (tree.isEmpty) {
         /** fail to build a new tree */
-        logDebug(s"$logPrefix no more tree built, GBM training finished")
+        logWarning(s"$logPrefix no more tree built, GBM training finished")
         finished = true
 
       } else {
         /** update base models */
         trees.append(tree.get)
         var keepWeights = true
-        boostConfig.boostType match {
+        boostConfig.getBoostType match {
           case GBTree =>
-            weights.append(boostConfig.stepSize)
+            weights.append(boostConfig.getStepSize)
 
           case Dart if dropped.isEmpty =>
             weights.append(1.0)
 
           case Dart if dropped.nonEmpty =>
             val k = dropped.size
-            weights.append(1 / (k + boostConfig.stepSize))
-            val scale = k / (k + boostConfig.stepSize)
+            weights.append(1 / (k + boostConfig.getStepSize))
+            val scale = k / (k + boostConfig.getStepSize)
             dropped.foreach { i =>
               weights(i) *= scale
             }
@@ -643,49 +660,55 @@ private[gbm] object GBM extends Logging {
         }
 
         /** update train data predictions */
-        trainPreds = updatePrediction(data, trainPreds, weights.toArray, tree.get, boostConfig.baseScore, keepWeights)
+        trainPreds = updatePrediction(data, trainPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
         trainPredsCheckpointer.update(trainPreds)
 
-        /** evaluate on train data */
-        val trainMetrics = evaluate(data, trainPreds, boostConfig)
-        if (trainMetrics.nonEmpty) {
-          trainMetricsHistory.append(trainMetrics)
-          logDebug(s"$logPrefix train metrics ${trainMetrics.mkString("(", ", ", ")")}")
+        /** materialize predictions */
+        if (boostConfig.getEvaluateFunc.isEmpty) {
+          trainPreds.count()
         }
 
-        if (handleTest) {
+        /** evaluate on train data */
+        if (boostConfig.getEvaluateFunc.nonEmpty) {
+          val trainMetrics = evaluate(data, trainPreds, boostConfig)
+          trainMetricsHistory.append(trainMetrics)
+          logWarning(s"$logPrefix train metrics ${trainMetrics.mkString("(", ", ", ")")}")
+        }
+
+        if (handleTest && boostConfig.getEvaluateFunc.nonEmpty) {
           /** update test data predictions */
-          testPreds = updatePrediction(test, testPreds, weights.toArray, tree.get, boostConfig.baseScore, keepWeights)
+          testPreds = updatePrediction(test, testPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
           testPredsCheckpointer.update(testPreds)
 
           /** evaluate on test data */
           val testMetrics = evaluate(test, testPreds, boostConfig)
-          if (testMetrics.nonEmpty) {
-            testMetricsHistory.append(testMetrics)
-            logDebug(s"$logPrefix test metrics ${testMetrics.mkString("(", ", ", ")")}")
-          }
+          testMetricsHistory.append(testMetrics)
+          logWarning(s"$logPrefix test metrics ${testMetrics.mkString("(", ", ", ")")}")
         }
 
         /** callback */
-        if (boostConfig.callbacks.nonEmpty) {
-          val snapshot = new GBMModel(discretizer, boostConfig.baseScore, trees.toArray, weights.toArray)
-          boostConfig.callbacks.foreach { callback =>
+        if (boostConfig.getCallbackFunc.nonEmpty) {
+          val snapshot = new GBMModel(discretizer, boostConfig.getBaseScore, trees.toArray, weights.toArray)
+          val metrics = boostConfig.getEvaluateFunc.map { eval =>
+            (eval.name, eval.isLargerBetter)
+          }.toMap
+          boostConfig.getCallbackFunc.foreach { callback =>
             if (callback.compute(boostConfig, snapshot, metrics, trainMetricsHistory.toArray, testMetricsHistory.toArray)) {
               finished = true
-              logDebug(s"$logPrefix callback ${callback.name} stop training")
+              logWarning(s"$logPrefix callback ${callback.name} stop training")
             }
           }
         }
       }
 
       iter += 1
-      if (iter >= boostConfig.maxIter) {
+      if (iter >= boostConfig.getMaxIter) {
         finished = true
       }
     }
 
-    if (iter >= boostConfig.maxIter) {
-      logDebug(s"maxIter=${boostConfig.maxIter} reached, GBM training finished")
+    if (iter >= boostConfig.getMaxIter) {
+      logWarning(s"maxIter=${boostConfig.getMaxIter} reached, GBM training finished")
     }
 
     data.unpersist(blocking = false)
@@ -698,7 +721,35 @@ private[gbm] object GBM extends Logging {
       testPredsCheckpointer.deleteAllCheckpoints()
     }
 
-    new GBMModel(discretizer, boostConfig.baseScore, trees.toArray, weights.toArray)
+    new GBMModel(discretizer, boostConfig.getBaseScore, trees.toArray, weights.toArray)
+  }
+
+  /**
+    * Drop trees
+    *
+    * @param dropped     indices of dropped trees
+    * @param boostConfig boosting configuration
+    * @param numTrees    number of trees
+    * @param dartRand    random number generator
+    */
+  def dropTrees(dropped: mutable.Set[Int],
+                boostConfig: BoostConfig,
+                numTrees: Int,
+                dartRand: Random): Unit = {
+    dropped.clear()
+
+    if (boostConfig.getDropSkip < 1 &&
+      dartRand.nextDouble < 1 - boostConfig.getDropSkip) {
+      var k = (numTrees * boostConfig.getDropRate).ceil.toInt
+      k = math.max(k, boostConfig.getMinDrop)
+      k = math.min(k, boostConfig.getMaxDrop)
+      k = math.min(k, numTrees)
+
+      if (k > 0) {
+        dartRand.shuffle(Seq.range(0, numTrees))
+          .take(k).foreach(dropped.add)
+      }
+    }
   }
 
   /**
@@ -723,49 +774,49 @@ private[gbm] object GBM extends Logging {
                                         treeIndex: Int,
                                         dropped: Set[Int],
                                         colSampleRand: Random): Option[TreeModel] = {
-    val rowSampled = if (boostConfig.subSample == 1) {
+    val rowSampled = if (boostConfig.getSubSample == 1) {
       instances.zip(preds)
     } else {
-      instances.zip(preds).sample(false, boostConfig.subSample, boostConfig.seed + treeIndex)
+      instances.zip(preds).sample(false, boostConfig.getSubSample, boostConfig.getSeed + treeIndex)
     }
 
     /** selected columns */
-    val cols = if (boostConfig.colSampleByTree == 1) {
-      Array.range(0, boostConfig.numCols)
+    val cols = if (boostConfig.getColSampleByTree == 1) {
+      Array.range(0, boostConfig.getNumCols)
     } else {
-      val numCols = (boostConfig.numCols * boostConfig.colSampleByTree).ceil.toInt
-      colSampleRand.shuffle(Seq.range(0, boostConfig.numCols))
+      val numCols = (boostConfig.getNumCols * boostConfig.getColSampleByTree).ceil.toInt
+      colSampleRand.shuffle(Seq.range(0, boostConfig.getNumCols))
         .take(numCols).toArray.sorted
     }
 
     /** indices of categorical columns in the selected column subset */
     val catCols = cols.zipWithIndex
       .filter { case (col, _) =>
-        boostConfig.catCols.contains(col)
+        boostConfig.getCatCols.contains(col)
       }.map(_._2).toSet
 
-    val colSampled = boostConfig.boostType match {
+    val colSampled = boostConfig.getBoostType match {
       case GBTree =>
         rowSampled.map { case ((weight, label, bins), (score, _)) =>
-          val (grad, hess) = boostConfig.obj.compute(label, score)
+          val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, score)
           (grad * weight, hess * weight, cols.map(bins))
         }
 
       case Dart if dropped.isEmpty =>
         rowSampled.map { case ((weight, label, bins), (score, _)) =>
-          val (grad, hess) = boostConfig.obj.compute(label, score)
+          val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, score)
           (grad * weight, hess * weight, cols.map(bins))
         }
 
       case Dart if dropped.nonEmpty =>
         rowSampled.map { case ((weight, label, bins), (_, pred)) =>
-          var score = boostConfig.baseScore
+          var score = boostConfig.getBaseScore
           pred.zip(weights).zipWithIndex.foreach { case ((p, w), i) =>
             if (!dropped.contains(i)) {
               score += p * w
             }
           }
-          val (grad, hess) = boostConfig.obj.compute(label, score)
+          val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, score)
           (grad * weight, hess * weight, cols.map(bins))
         }
     }
@@ -864,8 +915,7 @@ private[gbm] object GBM extends Logging {
                             preds: RDD[(Double, Array[Double])],
                             boostConfig: BoostConfig): Map[String, Double] = {
 
-    if (boostConfig.batchEvals.isEmpty &&
-      boostConfig.increEvals.isEmpty) {
+    if (boostConfig.getEvaluateFunc.isEmpty) {
       return Map.empty
     }
 
@@ -877,23 +927,23 @@ private[gbm] object GBM extends Logging {
     val result = mutable.Map[String, Double]()
 
     /** persist if there are batch evaluators */
-    if (boostConfig.batchEvals.nonEmpty) {
-      scores.persist(boostConfig.storageLevel)
+    if (boostConfig.getBatchEvaluateFunc.nonEmpty) {
+      scores.persist(boostConfig.getStorageLevel)
     }
 
-    if (boostConfig.increEvals.nonEmpty) {
+    if (boostConfig.getIncrementalEvaluateFunc.nonEmpty) {
       val values = IncrementalEvalFunc.compute(scores,
-        boostConfig.increEvals, boostConfig.aggregationDepth)
+        boostConfig.getIncrementalEvaluateFunc, boostConfig.getAggregationDepth)
 
-      boostConfig.increEvals.map(_.name)
+      boostConfig.getIncrementalEvaluateFunc.map(_.name)
         .zip(values).foreach {
         case (name, value) =>
           result.update(name, value)
       }
     }
 
-    if (boostConfig.batchEvals.nonEmpty) {
-      boostConfig.batchEvals.foreach { eval =>
+    if (boostConfig.getBatchEvaluateFunc.nonEmpty) {
+      boostConfig.getBatchEvaluateFunc.foreach { eval =>
         val value = eval.compute(scores)
         result.update(eval.name, value)
       }

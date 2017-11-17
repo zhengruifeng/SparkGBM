@@ -33,10 +33,8 @@ From LightGBM we introduced:
 
 ### High-level DataFrame-based APIs
 
-GBMClassifier for binary classification:
-
+GBMClassifier for binary classification: 
 [Source](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/org/apache/spark/ml/classification/GBMClassifier.scala)
-
 [Example](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/example/GBMClassifierExample.scala)
 
     import org.apache.spark.ml.classification._
@@ -62,9 +60,7 @@ GBMClassifier for binary classification:
     val model2 = GBMClassificationModel.load(svaePath)
 
 GBMRegressor for regression: 
-
 [Source](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/org/apache/spark/ml/regression/GBMRegressor.scala)
-
 [Example](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/example/GBMRegressorExample.scala)
 
 
@@ -111,9 +107,7 @@ GBMRegressor for regression:
 ### Low-level RDD-based APIs:
 
 Besides all the functions in DataFrame-based APIs, RDD-based APIs also support user-defined objective, evaluation and callback.
-
 [Source](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/org/apache/spark/ml/gbm/GBM.scala)
-
 [Example](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/example/GBMExample.scala)
 
     import org.apache.spark.ml.gbm._

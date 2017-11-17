@@ -1,14 +1,16 @@
 package org.apache.spark.ml.gbm
 
 import scala.collection.mutable
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
+import scala.util.{Failure, Success}
 
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
+
 
 /**
   * This class helps with persisting and checkpointing RDDs.
@@ -167,24 +169,23 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     val old = checkpointQueue.dequeue()
 
     /** Since the old checkpoint is not deleted by Spark, we manually delete it. */
-    getCheckpointFiles(old).foreach(
-      PeriodicCheckpointer.removeCheckpointFile(_, sc.hadoopConfiguration))
-  }
-}
+    getCheckpointFiles(old).foreach { file =>
+      Future {
+        val start = System.nanoTime
+        val path = new Path(file)
+        val fs = path.getFileSystem(sc.hadoopConfiguration)
+        fs.delete(path, true)
+        (System.nanoTime - start) / 1e9
 
-private[gbm] object PeriodicCheckpointer extends Logging {
+      }.onComplete {
+        case Success(duration) =>
+          logWarning(s"successfully remove old checkpoint file: $file, duration $duration seconds")
 
-  /** Delete a checkpoint file, and log a warning if deletion fails. */
-  def removeCheckpointFile(checkpointFile: String, conf: Configuration): Unit = {
-    try {
-      val path = new Path(checkpointFile)
-      val fs = path.getFileSystem(conf)
-      fs.delete(path, true)
-    } catch {
-      case e: Exception =>
-        logWarning("PeriodicCheckpointer could not remove old checkpoint file: " +
-          checkpointFile)
+        case Failure(e) =>
+          logWarning(s"fail to remove old checkpoint file: $file, ${e.toString}")
+      }
     }
   }
 }
+
 

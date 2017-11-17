@@ -6,7 +6,7 @@ import org.apache.spark.rdd.RDD
 /**
   * trait for evaluation function to compute the metric
   */
-trait EvalFunc extends Logging with Serializable {
+private[ml] trait EvalFunc extends Logging with Serializable {
 
   def isLargerBetter: Boolean
 

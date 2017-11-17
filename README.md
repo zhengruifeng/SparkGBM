@@ -73,7 +73,7 @@ GBMRegressor for regression:
     val gbmr = new GBMRegressor
     
     gbmr.setBoostType("dart")                   // "dart" -> DART, "gbtree" -> gradient boosting
-        .setObjectiveFunc("square")             // "square" -> mean squared error, "huber" -> Pseudo-Huber loss
+        .setObjectiveFunc("square")             // "square" -> MSE, "huber" -> Pseudo-Huber loss
         .setEvaluateFunc(Array("rmse", "mae"))  // "rmse", "mse", "mae"
         .setMaxIter(10)                         // maximum number of iterations
         .setMaxDepth(7)                         // maximum depth

@@ -93,7 +93,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   /**
     * Global bias, the initial prediction score of all instances.
-    * (default = 0.5)
+    * (default = 0.0)
     *
     * @group param
     */

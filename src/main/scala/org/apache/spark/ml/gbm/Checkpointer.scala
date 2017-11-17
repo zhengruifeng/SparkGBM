@@ -178,11 +178,11 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
         (System.nanoTime - start) / 1e9
 
       }.onComplete {
-        case Success(duration) =>
-          logWarning(s"successfully remove old checkpoint file: $file, duration $duration seconds")
+        case Success(v) =>
+          logWarning(s"successfully remove old checkpoint file: $file, duration $v seconds")
 
-        case Failure(e) =>
-          logWarning(s"fail to remove old checkpoint file: $file, ${e.toString}")
+        case Failure(t) =>
+          logWarning(s"fail to remove old checkpoint file: $file, ${t.toString}")
       }
     }
   }

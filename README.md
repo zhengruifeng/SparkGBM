@@ -178,10 +178,10 @@ Besides all the functions in DataFrame-based APIs, RDD-based APIs also support u
 
 
 
-##Building
+## Building
 
     mvn clean package
     
-##Note
+## Note
 
 Current master branch work for Spark-2.2.0

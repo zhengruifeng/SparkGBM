@@ -24,7 +24,7 @@ From XGBoost we introduced:
 
 From LightGBM we introduced:
 
-1, Histogram subtraction to half the communication overhead
+1, Histogram subtraction to halve the communication overhead
 
 2, Automatic data compression to reduce memory footprint
 

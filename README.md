@@ -14,7 +14,7 @@ Thanks to XGBoost and LightGBM, SparkGBM draws on the valuable experience of the
 
 From XGBoost we introduced:
 
-1, Second order gradient approximation of objective function
+1, Second order approximation of objective function
 
 2, L1/L2 regulation of weights to prevent overfitting
 

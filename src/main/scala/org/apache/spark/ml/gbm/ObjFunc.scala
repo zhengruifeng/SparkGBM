@@ -40,10 +40,18 @@ class HuberObj(val delta: Double) extends ObjFunc {
 
   override def compute(label: Double, score: Double): (Double, Double) = {
     val a = score - label
+
     val r = a / delta
+
     val e = 1 + r * r
+
     val s = math.sqrt(e)
-    (a / s, 1 / (e * s))
+
+    val grad = a / s
+
+    val hess = math.max(1 / (e * s), 1e-16)
+
+    (grad, hess)
   }
 
   override def name = s"Huber-$delta"

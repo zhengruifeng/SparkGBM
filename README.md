@@ -16,7 +16,7 @@ From XGBoost we introduced:
 
 1, Second order gradient approximation of objective function
 
-2, L1/L2 Regulation of weights to prevent overfitting
+2, L1/L2 regulation of weights to prevent overfitting
 
 3, Column subsampling by tree and by level
 

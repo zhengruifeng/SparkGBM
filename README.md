@@ -78,7 +78,7 @@ GBMRegressor for regression:
         .setMaxIter(10)                         // maximum number of iterations
         .setMaxDepth(7)                         // maximum depth
         .setMaxBins(32)                         // maximum number of bins
-        .setNumericalBinType("width")           // "width" -> intervals with same length, "depth" -> by quantiles 
+        .setNumericalBinType("width")           // "width" -> by interval-equal bins, "depth" -> by quantiles 
         .setMaxLeaves(100)                      // maximum number of leaves
         .setMinNodeHess(0.001)                  // minimum hessian needed in a node
         .setRegAlpha(0.1)                       // L1 regularization

@@ -955,7 +955,7 @@ class GBMModel(val discretizer: Discretizer,
     }
 
     val sum = gains.sum
-    Vectors.dense(gains.map(_ / sum))
+    Vectors.dense(gains.map(_ / sum)).compressed
   }
 
   def predict(features: Vector): Double = {

@@ -301,11 +301,7 @@ class TreeModel(val root: Node) extends Serializable {
       case _ =>
     }
 
-    val sum = gains.values.sum
-
-    gains.map { case (index, gain) =>
-      (index, gain / sum)
-    }.toMap
+    gains.toMap
   }
 }
 

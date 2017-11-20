@@ -227,7 +227,7 @@ private[gbm] object Tree extends Logging {
       }
 
       /** leaves with hess no more than minNodeHess * 2 can not grow */
-      nnz > 1 && hessSum > minNodeHess * 2
+      nnz >= 2 && hessSum >= minNodeHess * 2
     }
   }
 

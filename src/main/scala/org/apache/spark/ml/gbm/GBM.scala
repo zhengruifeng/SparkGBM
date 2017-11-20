@@ -587,6 +587,7 @@ private[gbm] object GBM extends Logging {
       }
 
       /** build tree */
+      logWarning(s"$logPrefix start")
       val start = System.nanoTime
       val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter, round, dropped.toSet, colSampleRand)
       logWarning(s"$logPrefix finish, duration ${(System.nanoTime - start) / 1e9} seconds")
@@ -621,8 +622,8 @@ private[gbm] object GBM extends Logging {
         trainPreds = updatePrediction(data, trainPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
         trainPredsCheckpointer.update(trainPreds)
 
-        /** materialize predictions */
         if (boostConfig.getEvaluateFunc.isEmpty) {
+          /** materialize predictions */
           trainPreds.count()
         }
 

@@ -4,7 +4,7 @@ It is designed to be scalable and efficient with the following advantages:
 
 1, Compatible with current ML/MLlib pipeline
 
-2, Purely based on Spark, no other dependancy
+2, Purely writen in Scala/Spark, no other dependancy
 
 3, Relative faster training speed compared with ml.GBT
 

@@ -20,8 +20,6 @@ private[gbm] object Tree extends Logging {
   def train[B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
                                     boostConfig: BoostConfig,
                                     treeConfig: TreeConfig): Option[TreeModel] = {
-    val intB = implicitly[Integral[B]]
-
     val sc = instances.sparkContext
 
     instances.persist(boostConfig.getStorageLevel)
@@ -54,7 +52,7 @@ private[gbm] object Tree extends Logging {
 
       val instancesWithNodeId = instances.map {
         case (grad, hess, bins) =>
-          (root.index(bins.map(intB.toInt)), grad, hess, bins)
+          (root.index(bins), grad, hess, bins)
       }
 
       if (minNodeId == 1) {
@@ -78,9 +76,9 @@ private[gbm] object Tree extends Logging {
         finished = true
 
       } else {
-        val gains = splits.values.map(_.gain).toArray
+        val gain = splits.values.map(_.gain).sum
         logWarning(s"$logPrefix Depth $depth: splitting finished, ${splits.size}/$numLeaves leaves split, " +
-          s"avgGain=${gains.sum / gains.length}, duration ${(System.nanoTime - start) / 1e9} seconds")
+          s"gain=$gain, duration ${(System.nanoTime - start) / 1e9} seconds")
         numLeaves += splits.size
 
         val nodes = root.nodeIterator.filter { node =>
@@ -287,9 +285,9 @@ class TreeModel(val root: Node) extends Serializable {
 
   lazy val numNodes: Long = root.numDescendants
 
-  def predict(bins: Array[Int]): Double = root.predict(bins)
+  def predict[B: Integral](bins: Array[B]): Double = root.predict(bins)
 
-  def index(bins: Array[Int]): Long = root.index(bins)
+  def index[B: Integral](bins: Array[B]): Long = root.index(bins)
 
   def computeImportance: Map[Int, Double] = {
     val gains = collection.mutable.Map[Int, Double]()

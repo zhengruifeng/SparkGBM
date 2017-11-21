@@ -795,16 +795,14 @@ private[gbm] object GBM extends Logging {
   def computePrediction[B: Integral](instances: RDD[(Double, Double, Array[B])],
                                      trees: Array[(TreeModel, Double)],
                                      baseScore: Double): RDD[(Double, Array[Double])] = {
-    val intB = implicitly[Integral[B]]
     instances.map { case (_, _, bins) =>
-      val ints = bins.map(intB.toInt)
       var score = baseScore
       val pred = Array.ofDim[Double](trees.length)
 
       var i = 0
       while (i < trees.length) {
         val (tree, w) = trees(i)
-        pred(i) = tree.predict(ints)
+        pred(i) = tree.predict(bins)
         score += pred(i) * w
         i += 1
       }
@@ -831,12 +829,10 @@ private[gbm] object GBM extends Logging {
                                     tree: TreeModel,
                                     baseScore: Double,
                                     keepWeights: Boolean): RDD[(Double, Array[Double])] = {
-    val intB = implicitly[Integral[B]]
 
     if (keepWeights) {
       instances.zip(preds).map { case ((_, _, bins), (score, pred)) =>
-        val ints = bins.map(intB.toInt)
-        val newPred = pred :+ tree.predict(ints)
+        val newPred = pred :+ tree.predict(bins)
         require(newPred.length == weights.length)
         val newScore = score + newPred.last * weights.last
         (newScore, newPred)
@@ -844,8 +840,7 @@ private[gbm] object GBM extends Logging {
 
     } else {
       instances.zip(preds).map { case ((_, _, bins), (_, pred)) =>
-        val ints = bins.map(intB.toInt)
-        val newPred = pred :+ tree.predict(ints)
+        val newPred = pred :+ tree.predict(bins)
         require(newPred.length == weights.length)
         var newScore = baseScore
         var i = 0

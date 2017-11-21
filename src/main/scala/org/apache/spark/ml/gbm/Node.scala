@@ -7,7 +7,7 @@ private[gbm] class LearningNode(val nodeId: Long,
                                 var leftNode: Option[LearningNode],
                                 var rightNode: Option[LearningNode]) extends Serializable {
 
-  def index(bins: Array[Int]): Long = {
+  def index[B: Integral](bins: Array[B]): Long = {
     if (isLeaf) {
       nodeId
     } else if (split.get.goLeft(bins)) {
@@ -17,7 +17,7 @@ private[gbm] class LearningNode(val nodeId: Long,
     }
   }
 
-  def predict(bins: Array[Int]): Double = {
+  def predict[B: Integral](bins: Array[B]): Double = {
     if (isLeaf) {
       prediction
     } else if (split.get.goLeft(bins)) {
@@ -53,9 +53,10 @@ private[gbm] object LearningNode {
 
 
 trait Node extends Serializable {
-  def index(bins: Array[Int]): Long
 
-  def predict(bins: Array[Int]): Double
+  def index[B: Integral](bins: Array[B]): Long
+
+  def predict[B: Integral](bins: Array[B]): Double
 
   def subtreeDepth: Int
 
@@ -90,8 +91,9 @@ class InternalNode(val featureId: Int,
     require(data.length == 1)
   }
 
-  def goLeft(bins: Array[Int]): Boolean = {
-    val bin = bins(featureId)
+  def goLeft[B: Integral](bins: Array[B]): Boolean = {
+    val intB = implicitly[Integral[B]]
+    val bin = intB.toInt(bins(featureId))
     if (bin == 0) {
       missingGoLeft
     } else if (isSeq) {
@@ -101,7 +103,7 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  def index(bins: Array[Int]): Long = {
+  override def index[B: Integral](bins: Array[B]): Long = {
     if (goLeft(bins)) {
       leftNode.index(bins)
     } else {
@@ -109,7 +111,7 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  def predict(bins: Array[Int]): Double = {
+  override def predict[B: Integral](bins: Array[B]): Double = {
     if (goLeft(bins)) {
       leftNode.predict(bins)
     } else {
@@ -117,11 +119,11 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  def subtreeDepth: Int = {
+  override def subtreeDepth: Int = {
     math.max(leftNode.subtreeDepth, rightNode.subtreeDepth) + 1
   }
 
-  def nodeIterator: Iterator[Node] = {
+  override def nodeIterator: Iterator[Node] = {
     Iterator(this) ++
       leftNode.nodeIterator ++
       rightNode.nodeIterator
@@ -131,13 +133,13 @@ class InternalNode(val featureId: Int,
 class LeafNode(val weight: Double,
                val leafId: Long) extends Node {
 
-  def index(bins: Array[Int]): Long = leafId
+  override def subtreeDepth: Int = 0
 
-  def predict(bins: Array[Int]): Double = weight
+  override def nodeIterator: Iterator[Node] = Iterator(this)
 
-  def subtreeDepth: Int = 0
+  override def index[B: Integral](bins: Array[B]): Long = leafId
 
-  def nodeIterator: Iterator[Node] = Iterator(this)
+  override def predict[B: Integral](bins: Array[B]): Double = weight
 }
 
 

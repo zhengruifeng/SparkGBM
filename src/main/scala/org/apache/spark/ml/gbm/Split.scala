@@ -8,7 +8,7 @@ abstract class Split extends Serializable {
 
   def missingGoLeft: Boolean
 
-  def goLeft(bins: Array[Int]): Boolean
+  def goLeft[B: Integral](bins: Array[B]): Boolean
 
   def leftWeight: Double
 
@@ -24,8 +24,9 @@ class SeqSplit(val featureId: Int,
                val rightWeight: Double,
                val threshold: Int) extends Split {
 
-  override def goLeft(bins: Array[Int]): Boolean = {
-    val bin = bins(featureId)
+  override def goLeft[B: Integral](bins: Array[B]): Boolean = {
+    val intB = implicitly[Integral[B]]
+    val bin = intB.toInt(bins(featureId))
     if (bin == 0) {
       missingGoLeft
     } else {
@@ -42,8 +43,9 @@ class SetSplit(val featureId: Int,
                val rightWeight: Double,
                val leftSet: Array[Int]) extends Split {
 
-  override def goLeft(bins: Array[Int]): Boolean = {
-    val bin = bins(featureId)
+  override def goLeft[B: Integral](bins: Array[B]): Boolean = {
+    val intB = implicitly[Integral[B]]
+    val bin = intB.toInt(bins(featureId))
     if (bin == 0) {
       missingGoLeft
     } else {

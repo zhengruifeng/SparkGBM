@@ -937,6 +937,8 @@ class GBMModel(val discretizer: Discretizer,
 
   def numLeaves: Array[Long] = trees.map(_.numLeaves)
 
+  def numNodes: Array[Long] = trees.map(_.numNodes)
+
   def depths: Array[Int] = trees.map(_.depth)
 
   /** feature importance of the first trees */

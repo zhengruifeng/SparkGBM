@@ -302,6 +302,10 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
 
   def numTrees: Int = model.numTrees
 
+  def numNodes: Array[Long] = model.numNodes
+
+  def numLeaves: Array[Long] = model.numLeaves
+
   def weights: Array[Double] = model.weights
 
   def depths: Array[Int] = model.depths

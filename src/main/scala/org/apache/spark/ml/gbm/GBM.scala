@@ -905,6 +905,7 @@ private[gbm] object GBM extends Logging {
       instances.zip(preds).map { case ((_, _, bins), (score, pred)) =>
         val p = tree.predict(bins)
         val newPred = pred :+ toH.fromDouble(p)
+
         require(newPred.length == weights.length)
         val newScore = score + p * weights.last
         (newScore, newPred)
@@ -914,6 +915,7 @@ private[gbm] object GBM extends Logging {
       instances.zip(preds).map { case ((_, _, bins), (_, pred)) =>
         val p = tree.predict(bins)
         val newPred = pred :+ toH.fromDouble(p)
+
         require(newPred.length == weights.length)
         var newScore = baseScore
         var i = 0
@@ -1012,12 +1014,21 @@ class GBMModel(val discretizer: Discretizer,
 
   /** feature importance of the first trees */
   def computeImportance(firstTrees: Int): Vector = {
-    require(firstTrees > 0 && firstTrees <= trees.length)
+    require(firstTrees >= -1 && firstTrees <= numTrees)
+
+    var n = firstTrees
+    if (n == 0) {
+      return Vectors.sparse(n, Seq.empty)
+    }
+
+    if (n == -1) {
+      n = numTrees
+    }
 
     val gains = Array.ofDim[Double](numCols)
 
     var i = 0
-    while (i < firstTrees) {
+    while (i < n) {
       trees(i).computeImportance.foreach {
         case (index, gain) =>
           gains(index) += gain * weights(i)
@@ -1026,7 +1037,14 @@ class GBMModel(val discretizer: Discretizer,
     }
 
     val sum = gains.sum
-    Vectors.dense(gains.map(_ / sum)).compressed
+
+    i = 0
+    while (i < n) {
+      gains(i) /= sum
+      i += 1
+    }
+
+    Vectors.dense(gains).compressed
   }
 
   def predict(features: Vector): Double = {
@@ -1036,12 +1054,17 @@ class GBMModel(val discretizer: Discretizer,
   def predict(features: Vector,
               firstTrees: Int): Double = {
     require(features.size == numCols)
-    require(firstTrees > 0 && firstTrees <= numTrees)
+    require(firstTrees >= -1 && firstTrees <= numTrees)
+
+    var n = firstTrees
+    if (n == -1) {
+      n = numTrees
+    }
 
     val bins = discretizer.transform(features)
     var score = baseScore
     var i = 0
-    while (i < firstTrees) {
+    while (i < n) {
       score += trees(i).predict(bins) * weights(i)
       i += 1
     }
@@ -1054,7 +1077,7 @@ class GBMModel(val discretizer: Discretizer,
 
   def leaf(features: Vector,
            oneHot: Boolean): Vector = {
-    leaf(features, oneHot, trees.length)
+    leaf(features, oneHot, numTrees)
   }
 
   /** leaf transformation with first trees, if oneHot is enable, transform input into a sparse one-hot encoded vector */
@@ -1062,34 +1085,42 @@ class GBMModel(val discretizer: Discretizer,
            oneHot: Boolean,
            firstTrees: Int): Vector = {
     require(features.size == numCols)
-    require(firstTrees > 0 && firstTrees <= numTrees)
+    require(firstTrees >= -1 && firstTrees <= numTrees)
+
+    var n = firstTrees
+    if (n == -1) {
+      n = numTrees
+    }
 
     val bins = discretizer.transform(features)
 
     if (oneHot) {
-      val indices = Array.ofDim[Int](firstTrees)
+
+      val indices = Array.ofDim[Int](n)
 
       var step = 0
       var i = 0
-      while (i < firstTrees) {
+      while (i < n) {
         val index = trees(i).index(bins)
         indices(i) = step + index.toInt
         step += numLeaves(i).toInt
         i += 1
       }
 
-      val values = Array.fill(firstTrees)(1.0)
+      val values = Array.fill(n)(1.0)
+
       Vectors.sparse(step, indices, values)
 
     } else {
 
-      val indices = Array.ofDim[Double](firstTrees)
+      val indices = Array.ofDim[Double](n)
       var i = 0
-      while (i < firstTrees) {
+      while (i < n) {
         indices(i) = trees(i).index(bins).toDouble
         i += 1
       }
-      Vectors.dense(indices)
+
+      Vectors.dense(indices).compressed
     }
   }
 }

@@ -348,7 +348,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     */
   final val firstTrees: IntParam =
     new IntParam(this, "firstTrees", "The number of first trees for prediction, leaf transformation, feature importance computation. Use all trees if set -1.",
-      (value: Int) => value == -1 || value >= 1)
+      ParamValidators.gtEq(-1))
 
   def getFirstTrees: Int = $(firstTrees)
 
@@ -441,6 +441,4 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   setDefault(floatType -> "float")
 }
-
-
 

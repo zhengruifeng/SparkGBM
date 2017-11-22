@@ -1,7 +1,6 @@
 package org.apache.spark.ml.gbm
 
-import scala.collection.mutable
-
+import scala.collection.{immutable, mutable}
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
@@ -99,7 +98,7 @@ private[gbm] object Discretizer extends Logging {
       case (num: IntervalNumColDiscretizer, i) =>
         (i, "interval", Array(num.start, num.step), Array(num.numBins))
       case (cat: CatColDiscretizer, i) =>
-        (i, "cat", Array.emptyDoubleArray, cat.array)
+        (i, "cat", Array.emptyDoubleArray, cat.map.toArray.sortBy(_._2).map(_._1))
       case (rank: RankColDiscretizer, i) =>
         (i, "rank", Array.emptyDoubleArray, rank.array)
     }
@@ -118,14 +117,17 @@ private[gbm] object Discretizer extends Logging {
 
           val col = tpe match {
             case "quantile" =>
-              new QuantileNumColDiscretizer(doubles.toArray.sorted)
+              require(ints.isEmpty)
+              new QuantileNumColDiscretizer(doubles.toArray)
             case "interval" =>
               require(doubles.length == 2 && ints.length == 1)
               new IntervalNumColDiscretizer(doubles.head, doubles.last, ints.head)
             case "cat" =>
-              new CatColDiscretizer(ints.toArray.sorted)
+              require(doubles.isEmpty)
+              new CatColDiscretizer(ints.zipWithIndex.toMap)
             case "rank" =>
-              new RankColDiscretizer(ints.toArray.sorted)
+              require(doubles.isEmpty)
+              new RankColDiscretizer(ints.toArray)
           }
 
           (i, col)
@@ -195,16 +197,14 @@ private[gbm] class IntervalNumColDiscretizer(val start: Double,
 }
 
 
-private[gbm] class CatColDiscretizer(val array: Array[Int]) extends ColDiscretizer {
+private[gbm] class CatColDiscretizer(val map: Map[Int, Int]) extends ColDiscretizer {
 
   override def transform(value: Double): Int = {
     require(value.toInt == value)
-    val index = array.indexOf(value.toInt)
-    require(index >= 0, s"value $value not in ${array.mkString("(", ", ", ")")}")
-    index + 1
+    map(value.toInt) + 1
   }
 
-  override def numBins: Int = array.length
+  override def numBins: Int = map.size
 }
 
 private[gbm] class RankColDiscretizer(val array: Array[Int]) extends ColDiscretizer {
@@ -305,7 +305,8 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
 
   override def toColDiscretizer: CatColDiscretizer = {
     val array = counter.toArray.sortBy(_._2).map(_._1).reverse
-    new CatColDiscretizer(array)
+    val map = array.zipWithIndex.toMap
+    new CatColDiscretizer(map)
   }
 }
 

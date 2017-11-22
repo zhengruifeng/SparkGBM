@@ -47,6 +47,7 @@ object HiggsTest {
       .setRegLambda(1.0)
       .setObjectiveFunc("logistic")
       .setEvaluateFunc(Array.empty)
+      .setFloatType("float")
       .setCheckpointInterval(10)
       .setModelCheckpointInterval(10)
       .setModelCheckpointPath(modelCheckpointPath)

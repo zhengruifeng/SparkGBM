@@ -320,17 +320,13 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
   }
 
   override def predict(features: Vector): Double = {
-    val n = $(firstTrees)
-    if (n == -1 || n == model.numTrees) {
-      model.predict(features)
-    } else {
-      model.predict(features, n)
-    }
+    model.predict(features, $(firstTrees))
   }
 
   def featureImportances: Vector = {
     val n = $(firstTrees)
     if (n == -1 || n == model.numTrees) {
+      /** precomputed feature importance */
       model.importance
     } else {
       logWarning(s"Compute feature importances with first $n trees")
@@ -339,12 +335,7 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
   }
 
   def leaf(features: Vector): Vector = {
-    val n = $(firstTrees)
-    if (n == -1 || n == model.numTrees) {
-      model.leaf(features, $(enableOneHot))
-    } else {
-      model.leaf(features, $(enableOneHot), n)
-    }
+    model.leaf(features, $(enableOneHot), $(firstTrees))
   }
 
   def leaf(dataset: Dataset[_]): DataFrame = {

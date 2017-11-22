@@ -318,18 +318,14 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
   }
 
   override protected def predictRaw(features: Vector): Vector = {
-    val n = $(firstTrees)
-    val score = if (n == -1 || n == model.numTrees) {
-      model.predict(features)
-    } else {
-      model.predict(features, n)
-    }
+    val score = model.predict(features, $(firstTrees))
     Vectors.dense(-score, score)
   }
 
   def featureImportances: Vector = {
     val n = $(firstTrees)
     if (n == -1 || n == model.numTrees) {
+      /** precomputed feature importance */
       model.importance
     } else {
       logWarning(s"Compute feature importances with first $n trees")
@@ -338,12 +334,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
   }
 
   def leaf(features: Vector): Vector = {
-    val n = $(firstTrees)
-    if (n == -1 || n == model.numTrees) {
-      model.leaf(features, $(enableOneHot))
-    } else {
-      model.leaf(features, $(enableOneHot), n)
-    }
+    model.leaf(features, $(enableOneHot), $(firstTrees))
   }
 
   def leaf(dataset: Dataset[_]): DataFrame = {
@@ -358,7 +349,6 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
       dataset.toDF
     }
   }
-
 }
 
 

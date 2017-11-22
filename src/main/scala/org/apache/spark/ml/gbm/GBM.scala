@@ -399,7 +399,7 @@ class GBM extends Logging with Serializable {
     val numCols = data.first._3.size
     require(numCols > 0)
 
-    val handleTest = test.isDefined
+    val validation = test.isDefined
 
     val discretizer = if (initialModel.isDefined) {
       require(numCols == initialModel.get.discretizer.colDiscretizers.length)
@@ -457,7 +457,7 @@ class GBM extends Logging with Serializable {
       (weight, label, discretizer.transform(features))
     }
 
-    val testRDD = if (handleTest) {
+    val testRDD = if (validation) {
       test.get.map { case (weight, label, features) =>
         (weight, label, discretizer.transform(features))
       }
@@ -475,7 +475,7 @@ class GBM extends Logging with Serializable {
       val byteTestRDD = testRDD.map { case (weight, label, bins) =>
         (weight, label, bins.map(_.toByte))
       }
-      GBM.boost[Byte](byteTrainRDD, byteTestRDD, boostConfig, handleTest, discretizer, initialModel)
+      GBM.boost[Byte](byteTrainRDD, byteTestRDD, boostConfig, validation, discretizer, initialModel)
 
     } else if (maxBinIndex <= Short.MaxValue) {
       logWarning(s"Data storage for bins: Array[Short]")
@@ -485,11 +485,11 @@ class GBM extends Logging with Serializable {
       val shortTestRDD = testRDD.map { case (weight, label, bins) =>
         (weight, label, bins.map(_.toShort))
       }
-      GBM.boost[Short](shortTrainRDD, shortTestRDD, boostConfig, handleTest, discretizer, initialModel)
+      GBM.boost[Short](shortTrainRDD, shortTestRDD, boostConfig, validation, discretizer, initialModel)
 
     } else {
       logWarning(s"Data storage for bins: Array[Int]")
-      GBM.boost[Int](trainRDD, testRDD, boostConfig, handleTest, discretizer, initialModel)
+      GBM.boost[Int](trainRDD, testRDD, boostConfig, validation, discretizer, initialModel)
     }
   }
 }
@@ -506,7 +506,7 @@ private[gbm] object GBM extends Logging {
     * @param data         training instances containing (weight, label, bins)
     * @param test         validation instances containing (weight, label, bins)
     * @param boostConfig  boosting configuration
-    * @param handleTest   whether to validate on test data
+    * @param validation   whether to validate on test data
     * @param discretizer  discretizer to convert raw features into bins
     * @param initialModel inital model
     * @tparam B
@@ -515,7 +515,7 @@ private[gbm] object GBM extends Logging {
   def boost[B: Integral : ClassTag](data: RDD[(Double, Double, Array[B])],
                                     test: RDD[(Double, Double, Array[B])],
                                     boostConfig: BoostConfig,
-                                    handleTest: Boolean,
+                                    validation: Boolean,
                                     discretizer: Discretizer,
                                     initialModel: Option[GBMModel]): GBMModel = {
     val sc = data.sparkContext
@@ -523,7 +523,7 @@ private[gbm] object GBM extends Logging {
     data.persist(boostConfig.getStorageLevel)
     logWarning(s"${data.count} instances in train data")
 
-    if (handleTest) {
+    if (validation) {
       test.persist(boostConfig.getStorageLevel)
       logWarning(s"${test.count} instances in test data")
     }
@@ -548,7 +548,7 @@ private[gbm] object GBM extends Logging {
     val testPredsCheckpointer = new Checkpointer[(Double, Array[Double])](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
     var testPreds = sc.emptyRDD[(Double, Array[Double])]
-    if (handleTest && boostConfig.getEvaluateFunc.nonEmpty) {
+    if (validation && boostConfig.getEvaluateFunc.nonEmpty) {
       testPreds = if (initialModel.isDefined) {
         computePrediction(test, trees.zip(weights).toArray, boostConfig.getBaseScore)
       } else {
@@ -634,7 +634,7 @@ private[gbm] object GBM extends Logging {
           logWarning(s"$logPrefix train metrics ${trainMetrics.mkString("(", ", ", ")")}")
         }
 
-        if (handleTest && boostConfig.getEvaluateFunc.nonEmpty) {
+        if (validation && boostConfig.getEvaluateFunc.nonEmpty) {
           /** update test data predictions */
           testPreds = updatePrediction(test, testPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
           testPredsCheckpointer.update(testPreds)
@@ -673,7 +673,7 @@ private[gbm] object GBM extends Logging {
     trainPredsCheckpointer.unpersistDataSet()
     trainPredsCheckpointer.deleteAllCheckpoints()
 
-    if (handleTest) {
+    if (validation) {
       test.unpersist(blocking = false)
       testPredsCheckpointer.unpersistDataSet()
       testPredsCheckpointer.deleteAllCheckpoints()

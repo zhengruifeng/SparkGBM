@@ -11,24 +11,20 @@ private[gbm] object Tree extends Logging {
   /**
     * Implementation of training a new tree
     *
-    * @param instances   instances containing (grad, hess, bins)
+    * @param data        instances containing (grad, hess, bins)
     * @param boostConfig boosting configuration
     * @param treeConfig  tree growing configuration
     * @tparam B
     * @return a new tree if any
     */
-  def train[B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
+  def train[B: Integral : ClassTag](data: RDD[(Double, Double, Array[B])],
                                     boostConfig: BoostConfig,
                                     treeConfig: TreeConfig): Option[TreeModel] = {
-    val sc = instances.sparkContext
+    val sc = data.sparkContext
 
-    instances.persist(boostConfig.getStorageLevel)
+    data.persist(boostConfig.getStorageLevel)
 
     val root = LearningNode.create(1L)
-
-    var hists = sc.emptyRDD[((Long, Int), Array[Double])]
-    val histsCheckpointer = new Checkpointer[((Long, Int), Array[Double])](sc,
-      boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
 
     var minNodeId = 1L
     var numLeaves = 1L
@@ -41,8 +37,18 @@ private[gbm] object Tree extends Logging {
       finished = true
     }
 
+    var nodeIds = sc.emptyRDD[Long]
+    val nodeIdsCheckpointer = new Checkpointer[Long](sc,
+      boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
+
+    var hists = sc.emptyRDD[((Long, Int), Array[Double])]
+    val histsCheckpointer = new Checkpointer[((Long, Int), Array[Double])](sc,
+      boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
+
     val logPrefix = s"Iter ${treeConfig.iteration}: Tree ${treeConfig.treeIndex}:"
     logWarning(s"$logPrefix tree building start")
+
+    val lastSplits = mutable.Map[Long, Split]()
 
     while (!finished) {
       val start = System.nanoTime
@@ -50,17 +56,18 @@ private[gbm] object Tree extends Logging {
       val depth = root.subtreeDepth
       logWarning(s"$logPrefix Depth $depth: splitting start")
 
-      val instancesWithNodeId = instances.map {
-        case (grad, hess, bins) =>
-          (root.index(bins), grad, hess, bins)
+      if (minNodeId == 1L) {
+        nodeIds = data.map(_ => 1L)
+      } else {
+        nodeIds = updateNodeIds(data, nodeIds, lastSplits.toMap)
       }
+      nodeIdsCheckpointer.update(nodeIds)
 
       if (minNodeId == 1) {
-        hists = computeHists[B](instancesWithNodeId, minNodeId)
+        hists = computeHists[B](data.zip(nodeIds), minNodeId)
       } else {
-        val prevHists = hists
-        val leftHists = computeHists[B](instancesWithNodeId, minNodeId)
-        hists = subtractHists(prevHists, leftHists, boostConfig.getMinNodeHess)
+        val leftHists = computeHists[B](data.zip(nodeIds), minNodeId)
+        hists = subtractHists(hists, leftHists, boostConfig.getMinNodeHess)
       }
       histsCheckpointer.update(hists)
 
@@ -98,6 +105,12 @@ private[gbm] object Tree extends Logging {
           node.rightNode = Some(LearningNode.create(rightId))
           node.rightNode.get.prediction = node.split.get.rightWeight
         }
+
+        /** update last splits */
+        lastSplits.clear()
+        splits.foreach { case (nodeId, split) =>
+          lastSplits.update(nodeId, split)
+        }
       }
 
       if (root.subtreeDepth >= boostConfig.getMaxDepth) {
@@ -113,9 +126,12 @@ private[gbm] object Tree extends Logging {
     }
     logWarning(s"$logPrefix tree building finished")
 
+    nodeIdsCheckpointer.deleteAllCheckpoints()
+    nodeIdsCheckpointer.unpersistDataSet()
     histsCheckpointer.deleteAllCheckpoints()
     histsCheckpointer.unpersistDataSet()
-    instances.unpersist(blocking = false)
+    data.unpersist(blocking = false)
+    lastSplits.clear()
 
     if (root.subtreeDepth > 0) {
       Some(TreeModel.createModel(root, boostConfig, treeConfig))
@@ -125,21 +141,49 @@ private[gbm] object Tree extends Logging {
   }
 
   /**
+    * update nodeIds
+    *
+    * @param data       instances containing (grad, hess, bins)
+    * @param nodeIds    previous nodeIds
+    * @param lastSplits splits found in the last round
+    * @tparam B
+    * @return updated nodeIds
+    */
+  def updateNodeIds[B: Integral : ClassTag](data: RDD[(Double, Double, Array[B])],
+                                            nodeIds: RDD[Long],
+                                            lastSplits: Map[Long, Split]): RDD[Long] = {
+    data.zip(nodeIds).map {
+      case ((_, _, bins), nodeId) =>
+        val split = lastSplits.get(nodeId)
+        if (split.nonEmpty) {
+          val leftNodeId = nodeId << 1
+          if (split.get.goLeft(bins)) {
+            leftNodeId
+          } else {
+            leftNodeId + 1
+          }
+        } else {
+          nodeId
+        }
+    }
+  }
+
+  /**
     * Compute the histogram of root node or the left leaves with nodeId greater than minNodeId
     *
-    * @param data      instances appended with nodeId, containing (nodeId, grad, hess, bins)
-    * @param minNodeId minimum nodeId
+    * @param data      instances appended with nodeId, containing ((grad, hess, bins), nodeId)
+    * @param minNodeId minimum nodeId for this level
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
-  def computeHists[B: Integral : ClassTag](data: RDD[(Long, Double, Double, Array[B])],
+  def computeHists[B: Integral : ClassTag](data: RDD[((Double, Double, Array[B]), Long)],
                                            minNodeId: Long): RDD[((Long, Int), Array[Double])] = {
     val intB = implicitly[Integral[B]]
 
-    data.filter { case (nodeId, _, _, _) =>
+    data.filter { case (_, nodeId) =>
       (nodeId >= minNodeId && nodeId % 2 == 0) || nodeId == 1
 
-    }.flatMap { case (nodeId, grad, hess, bins) =>
+    }.flatMap { case ((grad, hess, bins), nodeId) =>
       bins.zipWithIndex.map { case (bin, featureId) =>
         ((nodeId, featureId), (bin, grad, hess))
       }

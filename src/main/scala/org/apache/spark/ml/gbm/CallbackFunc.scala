@@ -1,5 +1,9 @@
 package org.apache.spark.ml.gbm
 
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
+import scala.util.{Failure, Success}
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -84,11 +88,21 @@ class ModelCheckpointFunc(val interval: Int,
                        model: GBMModel,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
+
     if (model.numTrees % interval == 0) {
-      val start = System.nanoTime
-      val currentPath = new Path(path, s"model-${model.numTrees}").toString
-      GBMModel.save(model, currentPath)
-      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime - start) / 1e9} seconds")
+      Future {
+        val start = System.nanoTime
+        val currentPath = new Path(path, s"model-${model.numTrees}").toString
+        GBMModel.save(model, currentPath)
+        (System.nanoTime - start) / 1e9
+
+      }.onComplete {
+        case Success(v) =>
+          logWarning(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+
+        case Failure(t) =>
+          logWarning(s"fail to checkpoint model, ${t.toString}")
+      }
     }
 
     false
@@ -114,23 +128,31 @@ class ClassificationModelCheckpointFunc(val interval: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
-      val start = System.nanoTime
+      Future {
+        val start = System.nanoTime
+        val spark = SparkSession.builder().getOrCreate()
 
-      val spark = SparkSession.builder().getOrCreate()
+        val currentPath = new Path(path, s"model-${model.numTrees}").toString
 
-      val currentPath = new Path(path, s"model-${model.numTrees}").toString
+        DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
 
-      DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
+        GBMModel.save(model, currentPath)
 
-      GBMModel.save(model, currentPath)
+        val otherDF = spark.createDataFrame(Seq(
+          ("type", "classification"),
+          ("time", System.currentTimeMillis.toString))).toDF("key", "value")
+        val otherPath = new Path(currentPath, "other").toString
+        otherDF.write.parquet(otherPath)
 
-      val otherDF = spark.createDataFrame(Seq(
-        ("type", "classification"),
-        ("time", System.currentTimeMillis.toString))).toDF("key", "value")
-      val otherPath = new Path(currentPath, "other").toString
-      otherDF.write.parquet(otherPath)
+        (System.nanoTime - start) / 1e9
 
-      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime - start) / 1e9} seconds")
+      }.onComplete {
+        case Success(v) =>
+          logWarning(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+
+        case Failure(t) =>
+          logWarning(s"fail to checkpoint model, ${t.toString}")
+      }
     }
 
     false
@@ -157,23 +179,31 @@ class RegressionModelCheckpointFunc(val interval: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
-      val start = System.nanoTime
+      Future {
+        val start = System.nanoTime
+        val spark = SparkSession.builder().getOrCreate()
 
-      val spark = SparkSession.builder().getOrCreate()
+        val currentPath = new Path(path, s"model-${model.numTrees}").toString
 
-      val currentPath = new Path(path, s"model-${model.numTrees}").toString
+        DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
 
-      DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
+        GBMModel.save(model, currentPath)
 
-      GBMModel.save(model, currentPath)
+        val otherDF = spark.createDataFrame(Seq(
+          ("type", "regression"),
+          ("time", System.currentTimeMillis.toString))).toDF("key", "value")
+        val otherPath = new Path(currentPath, "other").toString
+        otherDF.write.parquet(otherPath)
 
-      val otherDF = spark.createDataFrame(Seq(
-        ("type", "regression"),
-        ("time", System.currentTimeMillis.toString))).toDF("key", "value")
-      val otherPath = new Path(currentPath, "other").toString
-      otherDF.write.parquet(otherPath)
+        (System.nanoTime - start) / 1e9
 
-      logWarning(s"Model checkpoint finish, duration ${(System.nanoTime - start) / 1e9} seconds")
+      }.onComplete {
+        case Success(v) =>
+          logWarning(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+
+        case Failure(t) =>
+          logWarning(s"fail to checkpoint model, ${t.toString}")
+      }
     }
 
     false

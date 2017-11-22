@@ -128,6 +128,7 @@ class GBMClassifier(override val uid: String)
 
   def setFirstTrees(value: Int): this.type = set(firstTrees, value)
 
+  def setFloatType(value: String): this.type = set(floatType, value)
 
   override def fit(dataset: Dataset[_]): GBMClassificationModel = {
     fit(dataset, None)

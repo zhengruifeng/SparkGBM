@@ -33,6 +33,7 @@ class BoostConfig extends Logging with Serializable {
   private var callbacks: Array[CallbackFunc] = _
 
   private var numCols: Int = _
+  private var floatType: String = _
   private var baseScore: Double = _
   private var catCols: Set[Int] = _
   private var rankCols: Set[Int] = _
@@ -422,6 +423,16 @@ class BoostConfig extends Logging with Serializable {
   def getNumCols: Int = numCols
 
 
+  /** float precision */
+  private[gbm] def setFloatType(value: String): this.type = {
+    require(value == "float" || value == "double")
+    floatType = value
+    this
+  }
+
+  def getFloatType: String = floatType
+
+
   /** base score for global bias */
   private[gbm] def setBaseScore(value: Double): this.type = {
     require(!value.isNaN && !value.isInfinity)
@@ -461,11 +472,11 @@ class BoostConfig extends Logging with Serializable {
 private[gbm] class TreeConfig(val iteration: Int,
                               val treeIndex: Int,
                               val catCols: Set[Int],
-                              val colsMap: Array[Int]) extends Serializable {
+                              val columns: Array[Int]) extends Serializable {
 
   def isSeq(colIndex: Int): Boolean = !catCols.contains(colIndex)
 
-  def numCols: Int = colsMap.length
+  def numCols: Int = columns.length
 }
 
 

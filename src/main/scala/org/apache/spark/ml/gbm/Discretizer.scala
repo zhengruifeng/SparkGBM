@@ -51,7 +51,7 @@ private[gbm] object Discretizer extends Logging {
         new CatColAgg(maxBins - 1)
       } else if (rankCols.contains(col)) {
         new RankAgg(maxBins - 1)
-      } else if (numericalBinType == "depth") {
+      } else if (numericalBinType == GBM.Depth) {
         new QuantileNumColAgg(maxBins - 1)
       } else {
         new IntervalNumColAgg(maxBins - 1)

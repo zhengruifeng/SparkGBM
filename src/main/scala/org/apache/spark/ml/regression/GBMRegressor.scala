@@ -138,6 +138,7 @@ class GBMRegressor(override val uid: String) extends
 
   def setFirstTrees(value: Int): this.type = set(firstTrees, value)
 
+  def setFloatType(value: String): this.type = set(floatType, value)
 
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)

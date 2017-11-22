@@ -425,5 +425,22 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getNumericalBinType: String = $(numericalBinType)
 
   setDefault(numericalBinType -> "width")
+
+
+  /**
+    * Float precision to represent internal gradient, hessian and prediction.
+    * (default = "float")
+    *
+    * @group param
+    */
+  final val floatType: Param[String] =
+    new Param[String](this, "floatType", "Float precision to represent internal gradient, hessian and prediction.",
+      ParamValidators.inArray[String](Array("float", "double")))
+
+  def getFloatType: String = $(floatType)
+
+  setDefault(floatType -> "float")
 }
+
+
 

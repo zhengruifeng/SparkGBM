@@ -64,20 +64,23 @@ private[gbm] object Split {
     * @param hist        histogram
     * @param boostConfig boosting config info
     * @param treeConfig  tree config info
+    * @tparam H
     * @return best split if any
     */
-  def split(featureId: Int,
-            hist: Array[Double],
-            boostConfig: BoostConfig,
-            treeConfig: TreeConfig): Option[Split] = {
+  def split[H: Numeric](featureId: Int,
+                        hist: Array[H],
+                        boostConfig: BoostConfig,
+                        treeConfig: TreeConfig): Option[Split] = {
     require(hist.length % 2 == 0)
 
     if (hist.length <= 2) {
       return None
     }
 
-    val gradSeq = Array.range(0, hist.length, 2).map(hist)
-    val hessSeq = Array.range(1, hist.length, 2).map(hist)
+    val numH = implicitly[Numeric[H]]
+
+    val gradSeq = Array.range(0, hist.length, 2).map(i => numH.toDouble(hist(i)))
+    val hessSeq = Array.range(1, hist.length, 2).map(i => numH.toDouble(hist(i)))
 
     val nnz = gradSeq.zip(hessSeq)
       .count { case (g, h) =>

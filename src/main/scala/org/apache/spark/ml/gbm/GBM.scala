@@ -415,8 +415,9 @@ class GBM extends Logging with Serializable {
 
     val discretizer = if (initialModel.isDefined) {
       require(numCols == initialModel.get.discretizer.colDiscretizers.length)
-      logWarning(s"Discretizer is already provided by the initial model, related params (catCols,rankCols,quantileBins) will be ignored")
+      logWarning(s"Discretizer is already provided by the initial model, related params (maxBins,catCols,rankCols,numericalBinType) will be ignored")
       initialModel.get.discretizer
+
     } else {
       if (catCols.nonEmpty) {
         require(catCols.min >= 0 && catCols.max < numCols)
@@ -427,20 +428,13 @@ class GBM extends Logging with Serializable {
       require(catCols.intersect(rankCols).isEmpty)
       Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, aggregationDepth)
     }
-
-    logWarning(s"Number of bins: ${discretizer.numBins.mkString("(", ",", ")")}")
-
-    if (initialModel.isDefined &&
-      initialModel.get.baseScore != baseScore) {
-      logWarning(s"Base score not equal to the value in initial model")
-    }
+    logWarning(s"Average number of bins for one column: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
 
     val boostConfig = new BoostConfig
     boostConfig.setMaxIter(maxIter)
       .setMaxDepth(maxDepth)
       .setMaxLeaves(maxLeaves)
       .setNumCols(numCols)
-      .setBaseScore(baseScore)
       .setMinGain(minGain)
       .setMinNodeHess(minNodeHess)
       .setStepSize(stepSize)
@@ -465,6 +459,15 @@ class GBM extends Logging with Serializable {
       .setMaxBruteBins(maxBruteBins)
       .setFloatType(floatType)
       .setSeed(seed)
+
+    if (initialModel.isEmpty) {
+      boostConfig.setBaseScore(baseScore)
+    } else {
+      boostConfig.setBaseScore(initialModel.get.baseScore)
+      if (initialModel.get.baseScore != baseScore) {
+        logWarning(s"baseScore is already provided by the initial model, related param (baseScore) will be ignored")
+      }
+    }
 
     val trainRDD = data.map { case (weight, label, features) =>
       (weight, label, discretizer.transform(features))

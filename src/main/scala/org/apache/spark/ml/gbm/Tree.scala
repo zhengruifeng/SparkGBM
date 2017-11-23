@@ -22,6 +22,7 @@ private[gbm] object Tree extends Logging {
                                                            boostConfig: BoostConfig,
                                                            treeConfig: TreeConfig): Option[TreeModel] = {
     val sc = data.sparkContext
+    val numExecutors = sc.getExecutorMemoryStatus.size
 
     data.persist(boostConfig.getStorageLevel)
 
@@ -55,8 +56,8 @@ private[gbm] object Tree extends Logging {
     while (!finished) {
       val start = System.nanoTime
 
-      val parallelism = computeParallelism(sc.getExecutorMemoryStatus.size,
-        math.max(lastSplits.size * 2, 1), treeConfig.numCols, boostConfig.getColSampleByLevel)
+      val parallelism = computeParallelism(numExecutors, math.max(lastSplits.size * 2, 1),
+        treeConfig.numCols, boostConfig.getColSampleByLevel)
 
       val depth = root.subtreeDepth
       logWarning(s"$logPrefix Depth $depth: splitting start, parallelism $parallelism")

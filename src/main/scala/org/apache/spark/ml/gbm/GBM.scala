@@ -592,24 +592,18 @@ private[gbm] object GBM extends Logging {
       trees.appendAll(initialModel.get.trees)
     }
 
-    val trainPredsCheckpointer = new Checkpointer[(Double, Array[H])](sc,
+    val trainPredsCheckpointer = new Checkpointer[Array[H]](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
-    var trainPreds = if (initialModel.isDefined) {
-      computePrediction[H, B](data, trees.zip(weights).toArray, boostConfig.getBaseScore)
-    } else {
-      data.map(_ => (boostConfig.getBaseScore, Array.empty[H]))
-    }
+
+    var trainPreds = computePrediction[H, B](data, trees.zip(weights).toArray, boostConfig.getBaseScore)
     trainPredsCheckpointer.update(trainPreds)
 
-    val testPredsCheckpointer = new Checkpointer[(Double, Array[H])](sc,
+    val testPredsCheckpointer = new Checkpointer[Array[H]](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
-    var testPreds = sc.emptyRDD[(Double, Array[H])]
+
+    var testPreds = sc.emptyRDD[Array[H]]
     if (validation && boostConfig.getEvaluateFunc.nonEmpty) {
-      testPreds = if (initialModel.isDefined) {
-        computePrediction[H, B](test, trees.zip(weights).toArray, boostConfig.getBaseScore)
-      } else {
-        test.map(_ => (boostConfig.getBaseScore, Array.empty[H]))
-      }
+      testPreds = computePrediction[H, B](test, trees.zip(weights).toArray, boostConfig.getBaseScore)
       testPredsCheckpointer.update(testPreds)
     }
 
@@ -703,11 +697,11 @@ private[gbm] object GBM extends Logging {
 
         /** callback */
         if (boostConfig.getCallbackFunc.nonEmpty) {
-          val snapshot = new GBMModel(discretizer, boostConfig.getBaseScore, trees.toArray, weights.toArray)
+          val snapshot = new GBMModel(discretizer, boostConfig.getBaseScore, trees.toArray.clone(), weights.toArray.clone())
 
           /** callback can update boosting configuration */
           boostConfig.getCallbackFunc.foreach { callback =>
-            if (callback.compute(boostConfig, snapshot, trainMetricsHistory.toArray, testMetricsHistory.toArray)) {
+            if (callback.compute(boostConfig, snapshot, trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
               logWarning(s"$logPrefix callback ${callback.name} stop training")
             }
@@ -784,7 +778,7 @@ private[gbm] object GBM extends Logging {
     * @return a new tree if possible
     */
   def buildTree[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
-                                                                            preds: RDD[(Double, Array[H])],
+                                                                            preds: RDD[Array[H]],
                                                                             weights: Array[Double],
                                                                             boostConfig: BoostConfig,
                                                                             iteration: Int,
@@ -817,25 +811,29 @@ private[gbm] object GBM extends Logging {
 
     val colSampled = boostConfig.getBoostType match {
       case GBTree =>
-        rowSampled.map { case ((weight, label, bins), (score, _)) =>
-          val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, score)
+        rowSampled.map { case ((weight, label, bins), pred) =>
+          val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, numH.toDouble(pred.head))
           (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), cols.map(bins))
         }
 
       case Dart if dropped.isEmpty =>
-        rowSampled.map { case ((weight, label, bins), (score, _)) =>
-          val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, score)
+        rowSampled.map { case ((weight, label, bins), pred) =>
+          val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, numH.toDouble(pred.head))
           (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), cols.map(bins))
         }
 
       case Dart if dropped.nonEmpty =>
-        rowSampled.map { case ((weight, label, bins), (_, pred)) =>
+        rowSampled.map { case ((weight, label, bins), pred) =>
           var score = boostConfig.getBaseScore
-          pred.zip(weights).zipWithIndex.foreach { case ((p, w), i) =>
+
+          var i = 0
+          while (i < weights.length) {
             if (!dropped.contains(i)) {
-              score += numH.toDouble(p) * w
+              score += numH.toDouble(pred(i + 1)) * weights(i)
             }
+            i += 1
           }
+
           val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, score)
           (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), cols.map(bins))
         }
@@ -858,23 +856,25 @@ private[gbm] object GBM extends Logging {
     */
   def computePrediction[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
                                                                                     trees: Array[(TreeModel, Double)],
-                                                                                    baseScore: Double): RDD[(Double, Array[H])] = {
+                                                                                    baseScore: Double): RDD[Array[H]] = {
+    val numH = implicitly[Numeric[H]]
     val toH = implicitly[FromDouble[H]]
 
     instances.map { case (_, _, bins) =>
-      var score = baseScore
-      val pred = Array.ofDim[H](trees.length)
+      val pred = Array.fill(trees.length + 1)(numH.zero)
+
+      pred(0) = toH.fromDouble(baseScore)
 
       var i = 0
       while (i < trees.length) {
         val (tree, w) = trees(i)
-        val p = tree.predict(bins)
-        score += p * w
-        pred(i) = toH.fromDouble(p)
+        val p = toH.fromDouble(tree.predict(bins))
+        pred(i + 1) = p
+        pred(0) = numH.plus(pred(0), numH.times(p, toH.fromDouble(w)))
         i += 1
       }
 
-      (score, pred)
+      pred
     }
   }
 
@@ -893,37 +893,44 @@ private[gbm] object GBM extends Logging {
     * @return RDD containing final score and the predictions of each tree
     */
   def updatePrediction[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
-                                                                                   preds: RDD[(Double, Array[H])],
+                                                                                   preds: RDD[Array[H]],
                                                                                    weights: Array[Double],
                                                                                    tree: TreeModel,
                                                                                    baseScore: Double,
-                                                                                   keepWeights: Boolean): RDD[(Double, Array[H])] = {
+                                                                                   keepWeights: Boolean): RDD[Array[H]] = {
     val numH = implicitly[Numeric[H]]
     val toH = implicitly[FromDouble[H]]
 
     if (keepWeights) {
-      instances.zip(preds).map { case ((_, _, bins), (score, pred)) =>
-        val p = tree.predict(bins)
-        val newPred = pred :+ toH.fromDouble(p)
+      instances.zip(preds).map { case ((_, _, bins), pred) =>
+        val p = toH.fromDouble(tree.predict(bins))
 
-        require(newPred.length == weights.length)
-        val newScore = score + p * weights.last
-        (newScore, newPred)
+        val newPred = pred :+ p
+
+        require(newPred.length == weights.length + 1)
+
+        newPred(0) = numH.plus(newPred(0), numH.times(p, toH.fromDouble(weights.last)))
+
+        newPred
       }
 
     } else {
-      instances.zip(preds).map { case ((_, _, bins), (_, pred)) =>
-        val p = tree.predict(bins)
-        val newPred = pred :+ toH.fromDouble(p)
+      instances.zip(preds).map { case ((_, _, bins), pred) =>
+        val p = toH.fromDouble(tree.predict(bins))
 
-        require(newPred.length == weights.length)
-        var newScore = baseScore
+        val newPred = pred :+ p
+
+        require(newPred.length == weights.length + 1)
+
+        newPred(0) = toH.fromDouble(baseScore)
+
         var i = 0
-        while (i < newPred.length) {
-          newScore += numH.toDouble(newPred(i)) * weights(i)
+        while (i < weights.length) {
+          newPred(0) = numH.plus(newPred(0), numH.times(newPred(i + 1), toH.fromDouble(weights(i))))
           i += 1
         }
-        (newScore, newPred)
+
+        newPred
       }
     }
   }
@@ -939,17 +946,19 @@ private[gbm] object GBM extends Logging {
     * @tparam B
     * @return Evaluation result with names as the keys and metrics as the values
     */
-  def evaluate[H: Numeric, B: Integral](instances: RDD[(Double, Double, Array[B])],
-                                        preds: RDD[(Double, Array[H])],
-                                        boostConfig: BoostConfig): Map[String, Double] = {
+  def evaluate[H: Numeric : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
+                                                              preds: RDD[Array[H]],
+                                                              boostConfig: BoostConfig): Map[String, Double] = {
 
     if (boostConfig.getEvaluateFunc.isEmpty) {
       return Map.empty
     }
 
+    val numH = implicitly[Numeric[H]]
+
     val scores = instances.zip(preds).map {
-      case ((weight, label, _), (score, _)) =>
-        (weight, label, score)
+      case ((weight, label, _), pred) =>
+        (weight, label, numH.toDouble(pred.head))
     }
 
     val result = mutable.Map[String, Double]()
@@ -1047,9 +1056,11 @@ class GBMModel(val discretizer: Discretizer,
     Vectors.dense(gains).compressed
   }
 
+
   def predict(features: Vector): Double = {
     predict(features, numTrees)
   }
+
 
   def predict(features: Vector,
               firstTrees: Int): Double = {
@@ -1071,14 +1082,17 @@ class GBMModel(val discretizer: Discretizer,
     score
   }
 
+
   def leaf(features: Vector): Vector = {
     leaf(features, false)
   }
+
 
   def leaf(features: Vector,
            oneHot: Boolean): Vector = {
     leaf(features, oneHot, numTrees)
   }
+
 
   /** leaf transformation with first trees, if oneHot is enable, transform input into a sparse one-hot encoded vector */
   def leaf(features: Vector,
@@ -1146,6 +1160,7 @@ object GBMModel {
     extraDF.write.parquet(extraPath)
   }
 
+
   /** load GBMModel from a path */
   def load(path: String): GBMModel = {
     val spark = SparkSession.builder.getOrCreate()
@@ -1164,6 +1179,7 @@ object GBMModel {
 
     fromDF(discretizerDF, weightsDF, treesDF, extraDF)
   }
+
 
   /** helper function to convert GBMModel to dataframes */
   private[gbm] def toDF(model: GBMModel): (DataFrame, DataFrame, DataFrame, DataFrame) = {
@@ -1186,6 +1202,7 @@ object GBMModel {
 
     (discretizerDF, weightsDF, treesDF, extraDF)
   }
+
 
   /** helper function to convert dataframes back to GBMModel */
   private[gbm] def fromDF(discretizerDF: DataFrame,

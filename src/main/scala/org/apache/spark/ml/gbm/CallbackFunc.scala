@@ -38,7 +38,7 @@ trait CallbackFunc extends Logging with Serializable {
   *
   * @param iters the interval to stop training if one metric on validation data doesn't improve
   */
-class EarlyStopFunc(val iters: Int) extends CallbackFunc {
+class EarlyStop(val iters: Int) extends CallbackFunc {
   require(iters >= 1)
 
   def this() = this(10)
@@ -80,8 +80,8 @@ class EarlyStopFunc(val iters: Int) extends CallbackFunc {
   * @param interval the interval between checkpoints
   * @param path     the path to save models
   */
-class ModelCheckpointFunc(val interval: Int,
-                          val path: String) extends CallbackFunc {
+class ModelCheckpoint(val interval: Int,
+                      val path: String) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
   override def compute(boostConfig: BoostConfig,
@@ -118,9 +118,9 @@ class ModelCheckpointFunc(val interval: Int,
   * @param path     the path to save models
   * @param params   meta params to save
   */
-class ClassificationModelCheckpointFunc(val interval: Int,
-                                        val path: String,
-                                        val params: Params) extends CallbackFunc {
+class ClassificationModelCheckpoint(val interval: Int,
+                                    val path: String,
+                                    val params: Params) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
   override def compute(boostConfig: BoostConfig,
@@ -169,9 +169,9 @@ class ClassificationModelCheckpointFunc(val interval: Int,
   * @param path     the path to save models
   * @param params   meta params to save
   */
-class RegressionModelCheckpointFunc(val interval: Int,
-                                    val path: String,
-                                    val params: Params) extends CallbackFunc {
+class RegressionModelCheckpoint(val interval: Int,
+                                val path: String,
+                                val params: Params) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
   override def compute(boostConfig: BoostConfig,
@@ -209,5 +209,5 @@ class RegressionModelCheckpointFunc(val interval: Int,
     false
   }
 
-  override def name = "RegressionModelCheckpointFunc"
+  override def name = "RegressionModelCheckpoint"
 }

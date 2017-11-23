@@ -196,11 +196,11 @@ class GBMRegressor(override val uid: String) extends
 
     val callBackFunc = ArrayBuffer[CallbackFunc]()
     if ($(earlyStopIters) >= 1) {
-      callBackFunc.append(new EarlyStopFunc($(earlyStopIters)))
+      callBackFunc.append(new EarlyStop($(earlyStopIters)))
     }
     if ($(modelCheckpointInterval) >= 1 && $(modelCheckpointPath).nonEmpty) {
       val mockModel = copyValues(new GBMRegressionModel(uid, null).setParent(this))
-      callBackFunc.append(new RegressionModelCheckpointFunc($(modelCheckpointInterval), $(modelCheckpointPath), mockModel))
+      callBackFunc.append(new RegressionModelCheckpoint($(modelCheckpointInterval), $(modelCheckpointPath), mockModel))
     }
 
     val initialModel =

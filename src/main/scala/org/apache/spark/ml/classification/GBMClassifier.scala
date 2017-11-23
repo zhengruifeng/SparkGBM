@@ -184,11 +184,11 @@ class GBMClassifier(override val uid: String)
 
     val callBackFunc = ArrayBuffer[CallbackFunc]()
     if ($(earlyStopIters) >= 1) {
-      callBackFunc.append(new EarlyStopFunc($(earlyStopIters)))
+      callBackFunc.append(new EarlyStop($(earlyStopIters)))
     }
     if ($(modelCheckpointInterval) >= 1 && $(modelCheckpointPath).nonEmpty) {
       val mockModel = copyValues(new GBMClassificationModel(uid, null).setParent(this))
-      callBackFunc.append(new ClassificationModelCheckpointFunc($(modelCheckpointInterval), $(modelCheckpointPath), mockModel))
+      callBackFunc.append(new ClassificationModelCheckpoint($(modelCheckpointInterval), $(modelCheckpointPath), mockModel))
     }
 
     val initialModel =

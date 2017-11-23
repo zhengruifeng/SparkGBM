@@ -165,7 +165,7 @@ class GBM extends Logging with Serializable {
 
 
   /** callback functions */
-  private var callbackFunc: Array[CallbackFunc] = Array(new EarlyStopFunc)
+  private var callbackFunc: Array[CallbackFunc] = Array(new EarlyStop)
 
   def setCallbackFunc(value: Array[CallbackFunc]): this.type = {
     require(value.map(_.name).distinct.length == value.length)

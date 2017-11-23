@@ -51,11 +51,15 @@ private[gbm] object Tree extends Logging {
 
     val lastSplits = mutable.Map[Long, Split]()
 
+
     while (!finished) {
       val start = System.nanoTime
 
+      val parallelism = computeParallelism(sc.getExecutorMemoryStatus.size,
+        math.max(lastSplits.size * 2, 1), treeConfig.numCols, boostConfig.getColSampleByLevel)
+
       val depth = root.subtreeDepth
-      logWarning(s"$logPrefix Depth $depth: splitting start")
+      logWarning(s"$logPrefix Depth $depth: splitting start, parallelism $parallelism")
 
       if (minNodeId == 1L) {
         nodeIds = data.map(_ => 1L)
@@ -65,10 +69,10 @@ private[gbm] object Tree extends Logging {
       nodeIdsCheckpointer.update(nodeIds)
 
       if (minNodeId == 1) {
-        hists = computeHists[H, B](data.zip(nodeIds), minNodeId)
+        hists = computeHists[H, B](data.zip(nodeIds), minNodeId, parallelism)
       } else {
-        val leftHists = computeHists[H, B](data.zip(nodeIds), minNodeId)
-        hists = subtractHists[H](hists, leftHists, boostConfig.getMinNodeHess)
+        val leftHists = computeHists[H, B](data.zip(nodeIds), minNodeId, parallelism)
+        hists = subtractHists[H](hists, leftHists, boostConfig.getMinNodeHess, parallelism)
       }
       histsCheckpointer.update(hists)
 
@@ -127,11 +131,11 @@ private[gbm] object Tree extends Logging {
     }
     logWarning(s"$logPrefix tree building finished")
 
+    data.unpersist(blocking = false)
     nodeIdsCheckpointer.deleteAllCheckpoints()
     nodeIdsCheckpointer.unpersistDataSet()
     histsCheckpointer.deleteAllCheckpoints()
     histsCheckpointer.unpersistDataSet()
-    data.unpersist(blocking = false)
 
     if (root.subtreeDepth > 0) {
       Some(TreeModel.createModel(root, boostConfig, treeConfig))
@@ -139,6 +143,7 @@ private[gbm] object Tree extends Logging {
       None
     }
   }
+
 
   /**
     * update nodeIds
@@ -169,17 +174,20 @@ private[gbm] object Tree extends Logging {
     }
   }
 
+
   /**
     * Compute the histogram of root node or the left leaves with nodeId greater than minNodeId
     *
-    * @param data      instances appended with nodeId, containing ((grad, hess, bins), nodeId)
-    * @param minNodeId minimum nodeId for this level
+    * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
+    * @param minNodeId   minimum nodeId for this level
+    * @param parallelism parallelism
     * @tparam H
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
   def computeHists[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, Array[B]), Long)],
-                                                                  minNodeId: Long): RDD[((Long, Int), Array[H])] = {
+                                                                  minNodeId: Long,
+                                                                  parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
 
@@ -191,7 +199,7 @@ private[gbm] object Tree extends Logging {
         ((nodeId, featureId), (bin, grad, hess))
       }
 
-    }.aggregateByKey[Array[H]](Array.empty[H])(
+    }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
       seqOp = {
         case (hist, (bin, grad, hess)) =>
           val index = intB.toInt(bin) << 1
@@ -226,24 +234,27 @@ private[gbm] object Tree extends Logging {
       })
   }
 
+
   /**
     * Histogram subtraction
     *
     * @param nodeHists   histogram data of parent nodes
     * @param leftHists   histogram data of left leaves
     * @param minNodeHess minimum hess needed for a node
+    * @param parallelism parallelism
     * @tparam H
     * @return histogram data of both left and right leaves
     */
   def subtractHists[H: Numeric : ClassTag](nodeHists: RDD[((Long, Int), Array[H])],
                                            leftHists: RDD[((Long, Int), Array[H])],
-                                           minNodeHess: Double): RDD[((Long, Int), Array[H])] = {
+                                           minNodeHess: Double,
+                                           parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val numH = implicitly[Numeric[H]]
 
     leftHists.map { case ((nodeId, featureId), hist) =>
       ((nodeId >> 1, featureId), hist)
 
-    }.join(nodeHists)
+    }.join(nodeHists, parallelism)
 
       .flatMap { case ((nodeId, featureId), (leftHist, nodeHist)) =>
         require(leftHist.length <= nodeHist.length)
@@ -277,6 +288,7 @@ private[gbm] object Tree extends Logging {
       nnz >= 2 && hessSum >= minNodeHess * 2
     }
   }
+
 
   /**
     * Search the optimal splits on each leaves
@@ -324,6 +336,40 @@ private[gbm] object Tree extends Logging {
             }.toArray
       }, depth = boostConfig.getAggregationDepth)
       .toMap
+  }
+
+
+  /**
+    * Compute parallelism of splitting
+    *
+    * @param numExecutors     number of executors
+    * @param numLeaves        number of leaves in current level
+    * @param numCols          number of columns
+    * @param colSampleByLevel rate of column sampling by level
+    * @return parallelism of splitting
+    */
+  def computeParallelism(numExecutors: Int,
+                         numLeaves: Int,
+                         numCols: Int,
+                         colSampleByLevel: Double): Int = {
+    require(numExecutors > 0 && numLeaves > 0 && numCols > 0)
+
+    if (numExecutors == 1) {
+      /** driver only */
+      1
+
+    } else {
+      /** approximate number of histogram in current level */
+      val approxCount = numLeaves * numCols * colSampleByLevel
+
+      var k = (approxCount / (numExecutors - 1)).ceil.toInt
+
+      k = math.min(k, 128)
+
+      k = math.max(k, 1)
+
+      k * (numExecutors - 1)
+    }
   }
 }
 

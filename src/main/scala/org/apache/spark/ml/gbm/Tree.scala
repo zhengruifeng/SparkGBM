@@ -363,7 +363,7 @@ private[gbm] object Tree extends Logging {
       /** approximate number of histogram in current level */
       val approxCount = numLeaves * numCols * colSampleByLevel
 
-      var k = (approxCount / (numExecutors - 1)).ceil.toInt
+      var k = (approxCount / (numExecutors - 1)).floor.toInt
 
       k = math.min(k, 128)
 
@@ -373,6 +373,7 @@ private[gbm] object Tree extends Logging {
     }
   }
 }
+
 
 class TreeModel(val root: Node) extends Serializable {
 
@@ -410,6 +411,7 @@ private[gbm] object TreeModel {
     val node = TreeModel.createNode(root, treeMeta.columns, leafIds)
     new TreeModel(node)
   }
+
 
   def createNode(node: LearningNode,
                  columns: Array[Int],

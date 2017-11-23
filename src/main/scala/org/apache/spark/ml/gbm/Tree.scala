@@ -84,9 +84,9 @@ private[gbm] object Tree extends Logging {
         finished = true
 
       } else {
-        val gain = splits.values.map(_.gain).sum
         logWarning(s"$logPrefix Depth $depth: splitting finished, ${splits.size}/$numLeaves leaves split, " +
-          s"gain=$gain, duration ${(System.nanoTime - start) / 1e9} seconds")
+          s"gain=${splits.values.map(_.gain).sum}, duration ${(System.nanoTime - start) / 1e9} seconds")
+
         numLeaves += splits.size
 
         val nodes = root.nodeIterator.filter { node =>
@@ -132,7 +132,6 @@ private[gbm] object Tree extends Logging {
     histsCheckpointer.deleteAllCheckpoints()
     histsCheckpointer.unpersistDataSet()
     data.unpersist(blocking = false)
-    lastSplits.clear()
 
     if (root.subtreeDepth > 0) {
       Some(TreeModel.createModel(root, boostConfig, treeConfig))
@@ -151,15 +150,15 @@ private[gbm] object Tree extends Logging {
     * @tparam B
     * @return updated nodeIds
     */
-  def updateNodeIds[H: Numeric, B: Integral](data: RDD[(H, H, Array[B])],
-                                             nodeIds: RDD[Long],
-                                             lastSplits: Map[Long, Split]): RDD[Long] = {
+  def updateNodeIds[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[(H, H, Array[B])],
+                                                                   nodeIds: RDD[Long],
+                                                                   lastSplits: Map[Long, Split]): RDD[Long] = {
     data.zip(nodeIds).map {
       case ((_, _, bins), nodeId) =>
         val split = lastSplits.get(nodeId)
         if (split.nonEmpty) {
           val leftNodeId = nodeId << 1
-          if (split.get.goLeft(bins)) {
+          if (split.get.goLeft[B](bins)) {
             leftNodeId
           } else {
             leftNodeId + 1
@@ -289,10 +288,10 @@ private[gbm] object Tree extends Logging {
     * @tparam H
     * @return optimal splits for each node
     */
-  def findSplits[H: Numeric](nodeHists: RDD[((Long, Int), Array[H])],
-                             boostConfig: BoostConfig,
-                             treeConfig: TreeConfig,
-                             seed: Long): Map[Long, Split] = {
+  def findSplits[H: Numeric : ClassTag](nodeHists: RDD[((Long, Int), Array[H])],
+                                        boostConfig: BoostConfig,
+                                        treeConfig: TreeConfig,
+                                        seed: Long): Map[Long, Split] = {
 
     /** column sampling by level */
     val sampledHists = if (boostConfig.getColSampleByLevel == 1) {

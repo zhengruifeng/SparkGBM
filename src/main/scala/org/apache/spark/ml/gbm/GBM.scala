@@ -428,7 +428,7 @@ class GBM extends Logging with Serializable {
       require(catCols.intersect(rankCols).isEmpty)
       Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, aggregationDepth)
     }
-    logWarning(s"Average number of bins for one column: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
+    logWarning(s"Average number of bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
 
     val boostConfig = new BoostConfig
     boostConfig.setMaxIter(maxIter)

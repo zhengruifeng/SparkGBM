@@ -17,6 +17,7 @@ abstract class Split extends Serializable {
   def gain: Double
 }
 
+
 class SeqSplit(val featureId: Int,
                val missingGoLeft: Boolean,
                val gain: Double,
@@ -134,16 +135,17 @@ private[gbm] object Split {
                gradSeq: Array[Double],
                hessSeq: Array[Double],
                boostConfig: BoostConfig): Option[SeqSplit] = {
-    /** missing go left */
-    /** find best split on indices of [i0, i1, i2, i3, i4] */
+    // missing go left
+    // find best split on indices of [i0, i1, i2, i3, i4]
     val search1 = seqSearch(gradSeq, hessSeq, boostConfig)
 
     val search2 = if (gradSeq.head == 0 && hessSeq.head == 0) {
-      /** if hist of missing value is zero, do not need to place missing value to the right side */
+      // if hist of missing value is zero
+      // do not need to place missing value to the right side
       None
     } else {
-      /** missing go right */
-      /** find best split on indices of [i1, i2, i3, i4, i0] */
+      // missing go right
+      // find best split on indices of [i1, i2, i3, i4, i0]
       seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConfig)
     }
 
@@ -152,8 +154,8 @@ private[gbm] object Split {
         if (gain1 >= gain2) {
           Some(new SeqSplit(featureId, true, gain1, weightLeft1, weightRight1, cut1))
         } else {
-          /** adjust the cut of split2 */
-          /** cut = 2, [i1, i2, i3 | i4, i0] -> cut = 3 */
+          // adjust the cut of split2
+          // cut = 2, [i1, i2, i3 | i4, i0] -> cut = 3
           Some(new SeqSplit(featureId, false, gain2, weightLeft2, weightRight2, cut2 + 1))
         }
 
@@ -181,8 +183,8 @@ private[gbm] object Split {
                         gradSeq: Array[Double],
                         hessSeq: Array[Double],
                         boostConfig: BoostConfig): Option[SetSplit] = {
-    /** sort the hist according to the relevance of gain */
-    /** [g0, g1, g2, g3], [h0, h1, h2, h3] -> [g1, g3, g0, g2], [h1, h3, h0, h2] */
+    // sort the hist according to the relevance of gain
+    // [g0, g1, g2, g3], [h0, h1, h2, h3] -> [g1, g3, g0, g2], [h1, h3, h0, h2]
     val epsion = boostConfig.getRegLambda / gradSeq.length
     val (sortedGradSeq, sortedHessSeq, sortedIndices) =
       gradSeq.zip(hessSeq).zipWithIndex
@@ -226,9 +228,9 @@ private[gbm] object Split {
       return None
     }
 
-    /** ignore the indices with zero hist */
-    /** [g0, g1, g2, g3, g4, g5, g6], [h0, h1, h2, h3, h4, h5, h6], [i0, i1, i2, i3, i4, i5, i6] -> */
-    /** [g1, g2, g4, g6], [h1, h2, h4, h6], [i1, i2, i4, i6] */
+    // ignore the indices with zero hist
+    // [g0, g1, g2, g3, g4, g5, g6], [h0, h1, h2, h3, h4, h5, h6], [i0, i1, i2, i3, i4, i5, i6] ->
+    // [g1, g2, g4, g6], [h1, h2, h4, h6], [i1, i2, i4, i6]
     val nzIndices = gradSeq.zip(hessSeq).zipWithIndex
       .filter { case ((grad, hess), i) =>
         grad != 0 || hess != 0
@@ -249,13 +251,13 @@ private[gbm] object Split {
     var bestWeight1 = Double.NaN
     var bestWeight2 = Double.NaN
 
-    /** the first element in nnz hist is always unselected in set1 */
+    // the first element in nnz hist is always unselected in set1
     val k = 1L << (len - 1)
     var num = 1L
 
     val char1 = "1".head
     while (num < k) {
-      /** len = 4, num = 3, binStr = "11" -> "0011" & [i1, i2, i4, i6] = [i4, i6] */
+      // len = 4, num = 3, binStr = "11" -> "0011" & [i1, i2, i4, i6] = [i4, i6]
       val binStr = num.toBinaryString
 
       set1.clear()
@@ -265,7 +267,7 @@ private[gbm] object Split {
       val pad = len - binStr.length
       var i = 0
       while (i < binStr.length) {
-        /** len = 4, num = 3, binStr = "11", pad = 2, i = [0, 1] -> nzIndices[2, 3] -> [i4, i6] */
+        // len = 4, num = 3, binStr = "11", pad = 2, i = [0, 1] -> nzIndices[2, 3] -> [i4, i6]
         if (binStr(i) == char1) {
           val index = nzIndices(pad + i)
           grad1 += gradSeq(index)
@@ -434,7 +436,7 @@ private[gbm] object Split {
                      weight2: Double): SetSplit = {
     require(indices1.max < gradSeq.length)
 
-    /** ignore zero hist */
+    // ignore zero hist
     val set1 = mutable.Set[Int]()
     indices1.foreach { i =>
       if (gradSeq(i) != 0 || hessSeq(i) != 0) {
@@ -449,7 +451,7 @@ private[gbm] object Split {
       }
     }
 
-    /** remove index of missing value */
+    // remove index of missing value
     val missingInSet1 = set1.contains(0)
     val missingInSet2 = set2.contains(0)
     if (missingInSet1) {
@@ -458,7 +460,7 @@ private[gbm] object Split {
       set2.remove(0)
     }
 
-    /** choose the smaller set */
+    // choose the smaller set
     if (set1.size <= set2.size) {
       new SetSplit(featureId, missingInSet1, gain, weight1, weight2, set1.toArray.sorted)
     } else {

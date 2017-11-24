@@ -610,26 +610,26 @@ private[gbm] object GBM extends Logging {
       testPredsCheckpointer.update(testPreds)
     }
 
-    /** metrics history recoder */
+    // metrics history recoder
     val trainMetricsHistory = ArrayBuffer[Map[String, Double]]()
     val testMetricsHistory = ArrayBuffer[Map[String, Double]]()
 
-    /** random number generator for drop out */
+    // random number generator for drop out
     val dartRand = new Random(boostConfig.getSeed)
     val dropped = mutable.Set[Int]()
 
-    /** random number generator for column sampling */
+    // random number generator for column sampling
     val colSampleRand = new Random(boostConfig.getSeed)
 
     var iter = 0
     var finished = false
 
     while (!finished) {
-      /** if initial model is provided, round will not equal to iter */
+      // if initial model is provided, round will not equal to iter
       val round = trees.length
       val logPrefix = s"Iter $iter: Tree $round:"
 
-      /** drop out */
+      // drop out
       if (boostConfig.getBoostType == Dart) {
         dropTrees(dropped, boostConfig, round, dartRand)
         if (dropped.nonEmpty) {
@@ -639,19 +639,19 @@ private[gbm] object GBM extends Logging {
         }
       }
 
-      /** build tree */
+      // build tree
       logWarning(s"$logPrefix start")
       val start = System.nanoTime
       val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter, round, dropped.toSet, colSampleRand)
       logWarning(s"$logPrefix finish, duration ${(System.nanoTime - start) / 1e9} seconds")
 
       if (tree.isEmpty) {
-        /** fail to build a new tree */
+        // fail to build a new tree
         logWarning(s"$logPrefix no more tree built, GBM training finished")
         finished = true
 
       } else {
-        /** update base models */
+        // update base models
         trees.append(tree.get)
         var keepWeights = true
         boostConfig.getBoostType match {
@@ -671,16 +671,16 @@ private[gbm] object GBM extends Logging {
             keepWeights = false
         }
 
-        /** update train data predictions */
+        // update train data predictions
         trainPreds = updatePrediction(data, trainPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
         trainPredsCheckpointer.update(trainPreds)
 
         if (boostConfig.getEvaluateFunc.isEmpty) {
-          /** materialize predictions */
+          // materialize predictions
           trainPreds.count()
         }
 
-        /** evaluate on train data */
+        // evaluate on train data
         if (boostConfig.getEvaluateFunc.nonEmpty) {
           val trainMetrics = evaluate(data, trainPreds, boostConfig)
           trainMetricsHistory.append(trainMetrics)
@@ -688,21 +688,23 @@ private[gbm] object GBM extends Logging {
         }
 
         if (validation && boostConfig.getEvaluateFunc.nonEmpty) {
-          /** update test data predictions */
+          // update test data predictions
           testPreds = updatePrediction(test, testPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
           testPredsCheckpointer.update(testPreds)
 
-          /** evaluate on test data */
+          // evaluate on test data
           val testMetrics = evaluate(test, testPreds, boostConfig)
           testMetricsHistory.append(testMetrics)
           logWarning(s"$logPrefix test metrics ${testMetrics.mkString("(", ", ", ")")}")
         }
 
-        /** callback */
+        // callback
         if (boostConfig.getCallbackFunc.nonEmpty) {
-          val snapshot = new GBMModel(discretizer, boostConfig.getBaseScore, trees.toArray.clone(), weights.toArray.clone())
+          // using cloning to avoid model modification
+          val snapshot = new GBMModel(new Discretizer(discretizer.colDiscretizers.clone()),
+            boostConfig.getBaseScore, trees.toArray.clone(), weights.toArray.clone())
 
-          /** callback can update boosting configuration */
+          // callback can update boosting configuration
           boostConfig.getCallbackFunc.foreach { callback =>
             if (callback.compute(boostConfig, snapshot, trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
@@ -797,7 +799,7 @@ private[gbm] object GBM extends Logging {
       instances.zip(preds).sample(false, boostConfig.getSubSample, boostConfig.getSeed + treeIndex)
     }
 
-    /** selected columns */
+    // selected columns
     val cols = if (boostConfig.getColSampleByTree == 1) {
       Array.range(0, boostConfig.getNumCols)
     } else {
@@ -806,7 +808,7 @@ private[gbm] object GBM extends Logging {
         .take(numCols).toArray.sorted
     }
 
-    /** indices of categorical columns in the selected column subset */
+    // indices of categorical columns in the selected column subset
     val catCols = cols.zipWithIndex
       .filter { case (col, _) =>
         boostConfig.getCatCols.contains(col)
@@ -966,7 +968,7 @@ private[gbm] object GBM extends Logging {
 
     val result = mutable.Map[String, Double]()
 
-    /** persist if there are batch evaluators */
+    // persist if there are batch evaluators
     if (boostConfig.getBatchEvaluateFunc.nonEmpty) {
       scores.persist(boostConfig.getStorageLevel)
     }
@@ -1097,7 +1099,8 @@ class GBMModel(val discretizer: Discretizer,
   }
 
 
-  /** leaf transformation with first trees, if oneHot is enable, transform input into a sparse one-hot encoded vector */
+  /** leaf transformation with first trees
+    * if oneHot is enable, transform input into a sparse one-hot encoded vector */
   def leaf(features: Vector,
            oneHot: Boolean,
            firstTrees: Int): Vector = {

@@ -17,6 +17,7 @@ trait ObjFunc extends Serializable {
   def name: String
 }
 
+
 /**
   * Square loss
   */
@@ -27,6 +28,7 @@ class SquareObj extends ObjFunc {
 
   def name = "Square"
 }
+
 
 /**
   * Pseudo-Huber loss
@@ -56,6 +58,7 @@ class HuberObj(val delta: Double) extends ObjFunc {
 
   override def name = s"Huber-$delta"
 }
+
 
 /**
   * Log-loss or Cross Entropy

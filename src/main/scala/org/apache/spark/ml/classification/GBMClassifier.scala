@@ -325,7 +325,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
   def featureImportances: Vector = {
     val n = $(firstTrees)
     if (n == -1 || n == model.numTrees) {
-      /** precomputed feature importance */
+      // precomputed feature importance
       model.importance
     } else {
       logWarning(s"Compute feature importances with first $n trees")

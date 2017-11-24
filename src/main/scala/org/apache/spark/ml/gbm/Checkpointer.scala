@@ -169,7 +169,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   private def removeCheckpointFile(): Unit = {
     val old = checkpointQueue.dequeue()
 
-    /** Since the old checkpoint is not deleted by Spark, we manually delete it. */
+    // Since the old checkpoint is not deleted by Spark, we manually delete it
     getCheckpointFiles(old).foreach { file =>
       Future {
         val start = System.nanoTime

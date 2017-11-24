@@ -13,6 +13,7 @@ private[ml] trait EvalFunc extends Logging with Serializable {
   def name: String
 }
 
+
 /**
   * trait for batch evaluation function
   */
@@ -71,6 +72,7 @@ private[gbm] object IncrementalEvalFunc {
   }
 }
 
+
 /**
   * trait for simple element-wise evaluation function
   */
@@ -102,6 +104,7 @@ trait SimpleEvalFunc extends IncrementalEvalFunc {
     sum = 0.0
   }
 }
+
 
 /**
   * Mean square error
@@ -177,6 +180,7 @@ class LogLossEval extends SimpleEvalFunc {
 
   override def name = "LogLoss"
 }
+
 
 /**
   * Classification error

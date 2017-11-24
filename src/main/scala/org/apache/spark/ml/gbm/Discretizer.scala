@@ -1,12 +1,20 @@
 package org.apache.spark.ml.gbm
 
-import scala.collection.{immutable, mutable}
+import scala.annotation.tailrec
+import scala.collection.mutable
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.util.QuantileSummaries
 
+
+/**
+  * discretizer for the rows
+  *
+  * @param colDiscretizers column discretizers for each column
+  */
 class Discretizer(val colDiscretizers: Array[ColDiscretizer]) extends Serializable {
 
   def transform(vec: Vector): Array[Int] = {
@@ -23,8 +31,8 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer]) extends Serializab
   }
 
   def numBins: Array[Int] = {
-    /** zero bin index is always reserved for missing value */
-    /** column discretizers do not handle missing value, and output bin indices start from 1 */
+    // zero bin index is always reserved for missing value
+    // column discretizers do not handle missing value, and output bin indices start from 1
     colDiscretizers.map(_.numBins + 1)
   }
 }
@@ -44,7 +52,7 @@ private[gbm] object Discretizer extends Logging {
     val start = System.nanoTime
     logWarning(s"Discretizer building start")
 
-    /** zero bin index is always reserved for missing value */
+    // zero bin index is always reserved for missing value
     val emptyAggs = Array.range(0, numCols).map { col =>
       if (catCols.contains(col)) {
         new CatColAgg(maxBins - 1)
@@ -63,7 +71,7 @@ private[gbm] object Discretizer extends Logging {
           require(aggs.length == vec.size)
           var i = 0
           while (i < aggs.length) {
-            /** column aggs do not deal with missing value */
+            // column aggs do not deal with missing value
             if (!vec(i).isNaN) {
               aggs(i).update(vec(i))
             }
@@ -141,6 +149,9 @@ private[gbm] object Discretizer extends Logging {
 }
 
 
+/**
+  * discretizer for one column
+  */
 private[gbm] trait ColDiscretizer extends Serializable {
   /**
     * convert real values into bins, indices of bins start from 1.
@@ -153,25 +164,27 @@ private[gbm] trait ColDiscretizer extends Serializable {
   def numBins: Int
 }
 
+
+/**
+  * discretizer for one numerical column, each intervals are of same depth (quantile)
+  *
+  * @param splits splitting points
+  */
 private[gbm] class QuantileNumColDiscretizer(val splits: Array[Double]) extends ColDiscretizer {
 
-  /** splits = [q0.25, q0.75] */
-  /** value <= q0.25 -> j = 0 -> bin = 1 */
-  /** q0.25 < value <= q0.75 -> j = 1 -> bin = 2 */
-  /** value > q0.75 -> j = -1 -> bin = 3 */
+  // splits = [q0.25, q0.75]
+  // value <= q0.25           -> bin = 1
+  // q0.25 < value <= q0.75   -> bin = 2
+  // value > q0.75            -> bin = 3
   override def transform(value: Double): Int = {
-    var j = -1
-    var i = 0
-    while (j < 0 && i < splits.length) {
-      if (value <= splits(i)) {
-        j = i
-      }
-      i += 1
-    }
-    if (j < 0) {
+    if (splits.isEmpty) {
+      1
+    } else if (value <= splits.head) {
+      1
+    } else if (value > splits.last) {
       splits.length + 1
     } else {
-      j + 1
+      QuantileNumColDiscretizer.search(value, 0, splits.length - 1, splits) + 1
     }
   }
 
@@ -179,9 +192,40 @@ private[gbm] class QuantileNumColDiscretizer(val splits: Array[Double]) extends 
 }
 
 
+private object QuantileNumColDiscretizer {
+  /**
+    * search the index of the first element no less than the given value,
+    * the value must be in range (splits.head, splits.last]
+    */
+  @tailrec
+  def search(value: Double, start: Int, end: Int, array: Array[Double]): Int = {
+    if (start == end) {
+      start
+    } else {
+      val m = (start + end) / 2
+      if (value > array(m)) {
+        search(value, m + 1, end, array)
+      } else if (value < array(m)) {
+        search(value, start, m, array)
+      } else {
+        m
+      }
+    }
+  }
+}
+
+
+/**
+  * discretizer for one numerical column, each intervals are of same length
+  *
+  * @param start   start point
+  * @param step    length of each interval
+  * @param numBins number of bins
+  */
 private[gbm] class IntervalNumColDiscretizer(val start: Double,
                                              val step: Double,
                                              val numBins: Int) extends ColDiscretizer {
+
   override def transform(value: Double): Int = {
     if (step == 0) {
       return 1
@@ -197,6 +241,11 @@ private[gbm] class IntervalNumColDiscretizer(val start: Double,
 }
 
 
+/**
+  * discretizer for one categorical column
+  *
+  * @param map bin mapping, from value to index of bin
+  */
 private[gbm] class CatColDiscretizer(val map: Map[Int, Int]) extends ColDiscretizer {
 
   override def transform(value: Double): Int = {
@@ -207,6 +256,12 @@ private[gbm] class CatColDiscretizer(val map: Map[Int, Int]) extends ColDiscreti
   override def numBins: Int = map.size
 }
 
+
+/**
+  * discretizer for one ranking column
+  *
+  * @param array values
+  */
 private[gbm] class RankColDiscretizer(val array: Array[Int]) extends ColDiscretizer {
 
   override def transform(value: Double): Int = {
@@ -220,7 +275,11 @@ private[gbm] class RankColDiscretizer(val array: Array[Int]) extends ColDiscreti
 }
 
 
+/**
+  * aggregrator to build column discretizer
+  */
 private[gbm] trait ColAgg extends Serializable {
+
   def update(value: Double): ColAgg
 
   def merge(other: ColAgg): ColAgg
@@ -229,7 +288,12 @@ private[gbm] trait ColAgg extends Serializable {
 }
 
 
+/**
+  * aggregrator for numerical column, find splits of same depth
+  */
 private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
+  require(maxBins >= 2)
+
   var summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001)
 
   override def update(value: Double): QuantileNumColAgg = {
@@ -243,19 +307,29 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
     this
   }
 
-  /** maxBins = 3 -> interval = 0.5, queries = [0.25, 0.75], splits = [q0.25, q0.75] */
+  // maxBins = 3 -> interval = 0.5, queries = [0.25, 0.75], splits = [q0.25, q0.75]
   override def toColDiscretizer: QuantileNumColDiscretizer = {
     summary = summary.compress()
-    require(summary.count != 0)
-    val interval = 1.0 / (maxBins - 1)
-    val start = interval / 2
-    val queries = Array.range(0, maxBins - 1).map(i => start + interval * i)
-    val splits = queries.flatMap(summary.query).distinct.sorted
-    new QuantileNumColDiscretizer(splits)
+    if (summary.count != 0) {
+      val interval = 1.0 / (maxBins - 1)
+      val start = interval / 2
+      val queries = Array.range(0, maxBins - 1).map(i => start + interval * i)
+      val splits = queries.flatMap(summary.query).distinct.sorted
+      new QuantileNumColDiscretizer(splits)
+    } else {
+      // all values in this column are missing value
+      new QuantileNumColDiscretizer(Array.emptyDoubleArray)
+    }
   }
 }
 
+
+/**
+  * aggregrator for numerical column, find splits of same width
+  */
 private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
+  require(maxBins >= 2)
+
   var max = Double.MinValue
   var min = Double.MaxValue
 
@@ -272,18 +346,28 @@ private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
     this
   }
 
-  /** min = 0, max = 10, maxBins = 11, step = 10/10 = 1
-    * if less than min+step/2 = 0.5 => 1, if greater than max-step/2 = 9.5 => 10 */
+  // min = 0, max = 10, maxBins = 11, step = 10/10 = 1
+  // if less than min+step/2 = 0.5 => 1, if greater than max-step/2 = 9.5 => 10
   override def toColDiscretizer: IntervalNumColDiscretizer = {
-    require(max >= min)
-    val step = (max - min) / (maxBins - 1)
-    val start = min + step / 2
-    new IntervalNumColDiscretizer(start, step, maxBins)
+    if (max > min) {
+      val step = (max - min) / (maxBins - 1)
+      val start = min + step / 2
+      new IntervalNumColDiscretizer(start, step, maxBins)
+    } else {
+      // all values in this column are missing value
+      new IntervalNumColDiscretizer(0.0, 0.0, 1)
+    }
   }
 }
 
+
+/**
+  * aggregrator for categorical column
+  */
 private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
-  val counter: mutable.Map[Int, Long] = mutable.Map[Int, Long]()
+  require(maxBins >= 2)
+
+  val counter = mutable.Map[Int, Long]()
 
   override def update(value: Double): CatColAgg = {
     require(value.toInt == value)
@@ -310,8 +394,14 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   }
 }
 
+
+/**
+  * aggregrator for ranking column
+  */
 private[gbm] class RankAgg(val maxBins: Int) extends ColAgg {
-  val set: mutable.Set[Int] = mutable.Set[Int]()
+  require(maxBins >= 2)
+
+  val set = mutable.Set[Int]()
 
   override def update(value: Double): RankAgg = {
     require(value.toInt == value)

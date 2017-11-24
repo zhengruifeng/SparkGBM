@@ -98,7 +98,7 @@ private[gbm] object Tree extends Logging {
           node.nodeId >= minNodeId && splits.contains(node.nodeId)
         }.toArray
 
-        /** update tree */
+        // update tree
         nodes.foreach { node =>
           node.isLeaf = false
           node.split = splits.get(node.nodeId)
@@ -112,7 +112,7 @@ private[gbm] object Tree extends Logging {
           node.rightNode.get.prediction = node.split.get.rightWeight
         }
 
-        /** update last splits */
+        // update last splits
         lastSplits.clear()
         splits.foreach { case (nodeId, split) =>
           lastSplits.update(nodeId, split)
@@ -285,7 +285,7 @@ private[gbm] object Tree extends Logging {
         i += 2
       }
 
-      /** leaves with hess no more than minNodeHess * 2 can not grow */
+      // leaves with hess no more than minNodeHess * 2 can not grow
       nnz >= 2 && hessSum >= minNodeHess * 2
     }
   }
@@ -306,7 +306,7 @@ private[gbm] object Tree extends Logging {
                                         treeConfig: TreeConfig,
                                         seed: Long): Map[Long, Split] = {
 
-    /** column sampling by level */
+    // column sampling by level
     val sampledHists = if (boostConfig.getColSampleByLevel == 1) {
       nodeHists
     } else {
@@ -356,11 +356,11 @@ private[gbm] object Tree extends Logging {
     require(numExecutors > 0 && numLeaves > 0 && numCols > 0)
 
     if (numExecutors == 1) {
-      /** driver only */
+      // driver only
       1
 
     } else {
-      /** approximate number of histogram in current level */
+      // approximate number of histogram in current level
       val approxCount = numLeaves * numCols * colSampleByLevel
 
       var k = (approxCount / (numExecutors - 1)).floor.toInt

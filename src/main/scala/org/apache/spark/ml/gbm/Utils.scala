@@ -4,17 +4,21 @@ private trait FromDouble[H] extends Serializable {
   def fromDouble(value: Double): H
 }
 
+
 private object DoubleFromDouble extends FromDouble[Double] {
   override def fromDouble(value: Double): Double = value
 }
+
 
 private object FloatFromDouble extends FromDouble[Float] {
   override def fromDouble(value: Double): Float = value.toFloat
 }
 
+
 private object DecimalFromDouble extends FromDouble[BigDecimal] {
   override def fromDouble(value: Double): BigDecimal = BigDecimal(value)
 }
+
 
 private[gbm] object FromDouble {
 

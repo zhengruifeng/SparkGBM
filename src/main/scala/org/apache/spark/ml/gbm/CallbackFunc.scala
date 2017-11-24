@@ -33,6 +33,7 @@ trait CallbackFunc extends Logging with Serializable {
   def name: String
 }
 
+
 /**
   * early stopping function
   *
@@ -110,6 +111,7 @@ class ModelCheckpoint(val interval: Int,
 
   override def name = "ModelCheckpoint"
 }
+
 
 /**
   * model checkpoint function for GBMClassificationModel

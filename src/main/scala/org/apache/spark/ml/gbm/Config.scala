@@ -191,7 +191,6 @@ class BoostConfig extends Logging with Serializable {
   /** subsample ratio of columns when constructing each level */
   private[gbm] def setColSampleByLevel(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    logWarning(s"colSampleByLevel was changed from $colSampleByLevel to $value")
     colSampleByLevel = value
     this
   }

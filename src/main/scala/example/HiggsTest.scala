@@ -36,7 +36,7 @@ object HiggsTest {
     val gbmc = new GBMClassifier
     gbmc.setBoostType("gbtree")
       .setStepSize(0.1)
-      .setMaxIter(100)
+      .setMaxIter(50)
       .setMaxDepth(5)
       .setMaxLeaves(128)
       .setMaxBins(128)

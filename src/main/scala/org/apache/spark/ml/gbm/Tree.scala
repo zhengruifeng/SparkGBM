@@ -3,6 +3,7 @@ package org.apache.spark.ml.gbm
 import scala.collection.mutable
 import scala.reflect.ClassTag
 
+import org.apache.spark.{HashPartitioner, Partitioner}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 
@@ -52,15 +53,14 @@ private[gbm] object Tree extends Logging {
 
     val lastSplits = mutable.Map[Long, Split]()
 
-
     while (!finished) {
       val start = System.nanoTime
 
-      val parallelism = computeParallelism(numExecutors, math.max(lastSplits.size * 2, 1),
+      val partitioner = createPartitioner(lastSplits.keys.toArray, numExecutors,
         treeConfig.numCols, boostConfig.getColSampleByLevel)
 
       val depth = root.subtreeDepth
-      logWarning(s"$logPrefix Depth $depth: splitting start, parallelism $parallelism")
+      logWarning(s"$logPrefix Depth $depth: splitting start, parallelism ${partitioner.numPartitions}")
 
       if (minNodeId == 1L) {
         nodeIds = data.map(_ => 1L)
@@ -70,10 +70,10 @@ private[gbm] object Tree extends Logging {
       nodeIdsCheckpointer.update(nodeIds)
 
       if (minNodeId == 1) {
-        hists = computeHists[H, B](data.zip(nodeIds), minNodeId, parallelism)
+        hists = computeHists[H, B](data.zip(nodeIds), minNodeId, partitioner)
       } else {
-        val leftHists = computeHists[H, B](data.zip(nodeIds), minNodeId, parallelism)
-        hists = subtractHists[H](hists, leftHists, boostConfig.getMinNodeHess, parallelism)
+        val leftHists = computeHists[H, B](data.zip(nodeIds), minNodeId, partitioner)
+        hists = subtractHists[H](hists, leftHists, boostConfig.getMinNodeHess, partitioner)
       }
       histsCheckpointer.update(hists)
 
@@ -181,14 +181,14 @@ private[gbm] object Tree extends Logging {
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param minNodeId   minimum nodeId for this level
-    * @param parallelism parallelism
+    * @param partitioner partitioner
     * @tparam H
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
   def computeHists[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, Array[B]), Long)],
                                                                   minNodeId: Long,
-                                                                  parallelism: Int): RDD[((Long, Int), Array[H])] = {
+                                                                  partitioner: Partitioner): RDD[((Long, Int), Array[H])] = {
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
 
@@ -200,7 +200,7 @@ private[gbm] object Tree extends Logging {
         ((nodeId, featureId), (bin, grad, hess))
       }
 
-    }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
+    }.aggregateByKey[Array[H]](Array.empty[H], partitioner)(
       seqOp = {
         case (hist, (bin, grad, hess)) =>
           val index = intB.toInt(bin) << 1
@@ -242,20 +242,20 @@ private[gbm] object Tree extends Logging {
     * @param nodeHists   histogram data of parent nodes
     * @param leftHists   histogram data of left leaves
     * @param minNodeHess minimum hess needed for a node
-    * @param parallelism parallelism
+    * @param partitioner partitioner
     * @tparam H
     * @return histogram data of both left and right leaves
     */
   def subtractHists[H: Numeric : ClassTag](nodeHists: RDD[((Long, Int), Array[H])],
                                            leftHists: RDD[((Long, Int), Array[H])],
                                            minNodeHess: Double,
-                                           parallelism: Int): RDD[((Long, Int), Array[H])] = {
+                                           partitioner: Partitioner): RDD[((Long, Int), Array[H])] = {
     val numH = implicitly[Numeric[H]]
 
     leftHists.map { case ((nodeId, featureId), hist) =>
       ((nodeId >> 1, featureId), hist)
 
-    }.join(nodeHists, parallelism)
+    }.join(nodeHists, partitioner)
 
       .flatMap { case ((nodeId, featureId), (leftHist, nodeHist)) =>
         require(leftHist.length <= nodeHist.length)
@@ -341,19 +341,68 @@ private[gbm] object Tree extends Logging {
 
 
   /**
+    * Since the (nodeId, columnId) candidate pairs to search optimum split are known before computation
+    * we can partition them in a partial sorted way to reduce the communication overhead in following aggregation
+    *
+    * @param nodeIds          splitted nodeIds in the last level
+    * @param numExecutors     number of executors
+    * @param numColumns       number of columns
+    * @param colSampleByLevel rate of column sampling by level
+    * @return partitioner
+    */
+  def createPartitioner(nodeIds: Array[Long],
+                        numExecutors: Int,
+                        numColumns: Int,
+                        colSampleByLevel: Double): Partitioner = {
+
+    // leaves in current level
+    val leaves = nodeIds.flatMap { nodeId =>
+      val leftNodeId = nodeId << 1
+      Seq(leftNodeId, leftNodeId + 1)
+    }.sorted
+
+    val numLeaves = leaves.length
+
+    val parallelism = computeParallelism(numExecutors,
+      numLeaves, numColumns, colSampleByLevel)
+
+    require(parallelism > 0)
+
+    if (leaves.isEmpty || parallelism == 1) {
+      new HashPartitioner(parallelism)
+
+    } else {
+
+      val step = numLeaves.toDouble / parallelism
+
+      // parallelism - 1 splitting points
+      val splits = Array.range(1, parallelism).map { i =>
+        val p = i * step
+        val n = p.toInt
+        val b = p - n
+        val c = (b * numColumns).round.toInt
+        (leaves(n), c)
+      }.distinct.sorted
+
+      new GBMRangePartitioner[(Long, Int)](splits)
+    }
+  }
+
+
+  /**
     * Compute parallelism of splitting
     *
     * @param numExecutors     number of executors
     * @param numLeaves        number of leaves in current level
-    * @param numCols          number of columns
+    * @param numColumns       number of columns
     * @param colSampleByLevel rate of column sampling by level
     * @return parallelism of splitting
     */
   def computeParallelism(numExecutors: Int,
                          numLeaves: Int,
-                         numCols: Int,
+                         numColumns: Int,
                          colSampleByLevel: Double): Int = {
-    require(numExecutors > 0 && numLeaves > 0 && numCols > 0)
+    require(numExecutors > 0 && numColumns > 0)
 
     if (numExecutors == 1) {
       // driver only
@@ -361,11 +410,11 @@ private[gbm] object Tree extends Logging {
 
     } else {
       // approximate number of histogram in current level
-      val approxCount = numLeaves * numCols * colSampleByLevel
+      val approxCount = numLeaves * numColumns * colSampleByLevel
 
       var k = (approxCount / (numExecutors - 1)).floor.toInt
 
-      k = math.min(k, 128)
+      k = math.min(k, 16)
 
       k = math.max(k, 1)
 

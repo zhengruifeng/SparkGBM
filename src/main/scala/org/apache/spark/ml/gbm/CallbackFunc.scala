@@ -17,7 +17,7 @@ import org.apache.spark.sql.SparkSession
 trait CallbackFunc extends Logging with Serializable {
 
   /**
-    * call back function
+    * callback function
     *
     * @param boostConfig  boosting configuration, be careful to update it
     * @param model        snapshot of current model

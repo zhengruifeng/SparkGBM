@@ -1,6 +1,5 @@
 package org.apache.spark.ml.gbm
 
-import scala.annotation.tailrec
 import scala.collection.mutable
 
 import org.apache.spark.internal.Logging
@@ -22,7 +21,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer]) extends Serializab
 
     vec.toArray.zip(colDiscretizers).map {
       case (value, col) =>
-        if (value.isNaN) {
+        if (value.isNaN || value.isInfinity) {
           0
         } else {
           col.transform(value)
@@ -32,13 +31,25 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer]) extends Serializab
 
   def numBins: Array[Int] = {
     // zero bin index is always reserved for missing value
-    // column discretizers do not handle missing value, and output bin indices start from 1
+    // column discretizers do not handle missing value, and output bin indices starting from 1
     colDiscretizers.map(_.numBins + 1)
   }
 }
 
 private[gbm] object Discretizer extends Logging {
 
+  /**
+    * Implementation of training a discretizer
+    *
+    * @param vectors          input dataset
+    * @param numCols          number of columns
+    * @param catCols          indices of categorical columns
+    * @param rankCols         indices of ranking columns
+    * @param maxBins          maximun number of bins, staring from 0
+    * @param numericalBinType method to deal with numerical column
+    * @param depth            aggregation depth
+    * @return discretizer
+    */
   def fit(vectors: RDD[Vector],
           numCols: Int,
           catCols: Set[Int],
@@ -65,15 +76,16 @@ private[gbm] object Discretizer extends Logging {
       }
     }
 
-    val aggregated = vectors.treeAggregate(emptyAggs)(
+    val aggregated = vectors.treeAggregate[Array[ColAgg]](emptyAggs)(
       seqOp = {
         case (aggs, vec) =>
           require(aggs.length == vec.size)
           var i = 0
           while (i < aggs.length) {
             // column aggs do not deal with missing value
-            if (!vec(i).isNaN) {
-              aggs(i).update(vec(i))
+            val v = vec(i)
+            if (!v.isNaN && !v.isInfinity) {
+              aggs(i).update(v)
             }
             i += 1
           }
@@ -97,6 +109,8 @@ private[gbm] object Discretizer extends Logging {
     new Discretizer(colDiscretizers)
   }
 
+
+  /** helper function to convert Discretizer to dataframes */
   def toDF(discretizer: Discretizer): DataFrame = {
     val spark = SparkSession.builder.getOrCreate()
 
@@ -114,6 +128,8 @@ private[gbm] object Discretizer extends Logging {
     spark.createDataFrame(datum).toDF("featureIndex", "type", "doubles", "ints")
   }
 
+
+  /** helper function to convert dataframes back to Discretizer */
   def fromDF(df: DataFrame): Discretizer = {
     val (indices, colDiscretizers) =
       df.select("featureIndex", "type", "doubles", "ints").rdd
@@ -184,34 +200,11 @@ private[gbm] class QuantileNumColDiscretizer(val splits: Array[Double]) extends 
     } else if (value > splits.last) {
       splits.length + 1
     } else {
-      QuantileNumColDiscretizer.search(value, 0, splits.length - 1, splits) + 1
+      Utils.search[Double](value, 0, splits.length - 1, splits) + 1
     }
   }
 
   override def numBins: Int = splits.length + 1
-}
-
-
-private object QuantileNumColDiscretizer {
-  /**
-    * search the index of the first element no less than the given value,
-    * the value must be in range (splits.head, splits.last]
-    */
-  @tailrec
-  def search(value: Double, start: Int, end: Int, array: Array[Double]): Int = {
-    if (start == end) {
-      start
-    } else {
-      val m = (start + end) / 2
-      if (value > array(m)) {
-        search(value, m + 1, end, array)
-      } else if (value < array(m)) {
-        search(value, start, m, array)
-      } else {
-        m
-      }
-    }
-  }
 }
 
 

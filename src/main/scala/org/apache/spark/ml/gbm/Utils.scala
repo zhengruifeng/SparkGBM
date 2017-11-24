@@ -1,6 +1,5 @@
 package org.apache.spark.ml.gbm
 
-import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -14,6 +13,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.CollectionsUtils
 
 
 /**
@@ -213,44 +213,31 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
 
   private val ordering = implicitly[Ordering[K]]
 
+  private val binarySearch = CollectionsUtils.makeBinarySearch[K]
+
+  private val search = {
+    if (splits.length <= 128) {
+      (array: Array[K], k: K) =>
+        var i = 0
+        while (i < array.length && ordering.gt(k, array(i))) {
+          i += 1
+        }
+        i
+    } else {
+      (array: Array[K], k: K) =>
+        var i = binarySearch(array, k)
+        if (i < 0) {
+          i = -i - 1
+        }
+        math.min(i, splits.length)
+    }
+  }
+
   override def numPartitions: Int = splits.length + 1
 
   override def getPartition(key: Any): Int = {
     val k = key.asInstanceOf[K]
-
-    if (ordering.lteq(k, splits.head)) {
-      0
-    } else if (ordering.gt(k, splits.last)) {
-      splits.length
-    } else {
-      Utils.search[K](k, 0, splits.length - 1, splits)
-    }
-  }
-}
-
-
-private[gbm] object Utils {
-
-  /**
-    * search the index of the first element no less than the given value
-    * the value must be in range (splits.head, splits.last]
-    */
-  @tailrec
-  def search[K: Ordering](value: K, start: Int, end: Int, array: Array[K]): Int = {
-    val ordering = implicitly[Ordering[K]]
-
-    if (start == end) {
-      start
-    } else {
-      val m = (start + end) / 2
-      if (ordering.gt(value, array(m))) {
-        search(value, m + 1, end, array)
-      } else if (ordering.lt(value, array(m))) {
-        search(value, start, m, array)
-      } else {
-        m
-      }
-    }
+    search(splits, k)
   }
 }
 

@@ -1,5 +1,7 @@
 package org.apache.spark.ml.gbm
 
+import java.util.Arrays
+
 import scala.collection.mutable
 
 import org.apache.spark.internal.Logging
@@ -195,12 +197,13 @@ private[gbm] class QuantileNumColDiscretizer(val splits: Array[Double]) extends 
   override def transform(value: Double): Int = {
     if (splits.isEmpty) {
       1
-    } else if (value <= splits.head) {
-      1
-    } else if (value > splits.last) {
-      splits.length + 1
     } else {
-      Utils.search[Double](value, 0, splits.length - 1, splits) + 1
+      val index = Arrays.binarySearch(splits, value)
+      if (index >= 0) {
+        index + 1
+      } else {
+        -index
+      }
     }
   }
 
@@ -220,15 +223,14 @@ private[gbm] class IntervalNumColDiscretizer(val start: Double,
                                              val numBins: Int) extends ColDiscretizer {
 
   override def transform(value: Double): Int = {
-    if (step == 0) {
-      return 1
-    }
-
-    val index = ((value - start) / step).floor.toInt
-    if (index < 0) {
+    if (step == 0 || value <= start) {
       1
     } else {
-      math.min(index + 2, numBins)
+      var index = (value - start) / step
+      if (index == index.toInt) {
+        index = index.toInt - 1
+      }
+      math.min(index.toInt + 2, numBins)
     }
   }
 }
@@ -259,7 +261,7 @@ private[gbm] class RankColDiscretizer(val array: Array[Int]) extends ColDiscreti
 
   override def transform(value: Double): Int = {
     require(value.toInt == value)
-    val index = java.util.Arrays.binarySearch(array, value.toInt)
+    val index = Arrays.binarySearch(array, value.toInt)
     require(index >= 0, s"value $value not in ${array.mkString("(", ", ", ")")}")
     index + 1
   }

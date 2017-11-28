@@ -795,11 +795,8 @@ private[gbm] object GBM extends Logging {
     val numH = implicitly[Numeric[H]]
     val toH = implicitly[FromDouble[H]]
 
-    val rowSampled = if (boostConfig.getSubSample == 1) {
-      instances.zip(preds)
-    } else {
-      instances.zip(preds).sample(false, boostConfig.getSubSample, boostConfig.getSeed + treeIndex)
-    }
+    val rowSampled = Utils.sample(instances.zip(preds),
+      boostConfig.getSubSample, boostConfig.getSeed + treeIndex)
 
     // selected columns
     val cols = if (boostConfig.getColSampleByTree == 1) {
@@ -1157,8 +1154,8 @@ object GBMModel {
 
   /** save GBMModel to a path */
   private[ml] def save(spark: SparkSession,
-                   model: GBMModel,
-                   path: String): Unit = {
+                       model: GBMModel,
+                       path: String): Unit = {
 
     val (discretizerDF, weightsDF, treesDF, extraDF) = toDF(spark, model)
 

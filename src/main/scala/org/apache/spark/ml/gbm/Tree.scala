@@ -6,7 +6,6 @@ import scala.reflect.ClassTag
 import org.apache.spark.{HashPartitioner, Partitioner}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
-import org.apache.spark.util.LongAccumulator
 
 private[gbm] object Tree extends Logging {
 
@@ -24,7 +23,6 @@ private[gbm] object Tree extends Logging {
                                                            boostConfig: BoostConfig,
                                                            treeConfig: TreeConfig): Option[TreeModel] = {
     val sc = data.sparkContext
-    val numExecutors = sc.getExecutorMemoryStatus.size
 
     data.persist(boostConfig.getStorageLevel)
 
@@ -57,8 +55,7 @@ private[gbm] object Tree extends Logging {
     while (!finished) {
       val start = System.nanoTime
 
-      val partitioner = createPartitioner(lastSplits.keys.toArray, numExecutors,
-        treeConfig.numCols, boostConfig.getColSampleByLevel)
+      val partitioner = createPartitioner(lastSplits.keys.toArray, treeConfig.numCols, sc.defaultParallelism)
 
       val depth = root.subtreeDepth
       logWarning(s"$logPrefix Depth $depth: splitting start, parallelism ${partitioner.numPartitions}")
@@ -201,7 +198,7 @@ private[gbm] object Tree extends Logging {
         ((nodeId, featureId), (bin, grad, hess))
       }
 
-    }.aggregateByKey[Array[H]](Array.empty[H], partitioner)(
+    }.aggregateByKey[Array[H]](Array.empty[H])(
       seqOp = {
         case (hist, (bin, grad, hess)) =>
           val index = intB.toInt(bin) << 1
@@ -307,8 +304,7 @@ private[gbm] object Tree extends Logging {
                                         treeConfig: TreeConfig,
                                         seed: Long): Map[Long, Split] = {
     val sc = nodeHists.sparkContext
-    val acc = new LongAccumulator
-    sc.register(acc)
+    val acc = sc.longAccumulator
 
     // column sampling by level
     val sampledHists = if (boostConfig.getColSampleByLevel == 1) {
@@ -351,16 +347,15 @@ private[gbm] object Tree extends Logging {
     * Since the (nodeId, columnId) candidate pairs to search optimum split are known before computation
     * we can partition them in a partial sorted way to reduce the communication overhead in following aggregation
     *
-    * @param nodeIds          splitted nodeIds in the last level
-    * @param numExecutors     number of executors
-    * @param numColumns       number of columns
-    * @param colSampleByLevel rate of column sampling by level
+    * @param nodeIds     splitted nodeIds in the last level
+    * @param numColumns  number of columns
+    * @param parallelism default   parallelism
     * @return partitioner
     */
   def createPartitioner(nodeIds: Array[Long],
-                        numExecutors: Int,
                         numColumns: Int,
-                        colSampleByLevel: Double): Partitioner = {
+                        parallelism: Int): Partitioner = {
+    require(parallelism > 0)
 
     // leaves in current level
     val leaves = nodeIds.flatMap { nodeId =>
@@ -369,11 +364,6 @@ private[gbm] object Tree extends Logging {
     }.sorted
 
     val numLeaves = leaves.length
-
-    val parallelism = computeParallelism(numExecutors,
-      numLeaves, numColumns, colSampleByLevel)
-
-    require(parallelism > 0)
 
     if (leaves.isEmpty || parallelism == 1) {
       new HashPartitioner(parallelism)
@@ -392,40 +382,6 @@ private[gbm] object Tree extends Logging {
       }.distinct.sorted
 
       new GBMRangePartitioner[(Long, Int)](splits)
-    }
-  }
-
-
-  /**
-    * Compute parallelism of splitting
-    *
-    * @param numExecutors     number of executors
-    * @param numLeaves        number of leaves in current level
-    * @param numColumns       number of columns
-    * @param colSampleByLevel rate of column sampling by level
-    * @return parallelism of splitting
-    */
-  def computeParallelism(numExecutors: Int,
-                         numLeaves: Int,
-                         numColumns: Int,
-                         colSampleByLevel: Double): Int = {
-    require(numExecutors > 0 && numColumns > 0)
-
-    if (numExecutors == 1) {
-      // driver only
-      1
-
-    } else {
-      // approximate number of histogram in current level
-      val approxCount = numLeaves * numColumns * colSampleByLevel
-
-      var k = (approxCount / (numExecutors - 1)).floor.toInt
-
-      k = math.min(k, 16)
-
-      k = math.max(k, 1)
-
-      k * (numExecutors - 1)
     }
   }
 }

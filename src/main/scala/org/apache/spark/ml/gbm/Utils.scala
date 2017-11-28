@@ -5,8 +5,8 @@ import java.util.Arrays
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.reflect.{classTag, ClassTag}
-import scala.util.{Failure, Success}
+import scala.reflect.{ClassTag, classTag}
+import scala.util.{Failure, Random, Success}
 
 import org.apache.hadoop.fs.Path
 
@@ -242,7 +242,65 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
   }
 }
 
-private[gbm] object Utils {
+private[gbm] object Utils extends Logging {
+
+  def sample[T: ClassTag](data: RDD[T],
+                          fraction: Double,
+                          seed: Long): RDD[T] = {
+
+    if (fraction == 1.0) {
+      data
+
+    } else {
+
+      val numPartitions = data.getNumPartitions
+      val parallelism = data.sparkContext.defaultParallelism
+
+      if (numPartitions * fraction < parallelism * 5) {
+        data.sample(false, fraction, seed)
+
+      } else {
+
+        logWarning(s"Using partition-based sampling")
+
+        val rand = new Random(seed)
+        val numSelected = numPartitions * fraction
+
+        val n = numSelected.toInt
+        val r = numSelected - n
+
+        if (n > 0 && r < 1e-3) {
+          val pids = rand.shuffle(Seq.range(0, numPartitions)).take(n)
+          val selected = pids.toSet
+
+          data.mapPartitionsWithIndex { case (pid, it) =>
+            if (selected.contains(pid)) {
+              it
+            } else {
+              Iterator.empty
+            }
+          }
+
+        } else {
+
+          val pids = rand.shuffle(Seq.range(0, numPartitions)).take(n + 1)
+          val partial = pids.head
+          val selected = pids.tail.toSet
+
+          data.mapPartitionsWithIndex { case (pid, it) =>
+            if (selected.contains(pid)) {
+              it
+            } else if (pid == partial) {
+              val rand = new Random(seed + pid)
+              it.filter(_ => rand.nextDouble() < r)
+            } else {
+              Iterator.empty
+            }
+          }
+        }
+      }
+    }
+  }
 
   def makeBinarySearch[K: Ordering : ClassTag]: (Array[K], K) => Int = {
     // For primitive keys, we can use the natural ordering. Otherwise, use the Ordering comparator.

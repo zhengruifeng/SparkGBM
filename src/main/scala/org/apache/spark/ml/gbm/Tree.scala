@@ -58,7 +58,7 @@ private[gbm] object Tree extends Logging {
       val partitioner = createPartitioner(lastSplits.keys.toArray, treeConfig.numCols, sc.defaultParallelism)
 
       val depth = root.subtreeDepth
-      logWarning(s"$logPrefix Depth $depth: splitting start, parallelism ${partitioner.numPartitions}")
+      logWarning(s"$logPrefix Depth $depth: splitting start, parallelism ${sc.defaultParallelism}")
 
       if (minNodeId == 1L) {
         nodeIds = data.map(_ => 1L)
@@ -67,10 +67,11 @@ private[gbm] object Tree extends Logging {
       }
       nodeIdsCheckpointer.update(nodeIds)
 
-      if (minNodeId == 1) {
-        hists = computeHists[H, B](data.zip(nodeIds), minNodeId, partitioner.numPartitions)
+      if (minNodeId == 1L) {
+        hists = computeHists[H, B](data.zip(nodeIds), minNodeId, sc.defaultParallelism)
       } else {
-        val leftHists = computeHists[H, B](data.zip(nodeIds), minNodeId, partitioner.numPartitions)
+        val leftHists = computeHists[H, B](data.zip(nodeIds), minNodeId, sc.defaultParallelism)
+        val partitioner = createPartitioner(lastSplits.keys.toArray, treeConfig.numCols, sc.defaultParallelism)
         hists = subtractHists[H](hists, leftHists, boostConfig.getMinNodeHess, partitioner)
       }
       histsCheckpointer.update(hists)
@@ -191,7 +192,7 @@ private[gbm] object Tree extends Logging {
     val numH = implicitly[Numeric[H]]
 
     data.filter { case (_, nodeId) =>
-      (nodeId >= minNodeId && nodeId % 2 == 0) || nodeId == 1
+      (nodeId >= minNodeId && nodeId % 2 == 0) || nodeId == 1L
 
     }.flatMap { case ((grad, hess, bins), nodeId) =>
       bins.zipWithIndex.map { case (bin, featureId) =>

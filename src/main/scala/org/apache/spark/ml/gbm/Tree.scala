@@ -68,9 +68,9 @@ private[gbm] object Tree extends Logging {
       nodeIdsCheckpointer.update(nodeIds)
 
       if (minNodeId == 1) {
-        hists = computeHists[H, B](data.zip(nodeIds), minNodeId, partitioner)
+        hists = computeHists[H, B](data.zip(nodeIds), minNodeId, partitioner.numPartitions)
       } else {
-        val leftHists = computeHists[H, B](data.zip(nodeIds), minNodeId, partitioner)
+        val leftHists = computeHists[H, B](data.zip(nodeIds), minNodeId, partitioner.numPartitions)
         hists = subtractHists[H](hists, leftHists, boostConfig.getMinNodeHess, partitioner)
       }
       histsCheckpointer.update(hists)
@@ -179,14 +179,14 @@ private[gbm] object Tree extends Logging {
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param minNodeId   minimum nodeId for this level
-    * @param partitioner partitioner
+    * @param parallelism parallelism
     * @tparam H
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
   def computeHists[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, Array[B]), Long)],
                                                                   minNodeId: Long,
-                                                                  partitioner: Partitioner): RDD[((Long, Int), Array[H])] = {
+                                                                  parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
 
@@ -198,7 +198,7 @@ private[gbm] object Tree extends Logging {
         ((nodeId, featureId), (bin, grad, hess))
       }
 
-    }.aggregateByKey[Array[H]](Array.empty[H])(
+    }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
       seqOp = {
         case (hist, (bin, grad, hess)) =>
           val index = intB.toInt(bin) << 1
@@ -349,7 +349,7 @@ private[gbm] object Tree extends Logging {
     *
     * @param nodeIds     splitted nodeIds in the last level
     * @param numColumns  number of columns
-    * @param parallelism default   parallelism
+    * @param parallelism parallelism
     * @return partitioner
     */
   def createPartitioner(nodeIds: Array[Long],

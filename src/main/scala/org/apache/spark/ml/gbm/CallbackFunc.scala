@@ -19,13 +19,15 @@ trait CallbackFunc extends Logging with Serializable {
   /**
     * callback function
     *
+    * @param spark        spark session
     * @param boostConfig  boosting configuration, be careful to update it
     * @param model        snapshot of current model
     * @param trainMetrics training metric
     * @param testMetrics  validation metric
     * @return whether to stop training
     */
-  def compute(boostConfig: BoostConfig,
+  def compute(spark: SparkSession,
+              boostConfig: BoostConfig,
               model: GBMModel,
               trainMetrics: Array[Map[String, Double]],
               testMetrics: Array[Map[String, Double]]): Boolean
@@ -44,7 +46,8 @@ class EarlyStop(val iters: Int) extends CallbackFunc {
 
   def this() = this(10)
 
-  override def compute(boostConfig: BoostConfig,
+  override def compute(spark: SparkSession,
+                       boostConfig: BoostConfig,
                        model: GBMModel,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
@@ -85,7 +88,8 @@ class ModelCheckpoint(val interval: Int,
                       val path: String) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
-  override def compute(boostConfig: BoostConfig,
+  override def compute(spark: SparkSession,
+                       boostConfig: BoostConfig,
                        model: GBMModel,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
@@ -94,7 +98,7 @@ class ModelCheckpoint(val interval: Int,
       Future {
         val start = System.nanoTime
         val currentPath = new Path(path, s"model-${model.numTrees}").toString
-        GBMModel.save(model, currentPath)
+        GBMModel.save(spark, model, currentPath)
         (System.nanoTime - start) / 1e9
 
       }.onComplete {
@@ -125,20 +129,20 @@ class ClassificationModelCheckpoint(val interval: Int,
                                     val params: Params) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
-  override def compute(boostConfig: BoostConfig,
+  override def compute(spark: SparkSession,
+                       boostConfig: BoostConfig,
                        model: GBMModel,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
       Future {
         val start = System.nanoTime
-        val spark = SparkSession.builder().getOrCreate()
 
         val currentPath = new Path(path, s"model-${model.numTrees}").toString
 
         DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
 
-        GBMModel.save(model, currentPath)
+        GBMModel.save(spark, model, currentPath)
 
         val otherDF = spark.createDataFrame(Seq(
           ("type", "classification"),
@@ -176,20 +180,20 @@ class RegressionModelCheckpoint(val interval: Int,
                                 val params: Params) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
-  override def compute(boostConfig: BoostConfig,
+  override def compute(spark: SparkSession,
+                       boostConfig: BoostConfig,
                        model: GBMModel,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (model.numTrees % interval == 0) {
       Future {
         val start = System.nanoTime
-        val spark = SparkSession.builder().getOrCreate()
 
         val currentPath = new Path(path, s"model-${model.numTrees}").toString
 
         DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
 
-        GBMModel.save(model, currentPath)
+        GBMModel.save(spark, model, currentPath)
 
         val otherDF = spark.createDataFrame(Seq(
           ("type", "regression"),

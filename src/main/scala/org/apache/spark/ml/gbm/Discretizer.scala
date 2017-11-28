@@ -113,8 +113,8 @@ private[gbm] object Discretizer extends Logging {
 
 
   /** helper function to convert Discretizer to dataframes */
-  def toDF(discretizer: Discretizer): DataFrame = {
-    val spark = SparkSession.builder.getOrCreate()
+  def toDF(spark: SparkSession,
+           discretizer: Discretizer): DataFrame = {
 
     val datum = discretizer.colDiscretizers.zipWithIndex.map {
       case (num: QuantileNumColDiscretizer, i) =>

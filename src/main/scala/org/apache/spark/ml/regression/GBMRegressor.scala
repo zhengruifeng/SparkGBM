@@ -362,7 +362,7 @@ object GBMRegressionModel extends MLReadable[GBMRegressionModel] {
     override protected def saveImpl(path: String): Unit = {
       DefaultParamsWriter.saveMetadata(instance, path, sparkSession.sparkContext, None)
 
-      GBMModel.save(instance.model, path)
+      GBMModel.save(sparkSession, instance.model, path)
 
       val otherDF = sparkSession.createDataFrame(Seq(
         ("type", "regression"),

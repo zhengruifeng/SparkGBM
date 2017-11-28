@@ -577,7 +577,8 @@ private[gbm] object GBM extends Logging {
                                                                                  validation: Boolean,
                                                                                  discretizer: Discretizer,
                                                                                  initialModel: Option[GBMModel]): GBMModel = {
-    val sc = data.sparkContext
+    val spark = SparkSession.builder().getOrCreate()
+    val sc = spark.sparkContext
 
     data.persist(boostConfig.getStorageLevel)
     logWarning(s"${data.count} instances in train data")
@@ -706,7 +707,8 @@ private[gbm] object GBM extends Logging {
 
           // callback can update boosting configuration
           boostConfig.getCallbackFunc.foreach { callback =>
-            if (callback.compute(boostConfig, snapshot, trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
+            if (callback.compute(spark, boostConfig, snapshot,
+              trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
               logWarning(s"$logPrefix callback ${callback.name} stop training")
             }
@@ -1143,15 +1145,22 @@ class GBMModel(val discretizer: Discretizer,
       Vectors.dense(indices).compressed
     }
   }
+
+  def save(path: String): Unit = {
+    val spark = SparkSession.builder().getOrCreate()
+    GBMModel.save(spark, this, path)
+  }
 }
 
 
 object GBMModel {
 
   /** save GBMModel to a path */
-  def save(model: GBMModel,
-           path: String): Unit = {
-    val (discretizerDF, weightsDF, treesDF, extraDF) = toDF(model)
+  private[ml] def save(spark: SparkSession,
+                   model: GBMModel,
+                   path: String): Unit = {
+
+    val (discretizerDF, weightsDF, treesDF, extraDF) = toDF(spark, model)
 
     val discretizerPath = new Path(path, "discretizer").toString
     discretizerDF.write.parquet(discretizerPath)
@@ -1169,7 +1178,7 @@ object GBMModel {
 
   /** load GBMModel from a path */
   def load(path: String): GBMModel = {
-    val spark = SparkSession.builder.getOrCreate()
+    val spark = SparkSession.builder().getOrCreate()
 
     val discretizerPath = new Path(path, "discretizer").toString
     val discretizerDF = spark.read.parquet(discretizerPath)
@@ -1188,10 +1197,9 @@ object GBMModel {
 
 
   /** helper function to convert GBMModel to dataframes */
-  private[gbm] def toDF(model: GBMModel): (DataFrame, DataFrame, DataFrame, DataFrame) = {
-    val spark = SparkSession.builder.getOrCreate()
-
-    val discretizerDF = Discretizer.toDF(model.discretizer)
+  private[gbm] def toDF(spark: SparkSession,
+                        model: GBMModel): (DataFrame, DataFrame, DataFrame, DataFrame) = {
+    val discretizerDF = Discretizer.toDF(spark, model.discretizer)
 
     val weightsDatum = model.weights.zipWithIndex
     val weightsDF = spark.createDataFrame(weightsDatum).toDF("weight", "treeIndex")

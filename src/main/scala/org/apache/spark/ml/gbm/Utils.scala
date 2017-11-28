@@ -1,9 +1,11 @@
 package org.apache.spark.ml.gbm
 
+import java.util.Arrays
+
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.reflect.ClassTag
+import scala.reflect.{classTag, ClassTag}
 import scala.util.{Failure, Success}
 
 import org.apache.hadoop.fs.Path
@@ -13,7 +15,6 @@ import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.CollectionsUtils
 
 
 /**
@@ -213,7 +214,7 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
 
   private val ordering = implicitly[Ordering[K]]
 
-  private val binarySearch = CollectionsUtils.makeBinarySearch[K]
+  private val binarySearch = Utils.makeBinarySearch[K]
 
   private val search = {
     if (splits.length <= 128) {
@@ -238,6 +239,32 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
   override def getPartition(key: Any): Int = {
     val k = key.asInstanceOf[K]
     search(splits, k)
+  }
+}
+
+private[gbm] object Utils {
+
+  def makeBinarySearch[K: Ordering : ClassTag]: (Array[K], K) => Int = {
+    // For primitive keys, we can use the natural ordering. Otherwise, use the Ordering comparator.
+    classTag[K] match {
+      case ClassTag.Float =>
+        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Float]], x.asInstanceOf[Float])
+      case ClassTag.Double =>
+        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Double]], x.asInstanceOf[Double])
+      case ClassTag.Byte =>
+        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Byte]], x.asInstanceOf[Byte])
+      case ClassTag.Char =>
+        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Char]], x.asInstanceOf[Char])
+      case ClassTag.Short =>
+        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Short]], x.asInstanceOf[Short])
+      case ClassTag.Int =>
+        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Int]], x.asInstanceOf[Int])
+      case ClassTag.Long =>
+        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Long]], x.asInstanceOf[Long])
+      case _ =>
+        val comparator = implicitly[Ordering[K]].asInstanceOf[java.util.Comparator[Any]]
+        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[AnyRef]], x, comparator)
+    }
   }
 }
 

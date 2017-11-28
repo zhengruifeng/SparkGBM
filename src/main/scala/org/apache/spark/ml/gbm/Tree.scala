@@ -6,6 +6,7 @@ import scala.reflect.ClassTag
 import org.apache.spark.{HashPartitioner, Partitioner}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.util.LongAccumulator
 
 private[gbm] object Tree extends Logging {
 
@@ -305,6 +306,9 @@ private[gbm] object Tree extends Logging {
                                         boostConfig: BoostConfig,
                                         treeConfig: TreeConfig,
                                         seed: Long): Map[Long, Split] = {
+    val sc = nodeHists.sparkContext
+    val acc = new LongAccumulator
+    sc.register(acc)
 
     // column sampling by level
     val sampledHists = if (boostConfig.getColSampleByLevel == 1) {
@@ -313,8 +317,9 @@ private[gbm] object Tree extends Logging {
       nodeHists.sample(false, boostConfig.getColSampleByLevel, seed)
     }
 
-    sampledHists.flatMap {
+    val splits = sampledHists.flatMap {
       case ((nodeId, featureId), hist) =>
+        acc.add(1L)
         val split = Split.split[H](featureId, hist, boostConfig, treeConfig)
         split.map((nodeId, _))
 
@@ -336,7 +341,9 @@ private[gbm] object Tree extends Logging {
               (nodeId, splits.map(_._2).maxBy(_.gain))
             }.toArray
       }, depth = boostConfig.getAggregationDepth)
-      .toMap
+
+    logWarning(s"${acc.value} trials to find best splits of ${splits.length} nodes")
+    splits.toMap
   }
 
 

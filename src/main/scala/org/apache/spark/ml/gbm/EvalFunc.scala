@@ -160,7 +160,7 @@ class LogLossEval extends SimpleEvalFunc {
   override def compute(label: Double, score: Double): Double = {
     require(label >= 0 && label <= 1)
 
-    /** probability of positive class */
+    // probability of positive class
     val ppos = 1.0 / (1.0 + math.exp(-score))
 
     val pneg = 1.0 - ppos
@@ -224,7 +224,7 @@ class AUCEval(val numBins: Int) extends IncrementalEvalFunc {
   override def update(weight: Double, label: Double, score: Double): Unit = {
     require(label == 0 || label == 1)
 
-    /** probability of positive class */
+    // probability of positive class
     val ppos = 1.0 / (1.0 + math.exp(-score))
 
     val index = math.min((ppos * numBins).floor.toInt, numBins - 1)
@@ -264,7 +264,8 @@ class AUCEval(val numBins: Int) extends IncrementalEvalFunc {
     var auc = 0.0
     i = numBins - 1
     while (i >= 0) {
-      /** trapezoidal area between point (falsePos, truePos) <-> point (falsePos + histPos(i), truePos + histPos(i)) on ROC */
+      // trapezoidal area between point (falsePos, truePos)
+      // <-> point (falsePos + histPos(i), truePos + histPos(i)) on ROC
       auc += histNeg(i) * (truePos + histPos(i) / 2)
       truePos += histPos(i)
       falsePos += histNeg(i)

@@ -656,7 +656,7 @@ private[gbm] object GBM extends Logging {
         updateTrees(weights, trees, tree.get, dropped.toSet, boostConfig)
 
         // whether the weights is modified
-        val keepWeights = boostConfig.getBoostType == Dart && dropped.nonEmpty
+        val keepWeights = boostConfig.getBoostType != Dart || dropped.isEmpty
 
         // update train data predictions
         trainPreds = updatePrediction(data, trainPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)

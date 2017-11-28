@@ -264,38 +264,28 @@ private[gbm] object Utils extends Logging {
         logWarning(s"Using partition-based sampling")
 
         val rand = new Random(seed)
-        val numSelected = numPartitions * fraction
+        val shuffled = rand.shuffle(Seq.range(0, numPartitions))
 
-        val n = numSelected.toInt
-        val r = numSelected - n
+        val n = numPartitions * fraction
+        val m = n.toInt
+        val r = n - m
 
-        if (n > 0 && r < 1e-3) {
-          val pids = rand.shuffle(Seq.range(0, numPartitions)).take(n)
-          val selected = pids.toSet
-
-          data.mapPartitionsWithIndex { case (pid, it) =>
-            if (selected.contains(pid)) {
-              it
-            } else {
-              Iterator.empty
-            }
-          }
-
+        val (selected, partial) = if (m > 0 && r < 1e-2) {
+          (shuffled.take(m).toSet, -1)
+        } else if (m >= 0 && r > 1 - 1e-2) {
+          (shuffled.take(m + 1).toSet, -1)
         } else {
+          (shuffled.take(m).toSet, shuffled.last)
+        }
 
-          val pids = rand.shuffle(Seq.range(0, numPartitions)).take(n + 1)
-          val partial = pids.head
-          val selected = pids.tail.toSet
-
-          data.mapPartitionsWithIndex { case (pid, it) =>
-            if (selected.contains(pid)) {
-              it
-            } else if (pid == partial) {
-              val rand = new Random(seed + pid)
-              it.filter(_ => rand.nextDouble() < r)
-            } else {
-              Iterator.empty
-            }
+        data.mapPartitionsWithIndex { case (pid, it) =>
+          if (selected.contains(pid)) {
+            it
+          } else if (pid == partial) {
+            val rand = new Random(seed + pid)
+            it.filter(_ => rand.nextDouble() < r)
+          } else {
+            Iterator.empty
           }
         }
       }

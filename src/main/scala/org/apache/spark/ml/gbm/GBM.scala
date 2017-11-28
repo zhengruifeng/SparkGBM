@@ -653,24 +653,10 @@ private[gbm] object GBM extends Logging {
 
       } else {
         // update base models
-        trees.append(tree.get)
-        var keepWeights = true
-        boostConfig.getBoostType match {
-          case GBTree =>
-            weights.append(boostConfig.getStepSize)
+        updateTrees(weights, trees, tree.get, dropped.toSet, boostConfig)
 
-          case Dart if dropped.isEmpty =>
-            weights.append(1.0)
-
-          case Dart if dropped.nonEmpty =>
-            val k = dropped.size
-            weights.append(1 / (k + boostConfig.getStepSize))
-            val scale = k / (k + boostConfig.getStepSize)
-            dropped.foreach { i =>
-              weights(i) *= scale
-            }
-            keepWeights = false
-        }
+        // whether the weights is modified
+        val keepWeights = boostConfig.getBoostType == Dart && dropped.nonEmpty
 
         // update train data predictions
         trainPreds = updatePrediction(data, trainPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
@@ -737,6 +723,41 @@ private[gbm] object GBM extends Logging {
     }
 
     new GBMModel(discretizer, boostConfig.getBaseScore, trees.toArray, weights.toArray)
+  }
+
+
+  /**
+    * update trees
+    *
+    * @param weights     weights of trees
+    * @param trees       trees
+    * @param tree        tree to be added
+    * @param dropped     indices of dropped trees
+    * @param boostConfig boosting configuration
+    */
+  def updateTrees(weights: ArrayBuffer[Double],
+                  trees: ArrayBuffer[TreeModel],
+                  tree: TreeModel,
+                  dropped: Set[Int],
+                  boostConfig: BoostConfig): Unit = {
+
+    trees.append(tree)
+
+    boostConfig.getBoostType match {
+      case GBTree =>
+        weights.append(boostConfig.getStepSize)
+
+      case Dart if dropped.isEmpty =>
+        weights.append(1.0)
+
+      case Dart if dropped.nonEmpty =>
+        val k = dropped.size
+        weights.append(1 / (k + boostConfig.getStepSize))
+        val scale = k / (k + boostConfig.getStepSize)
+        dropped.foreach { i =>
+          weights(i) *= scale
+        }
+    }
   }
 
 

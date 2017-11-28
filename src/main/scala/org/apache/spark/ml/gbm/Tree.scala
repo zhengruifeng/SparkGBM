@@ -93,23 +93,8 @@ private[gbm] object Tree extends Logging {
 
         numLeaves += splits.size
 
-        val nodes = root.nodeIterator.filter { node =>
-          node.nodeId >= minNodeId && splits.contains(node.nodeId)
-        }.toArray
-
         // update tree
-        nodes.foreach { node =>
-          node.isLeaf = false
-          node.split = splits.get(node.nodeId)
-
-          val leftId = node.nodeId << 1
-          node.leftNode = Some(LearningNode.create(leftId))
-          node.leftNode.get.prediction = node.split.get.leftWeight
-
-          val rightId = leftId + 1
-          node.rightNode = Some(LearningNode.create(rightId))
-          node.rightNode.get.prediction = node.split.get.rightWeight
-        }
+        updateTree(root, splits, minNodeId)
 
         // update last splits
         lastSplits.clear()
@@ -146,21 +131,51 @@ private[gbm] object Tree extends Logging {
 
 
   /**
+    * update tree
+    *
+    * @param root      root of tree
+    * @param splits    splits of leaves
+    * @param minNodeId minimum nodeId for this level
+    */
+  def updateTree(root: LearningNode,
+                 splits: Map[Long, Split],
+                 minNodeId: Long): Unit = {
+    val nodes = root.nodeIterator.filter { node =>
+      node.nodeId >= minNodeId && splits.contains(node.nodeId)
+    }.toArray
+
+    // update tree
+    nodes.foreach { node =>
+      node.isLeaf = false
+      node.split = splits.get(node.nodeId)
+
+      val leftId = node.nodeId << 1
+      node.leftNode = Some(LearningNode.create(leftId))
+      node.leftNode.get.prediction = node.split.get.leftWeight
+
+      val rightId = leftId + 1
+      node.rightNode = Some(LearningNode.create(rightId))
+      node.rightNode.get.prediction = node.split.get.rightWeight
+    }
+  }
+
+
+  /**
     * update nodeIds
     *
-    * @param data       instances containing (grad, hess, bins)
-    * @param nodeIds    previous nodeIds
-    * @param lastSplits splits found in the last round
+    * @param data    instances containing (grad, hess, bins)
+    * @param nodeIds previous nodeIds
+    * @param splits  splits found in the last round
     * @tparam H
     * @tparam B
     * @return updated nodeIds
     */
   def updateNodeIds[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[(H, H, Array[B])],
                                                                    nodeIds: RDD[Long],
-                                                                   lastSplits: Map[Long, Split]): RDD[Long] = {
+                                                                   splits: Map[Long, Split]): RDD[Long] = {
     data.zip(nodeIds).map {
       case ((_, _, bins), nodeId) =>
-        val split = lastSplits.get(nodeId)
+        val split = splits.get(nodeId)
         if (split.nonEmpty) {
           val leftNodeId = nodeId << 1
           if (split.get.goLeft[B](bins)) {

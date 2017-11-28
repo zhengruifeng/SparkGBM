@@ -94,6 +94,11 @@ object GBMExample {
     /** train with validation */
     val model = gbm.fit(train, test)
 
+    /** model save and load */
+    val path = s"/tmp/SparkGBM/model-${System.currentTimeMillis}"
+    model.save(path)
+    val model2 = GBMModel.load(path)
+
     println(s"weights of trees: ${model.weights.mkString(",")}")
 
     /** label and score */

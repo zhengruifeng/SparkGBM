@@ -57,7 +57,7 @@ From LightGBM we introduced:
 
     // model save and load
     model.save(savePath)
-    val model2 = GBMClassificationModel.load(svaePath)
+    val model2 = GBMClassificationModel.load(savePath)
 
 **GBMRegressor** for regression: 
 [Source](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/org/apache/spark/ml/regression/GBMRegressor.scala)

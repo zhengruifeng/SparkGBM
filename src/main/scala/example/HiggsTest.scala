@@ -1,6 +1,6 @@
 package example
 
-import org.apache.spark.ml.classification.GBMClassifier
+import org.apache.spark.ml.classification.{GBMClassifier, GBTClassifier}
 import org.apache.spark.ml.evaluation.BinaryClassificationEvaluator
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.sql.SparkSession
@@ -33,10 +33,17 @@ object HiggsTest {
       .map { l => (l.label, l.features.asML) }
       .toDF("label", "features")
 
+    val evaluator = new BinaryClassificationEvaluator()
+    evaluator.setLabelCol("label")
+      .setRawPredictionCol("rawPrediction")
+      .setMetricName("areaUnderROC")
+
+    val gbmcStart = System.nanoTime
+
     val gbmc = new GBMClassifier
     gbmc.setBoostType("gbtree")
       .setStepSize(0.1)
-      .setMaxIter(50)
+      .setMaxIter(20)
       .setMaxDepth(5)
       .setMaxLeaves(128)
       .setMaxBins(128)
@@ -52,15 +59,30 @@ object HiggsTest {
       .setModelCheckpointInterval(10)
       .setModelCheckpointPath(modelCheckpointPath)
 
-    val model = gbmc.fit(train)
+    val gbmcModel = gbmc.fit(train)
 
-    val evaluator = new BinaryClassificationEvaluator()
-    evaluator.setLabelCol("label")
-      .setRawPredictionCol("rawPrediction")
-      .setMetricName("areaUnderROC")
+    val gbmcEnd = System.nanoTime
 
-    val auc = evaluator.evaluate(model.transform(test))
-    println(s"AUC on test data $auc")
+    val gbmcAUC = evaluator.evaluate(gbmcModel.transform(test))
+    println(s"GBM finished, duration: ${(gbmcEnd - gbmcStart) / 1e9} seconds, AUC on test data: $gbmcAUC")
+
+    val gbtcStart = System.nanoTime
+
+    val gbtc = new GBTClassifier
+    gbtc.setStepSize(0.1)
+      .setMaxIter(20)
+      .setMaxDepth(5)
+      .setSubsamplingRate(0.8)
+      .setMaxBins(128)
+      .setCheckpointInterval(10)
+      .setCacheNodeIds(true)
+
+    val gbtcModel = gbtc.fit(train)
+
+    val gbtcEnd = System.nanoTime
+
+    val gbtcAUC = evaluator.evaluate(gbtcModel.transform(test))
+    println(s"GBT finished, duration: ${(gbtcEnd - gbtcStart) / 1e9} seconds, AUC on test data: $gbtcAUC")
 
     spark.stop()
   }

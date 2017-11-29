@@ -55,8 +55,6 @@ private[gbm] object Tree extends Logging {
     while (!finished) {
       val start = System.nanoTime
 
-      val partitioner = createPartitioner(lastSplits.keys.toArray, treeConfig.numCols, sc.defaultParallelism)
-
       val depth = root.subtreeDepth
       logWarning(s"$logPrefix Depth $depth: splitting start, parallelism ${sc.defaultParallelism}")
 
@@ -320,7 +318,7 @@ private[gbm] object Tree extends Logging {
                                         treeConfig: TreeConfig,
                                         seed: Long): Map[Long, Split] = {
     val sc = nodeHists.sparkContext
-    val acc = sc.longAccumulator
+    val acc = sc.longAccumulator("NumTrials")
 
     // column sampling by level
     val sampledHists = if (boostConfig.getColSampleByLevel == 1) {

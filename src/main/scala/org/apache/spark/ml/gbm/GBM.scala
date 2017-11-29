@@ -415,7 +415,8 @@ class GBM extends Logging with Serializable {
 
     val discretizer = if (initialModel.isDefined) {
       require(numCols == initialModel.get.discretizer.colDiscretizers.length)
-      logWarning(s"Discretizer is already provided by the initial model, related params (maxBins,catCols,rankCols,numericalBinType) will be ignored")
+      logWarning(s"Discretizer is already provided by the initial model, related params" +
+        s" (maxBins,catCols,rankCols,numericalBinType) will be ignored")
       initialModel.get.discretizer
 
     } else {
@@ -625,14 +626,14 @@ private[gbm] object GBM extends Logging {
     var iter = 0
     var finished = false
 
-    while (!finished) {
+    while (!finished && iter < boostConfig.getMaxIter) {
       // if initial model is provided, round will not equal to iter
-      val round = trees.length
-      val logPrefix = s"Iter $iter: Tree $round:"
+      val numTrees = trees.length
+      val logPrefix = s"Iter $iter: Tree $numTrees:"
 
       // drop out
       if (boostConfig.getBoostType == Dart) {
-        dropTrees(dropped, boostConfig, round, dartRand)
+        dropTrees(dropped, boostConfig, numTrees, dartRand)
         if (dropped.nonEmpty) {
           logWarning(s"$logPrefix ${dropped.size} trees dropped")
         } else {
@@ -643,7 +644,8 @@ private[gbm] object GBM extends Logging {
       // build tree
       logWarning(s"$logPrefix start")
       val start = System.nanoTime
-      val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter, round, dropped.toSet, colSampleRand)
+      val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter,
+        numTrees, dropped.toSet, colSampleRand)
       logWarning(s"$logPrefix finish, duration ${(System.nanoTime - start) / 1e9} seconds")
 
       if (tree.isEmpty) {
@@ -652,14 +654,15 @@ private[gbm] object GBM extends Logging {
         finished = true
 
       } else {
-        // update base models
+        // update base model buffer
         updateTrees(weights, trees, tree.get, dropped.toSet, boostConfig)
 
-        // whether the weights is modified
+        // whether to keep the weights of previous trees
         val keepWeights = boostConfig.getBoostType != Dart || dropped.isEmpty
 
         // update train data predictions
-        trainPreds = updatePrediction(data, trainPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
+        trainPreds = updatePrediction(data, trainPreds, weights.toArray, tree.get,
+          boostConfig.getBaseScore, keepWeights)
         trainPredsCheckpointer.update(trainPreds)
 
         if (boostConfig.getEvaluateFunc.isEmpty) {
@@ -676,7 +679,8 @@ private[gbm] object GBM extends Logging {
 
         if (validation && boostConfig.getEvaluateFunc.nonEmpty) {
           // update test data predictions
-          testPreds = updatePrediction(test, testPreds, weights.toArray, tree.get, boostConfig.getBaseScore, keepWeights)
+          testPreds = updatePrediction(test, testPreds, weights.toArray, tree.get,
+            boostConfig.getBaseScore, keepWeights)
           testPredsCheckpointer.update(testPreds)
 
           // evaluate on test data
@@ -703,11 +707,7 @@ private[gbm] object GBM extends Logging {
       }
 
       iter += 1
-      if (iter >= boostConfig.getMaxIter) {
-        finished = true
-      }
     }
-
     if (iter >= boostConfig.getMaxIter) {
       logWarning(s"maxIter=${boostConfig.getMaxIter} reached, GBM training finished")
     }
@@ -727,11 +727,11 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * update trees
+    * append new tree to the model buffer
     *
     * @param weights     weights of trees
     * @param trees       trees
-    * @param tree        tree to be added
+    * @param tree        tree to be appended
     * @param dropped     indices of dropped trees
     * @param boostConfig boosting configuration
     */
@@ -798,7 +798,7 @@ private[gbm] object GBM extends Logging {
     * @param weights       weights of trees
     * @param boostConfig   boosting configuration
     * @param iteration     current iteration
-    * @param treeIndex     current round
+    * @param numTrees      current number of trees
     * @param dropped       indices of columns which are selected to drop during building of current tree
     * @param colSampleRand random number generator for column sampling
     * @tparam H
@@ -810,14 +810,14 @@ private[gbm] object GBM extends Logging {
                                                                             weights: Array[Double],
                                                                             boostConfig: BoostConfig,
                                                                             iteration: Int,
-                                                                            treeIndex: Int,
+                                                                            numTrees: Int,
                                                                             dropped: Set[Int],
                                                                             colSampleRand: Random): Option[TreeModel] = {
     val numH = implicitly[Numeric[H]]
     val toH = implicitly[FromDouble[H]]
 
     val rowSampled = Utils.sample(instances.zip(preds),
-      boostConfig.getSubSample, boostConfig.getSeed + treeIndex)
+      boostConfig.getSubSample, boostConfig.getSeed + numTrees)
 
     // selected columns
     val cols = if (boostConfig.getColSampleByTree == 1) {
@@ -864,7 +864,7 @@ private[gbm] object GBM extends Logging {
         }
     }
 
-    val treeConfig = new TreeConfig(iteration, treeIndex, catCols, cols)
+    val treeConfig = new TreeConfig(iteration, numTrees, catCols, cols)
     Tree.train[H, B](colSampled, boostConfig, treeConfig)
   }
 

@@ -193,7 +193,12 @@ class GBMClassifier(override val uid: String)
 
     val initialModel =
       if (isDefined(initialModelPath) && $(initialModelPath).nonEmpty) {
-        Some(GBMClassificationModel.load($(initialModelPath)).model)
+        val model = GBMClassificationModel.load($(initialModelPath))
+        if (model.getObjectiveFunc != $(objectiveFunc)) {
+          logWarning(s"The objective function conflicts with that in initial model," +
+            s" objective of initial model ${model.getObjectiveFunc} will be ignored.")
+        }
+        Some(model.model)
       } else {
         None
       }
@@ -328,7 +333,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
       // precomputed feature importance
       model.importance
     } else {
-      logWarning(s"Compute feature importances with first $n trees")
+      logInfo(s"Compute feature importances with first $n trees")
       model.computeImportance(n)
     }
   }

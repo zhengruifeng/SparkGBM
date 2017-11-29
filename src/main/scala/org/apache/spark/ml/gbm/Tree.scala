@@ -48,7 +48,7 @@ private[gbm] object Tree extends Logging {
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
 
     val logPrefix = s"Iter ${treeConfig.iteration}: Tree ${treeConfig.treeIndex}:"
-    logWarning(s"$logPrefix tree building start")
+    logInfo(s"$logPrefix tree building start")
 
     val lastSplits = mutable.Map[Long, Split]()
 
@@ -56,7 +56,7 @@ private[gbm] object Tree extends Logging {
       val start = System.nanoTime
 
       val depth = root.subtreeDepth
-      logWarning(s"$logPrefix Depth $depth: splitting start, parallelism ${sc.defaultParallelism}")
+      logInfo(s"$logPrefix Depth $depth: splitting start, parallelism ${sc.defaultParallelism}")
 
       if (minNodeId == 1L) {
         nodeIds = data.map(_ => 1L)
@@ -78,15 +78,15 @@ private[gbm] object Tree extends Logging {
       val splits = findSplits[H](hists, boostConfig, treeConfig, seed)
 
       if (splits.isEmpty) {
-        logWarning(s"$logPrefix Depth $depth: no more splits found, tree building finished")
+        logInfo(s"$logPrefix Depth $depth: no more splits found, tree building finished")
         finished = true
 
       } else if (numLeaves + splits.size > boostConfig.getMaxLeaves) {
-        logWarning(s"$logPrefix Depth $depth: maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
+        logInfo(s"$logPrefix Depth $depth: maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
         finished = true
 
       } else {
-        logWarning(s"$logPrefix Depth $depth: splitting finished, ${splits.size}/$numLeaves leaves split, " +
+        logInfo(s"$logPrefix Depth $depth: splitting finished, ${splits.size}/$numLeaves leaves split, " +
           s"gain=${splits.values.map(_.gain).sum}, duration ${(System.nanoTime - start) / 1e9} seconds")
 
         numLeaves += splits.size
@@ -102,17 +102,17 @@ private[gbm] object Tree extends Logging {
       }
 
       if (root.subtreeDepth >= boostConfig.getMaxDepth) {
-        logWarning(s"$logPrefix maxDepth=${boostConfig.getMaxDepth} reached, tree building finished")
+        logInfo(s"$logPrefix maxDepth=${boostConfig.getMaxDepth} reached, tree building finished")
         finished = true
       }
       if (numLeaves >= boostConfig.getMaxLeaves) {
-        logWarning(s"$logPrefix maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
+        logInfo(s"$logPrefix maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
         finished = true
       }
 
       minNodeId <<= 1
     }
-    logWarning(s"$logPrefix tree building finished")
+    logInfo(s"$logPrefix tree building finished")
 
     data.unpersist(blocking = false)
     nodeIdsCheckpointer.deleteAllCheckpoints()
@@ -352,7 +352,7 @@ private[gbm] object Tree extends Logging {
             }.toArray
       }, depth = boostConfig.getAggregationDepth)
 
-    logWarning(s"${acc.value} trials to find best splits of ${splits.length} nodes")
+    logInfo(s"${acc.value} trials to find best splits of ${splits.length} nodes")
     splits.toMap
   }
 

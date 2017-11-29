@@ -207,7 +207,8 @@ class GBMRegressor(override val uid: String) extends
       if (isDefined(initialModelPath) && $(initialModelPath).nonEmpty) {
         val model = GBMRegressionModel.load($(initialModelPath))
         if (model.getObjectiveFunc != $(objectiveFunc)) {
-          logWarning(s"The objective function conflicts with that in initial model")
+          logWarning(s"The objective function conflicts with that in initial model," +
+            s" objective of initial model ${model.getObjectiveFunc} will be ignored.")
         }
         Some(model.model)
       } else {
@@ -329,7 +330,7 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
       // precomputed feature importance
       model.importance
     } else {
-      logWarning(s"Compute feature importances with first $n trees")
+      logInfo(s"Compute feature importances with first $n trees")
       model.computeImportance(n)
     }
   }

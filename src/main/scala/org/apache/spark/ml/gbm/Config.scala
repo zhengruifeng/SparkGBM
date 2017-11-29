@@ -46,7 +46,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateMaxIter(value: Int): this.type = {
-    logWarning(s"maxIter was changed from $maxIter to $value")
+    logInfo(s"maxIter was changed from $maxIter to $value")
     setMaxIter(value)
   }
 
@@ -61,7 +61,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateMaxDepth(value: Int): this.type = {
-    logWarning(s"maxDepth was changed from $maxDepth to $value")
+    logInfo(s"maxDepth was changed from $maxDepth to $value")
     setMaxDepth(value)
   }
 
@@ -76,7 +76,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateMaxLeaves(value: Int): this.type = {
-    logWarning(s"maxLeaves was changed from $maxLeaves to $value")
+    logInfo(s"maxLeaves was changed from $maxLeaves to $value")
     setMaxLeaves(value)
   }
 
@@ -91,7 +91,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateMinGain(value: Double): this.type = {
-    logWarning(s"minGain was changed from $minGain to $value")
+    logInfo(s"minGain was changed from $minGain to $value")
     setMinGain(value)
   }
 
@@ -106,7 +106,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateMinNodeHess(value: Double): this.type = {
-    logWarning(s"minNodeHess was changed from $minNodeHess to $value")
+    logInfo(s"minNodeHess was changed from $minNodeHess to $value")
     setMinNodeHess(value)
   }
 
@@ -121,7 +121,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateStepSize(value: Double): this.type = {
-    logWarning(s"stepSize was changed from $stepSize to $value")
+    logInfo(s"stepSize was changed from $stepSize to $value")
     setStepSize(value)
   }
 
@@ -136,7 +136,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateRegAlpha(value: Double): this.type = {
-    logWarning(s"regAlpha was changed from $regAlpha to $value")
+    logInfo(s"regAlpha was changed from $regAlpha to $value")
     setRegAlpha(value)
   }
 
@@ -151,7 +151,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateRegLambda(value: Double): this.type = {
-    logWarning(s"regLambda was changed from $regLambda to $value")
+    logInfo(s"regLambda was changed from $regLambda to $value")
     setRegLambda(value)
   }
 
@@ -166,7 +166,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateSubSample(value: Double): this.type = {
-    logWarning(s"subSample was changed from $subSample to $value")
+    logInfo(s"subSample was changed from $subSample to $value")
     setSubSample(value)
   }
 
@@ -181,7 +181,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateColSampleByTree(value: Double): this.type = {
-    logWarning(s"colSampleByTree was changed from $colSampleByTree to $value")
+    logInfo(s"colSampleByTree was changed from $colSampleByTree to $value")
     setColSampleByTree(value)
   }
 
@@ -196,7 +196,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateColSampleByLevel(value: Double): this.type = {
-    logWarning(s"colSampleByLevel was changed from $colSampleByLevel to $value")
+    logInfo(s"colSampleByLevel was changed from $colSampleByLevel to $value")
     setColSampleByLevel(value)
   }
 
@@ -211,7 +211,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateCheckpointInterval(value: Int): this.type = {
-    logWarning(s"checkpointInterval was changed from $checkpointInterval to $value")
+    logInfo(s"checkpointInterval was changed from $checkpointInterval to $value")
     setCheckpointInterval(value)
   }
 
@@ -226,7 +226,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateStorageLevel(value: StorageLevel): this.type = {
-    logWarning(s"storageLevel was changed from $storageLevel to $value")
+    logInfo(s"storageLevel was changed from $storageLevel to $value")
     setStorageLevel(value)
   }
 
@@ -241,7 +241,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateAggregationDepth(value: Int): this.type = {
-    logWarning(s"aggregationDepth was changed from $aggregationDepth to $value")
+    logInfo(s"aggregationDepth was changed from $aggregationDepth to $value")
     setAggregationDepth(value)
   }
 
@@ -255,7 +255,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateSeed(value: Long): this.type = {
-    logWarning(s"seed was changed from $seed to $value")
+    logInfo(s"seed was changed from $seed to $value")
     setSeed(value)
   }
 
@@ -270,7 +270,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateBoostType(value: String): this.type = {
-    logWarning(s"boostType was changed from $boostType to $value")
+    logInfo(s"boostType was changed from $boostType to $value")
     setBoostType(value)
   }
 
@@ -285,7 +285,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateDropRate(value: Double): this.type = {
-    logWarning(s"dropRate was changed from $dropRate to $value")
+    logInfo(s"dropRate was changed from $dropRate to $value")
     setDropRate(value)
   }
 
@@ -300,7 +300,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateDropSkip(value: Double): this.type = {
-    logWarning(s"dropSkip was changed from $dropSkip to $value")
+    logInfo(s"dropSkip was changed from $dropSkip to $value")
     setDropSkip(value)
   }
 
@@ -315,7 +315,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateMinDrop(value: Int): this.type = {
-    logWarning(s"minDrop was changed from $minDrop to $value")
+    logInfo(s"minDrop was changed from $minDrop to $value")
     setMinDrop(value)
   }
 
@@ -330,7 +330,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateMaxDrop(value: Int): this.type = {
-    logWarning(s"maxDrop was changed from $maxDrop to $value")
+    logInfo(s"maxDrop was changed from $maxDrop to $value")
     setMaxDrop(value)
   }
 
@@ -345,7 +345,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateMaxBruteBins(value: Int): this.type = {
-    logWarning(s"maxBruteBins was changed from $maxBruteBins to $value")
+    logInfo(s"maxBruteBins was changed from $maxBruteBins to $value")
     setMaxBruteBins(value)
   }
 
@@ -360,7 +360,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateObjectiveFunc(value: ObjFunc): this.type = {
-    logWarning(s"obj was changed from ${obj.name} to ${value.name}")
+    logInfo(s"obj was changed from ${obj.name} to ${value.name}")
     setObjectiveFunc(value)
   }
 
@@ -386,7 +386,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateEvaluateFunc(value: Array[EvalFunc]): this.type = {
-    logWarning(s"eval was changed from ${getEvaluateFunc.map(_.name).mkString("(", ",", ")")} to ${value.map(_.name).mkString("(", ",", ")")}")
+    logInfo(s"eval was changed from ${getEvaluateFunc.map(_.name).mkString("(", ",", ")")} to ${value.map(_.name).mkString("(", ",", ")")}")
     setEvaluateFunc(value)
   }
 
@@ -405,7 +405,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateCallbackFunc(value: Array[CallbackFunc]): this.type = {
-    logWarning(s"obj was changed from ${callbacks.map(_.name).mkString("(", ",", ")")} to ${value.map(_.name).mkString("(", ",", ")")}")
+    logInfo(s"obj was changed from ${callbacks.map(_.name).mkString("(", ",", ")")} to ${value.map(_.name).mkString("(", ",", ")")}")
     setCallbackFunc(value)
   }
 

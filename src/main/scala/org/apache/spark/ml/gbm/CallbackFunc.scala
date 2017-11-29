@@ -62,10 +62,10 @@ class EarlyStop(val iters: Int) extends CallbackFunc {
         val end = values.last
 
         if (eval.isLargerBetter && start >= end) {
-          logWarning(s"Fail to increase metric ${eval.name} in the last $len iterations: ${values.mkString("(", ",", ")")}")
+          logInfo(s"Fail to increase metric ${eval.name} in the last $len iterations: ${values.mkString("(", ",", ")")}")
           stop = true
         } else if (!eval.isLargerBetter && start <= end) {
-          logWarning(s"Fail to decrease metric ${eval.name} in the last $len iterations: ${values.mkString("(", ",", ")")}")
+          logInfo(s"Fail to decrease metric ${eval.name} in the last $len iterations: ${values.mkString("(", ",", ")")}")
           stop = true
         }
       }
@@ -103,7 +103,7 @@ class ModelCheckpoint(val interval: Int,
 
       }.onComplete {
         case Success(v) =>
-          logWarning(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
 
         case Failure(t) =>
           logWarning(s"fail to checkpoint model, ${t.toString}")
@@ -154,7 +154,7 @@ class ClassificationModelCheckpoint(val interval: Int,
 
       }.onComplete {
         case Success(v) =>
-          logWarning(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
 
         case Failure(t) =>
           logWarning(s"fail to checkpoint model, ${t.toString}")
@@ -205,7 +205,7 @@ class RegressionModelCheckpoint(val interval: Int,
 
       }.onComplete {
         case Success(v) =>
-          logWarning(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
 
         case Failure(t) =>
           logWarning(s"fail to checkpoint model, ${t.toString}")

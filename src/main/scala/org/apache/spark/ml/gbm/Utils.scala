@@ -184,7 +184,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
 
       }.onComplete {
         case Success(v) =>
-          logWarning(s"successfully remove old checkpoint file: $file, duration $v seconds")
+          logInfo(s"successfully remove old checkpoint file: $file, duration $v seconds")
 
         case Failure(t) =>
           logWarning(s"fail to remove old checkpoint file: $file, ${t.toString}")
@@ -261,7 +261,7 @@ private[gbm] object Utils extends Logging {
 
       } else {
 
-        logWarning(s"Using partition-based sampling")
+        logInfo(s"Using partition-based sampling")
 
         val rand = new Random(seed)
         val shuffled = rand.shuffle(Seq.range(0, numPartitions))

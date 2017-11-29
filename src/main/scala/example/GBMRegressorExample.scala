@@ -15,7 +15,7 @@ object GBMRegressorExample {
       .appName("GBMRegressorExample")
       .getOrCreate()
 
-    spark.sparkContext.setLogLevel("WARN")
+    spark.sparkContext.setLogLevel("INFO")
 
     val checkpointDir = s"/tmp/sparkGBM/spark-checkpoint-${System.nanoTime}"
     spark.sparkContext.setCheckpointDir(checkpointDir)

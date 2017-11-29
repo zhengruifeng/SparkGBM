@@ -63,7 +63,7 @@ private[gbm] object Discretizer extends Logging {
     require(numCols >= 1)
 
     val start = System.nanoTime
-    logWarning(s"Discretizer building start")
+    logInfo(s"Discretizer building start")
 
     // zero bin index is always reserved for missing value
     val emptyAggs = Array.range(0, numCols).map { col =>
@@ -106,7 +106,7 @@ private[gbm] object Discretizer extends Logging {
 
     val colDiscretizers = aggregated.map(_.toColDiscretizer)
 
-    logWarning(s"Discretizer building finished, duration ${(System.nanoTime - start) / 1e9} seconds")
+    logInfo(s"Discretizer building finished, duration ${(System.nanoTime - start) / 1e9} seconds")
 
     new Discretizer(colDiscretizers)
   }

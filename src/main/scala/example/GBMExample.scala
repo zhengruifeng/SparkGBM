@@ -18,7 +18,7 @@ object GBMExample {
       .appName("GBMExample")
       .getOrCreate()
 
-    spark.sparkContext.setLogLevel("WARN")
+    spark.sparkContext.setLogLevel("INFO")
 
     val rdd = spark.read.format("libsvm")
       .load("data/housing_scale")

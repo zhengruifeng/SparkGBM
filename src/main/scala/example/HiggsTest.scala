@@ -20,7 +20,7 @@ object HiggsTest {
 
     val sc = spark.sparkContext
 
-    sc.setLogLevel("WARN")
+    sc.setLogLevel("INFO")
     sc.setCheckpointDir("/tmp/zrf/spark-checkpoint")
 
     val modelCheckpointPath = s"/tmp/zrf/spark-modelcheckpoint-${System.nanoTime}"

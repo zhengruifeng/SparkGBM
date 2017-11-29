@@ -429,7 +429,7 @@ class GBM extends Logging with Serializable {
       require(catCols.intersect(rankCols).isEmpty)
       Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, aggregationDepth)
     }
-    logWarning(s"Average number of bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
+    logInfo(s"Average number of bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
 
     val boostConfig = new BoostConfig
     boostConfig.setMaxIter(maxIter)
@@ -513,17 +513,17 @@ private[gbm] object GBM extends Logging {
 
     if (maxBinIndex <= Byte.MaxValue) {
 
-      logWarning("Data representation of bins: Array[Byte]")
+      logInfo("Data representation of bins: Array[Byte]")
       boostWithBin[Byte](data, test, boostConfig, validation, discretizer, initialModel)
 
     } else if (maxBinIndex <= Short.MaxValue) {
 
-      logWarning("Data representation of bins: Array[Short]")
+      logInfo("Data representation of bins: Array[Short]")
       boostWithBin[Short](data, test, boostConfig, validation, discretizer, initialModel)
 
     } else {
 
-      logWarning("Data representation of bins: Array[Int]")
+      logInfo("Data representation of bins: Array[Int]")
       boostWithBin[Int](data, test, boostConfig, validation, discretizer, initialModel)
     }
   }
@@ -549,11 +549,11 @@ private[gbm] object GBM extends Logging {
 
     boostConfig.getFloatType match {
       case Float =>
-        logWarning("Data representation of gradient: Float")
+        logInfo("Data representation of gradient: Float")
         boostWithFloat[Float, B](dataB, testB, boostConfig, validation, discretizer, initialModel)
 
       case Double =>
-        logWarning("Data representation of gradient: Double")
+        logInfo("Data representation of gradient: Double")
         boostWithFloat[Double, B](dataB, testB, boostConfig, validation, discretizer, initialModel)
     }
   }
@@ -582,11 +582,11 @@ private[gbm] object GBM extends Logging {
     val sc = spark.sparkContext
 
     data.persist(boostConfig.getStorageLevel)
-    logWarning(s"${data.count} instances in train data")
+    logInfo(s"${data.count} instances in train data")
 
     if (validation) {
       test.persist(boostConfig.getStorageLevel)
-      logWarning(s"${test.count} instances in test data")
+      logInfo(s"${test.count} instances in test data")
     }
 
     val weights = ArrayBuffer[Double]()
@@ -635,22 +635,22 @@ private[gbm] object GBM extends Logging {
       if (boostConfig.getBoostType == Dart) {
         dropTrees(dropped, boostConfig, numTrees, dartRand)
         if (dropped.nonEmpty) {
-          logWarning(s"$logPrefix ${dropped.size} trees dropped")
+          logInfo(s"$logPrefix ${dropped.size} trees dropped")
         } else {
-          logWarning(s"$logPrefix skip drop")
+          logInfo(s"$logPrefix skip drop")
         }
       }
 
       // build tree
-      logWarning(s"$logPrefix start")
+      logInfo(s"$logPrefix start")
       val start = System.nanoTime
       val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter,
         numTrees, dropped.toSet, colSampleRand)
-      logWarning(s"$logPrefix finish, duration ${(System.nanoTime - start) / 1e9} seconds")
+      logInfo(s"$logPrefix finish, duration ${(System.nanoTime - start) / 1e9} seconds")
 
       if (tree.isEmpty) {
         // fail to build a new tree
-        logWarning(s"$logPrefix no more tree built, GBM training finished")
+        logInfo(s"$logPrefix no more tree built, GBM training finished")
         finished = true
 
       } else {
@@ -674,7 +674,7 @@ private[gbm] object GBM extends Logging {
         if (boostConfig.getEvaluateFunc.nonEmpty) {
           val trainMetrics = evaluate(data, trainPreds, boostConfig)
           trainMetricsHistory.append(trainMetrics)
-          logWarning(s"$logPrefix train metrics ${trainMetrics.mkString("(", ", ", ")")}")
+          logInfo(s"$logPrefix train metrics ${trainMetrics.mkString("(", ", ", ")")}")
         }
 
         if (validation && boostConfig.getEvaluateFunc.nonEmpty) {
@@ -686,7 +686,7 @@ private[gbm] object GBM extends Logging {
           // evaluate on test data
           val testMetrics = evaluate(test, testPreds, boostConfig)
           testMetricsHistory.append(testMetrics)
-          logWarning(s"$logPrefix test metrics ${testMetrics.mkString("(", ", ", ")")}")
+          logInfo(s"$logPrefix test metrics ${testMetrics.mkString("(", ", ", ")")}")
         }
 
         // callback
@@ -700,7 +700,7 @@ private[gbm] object GBM extends Logging {
             if (callback.compute(spark, boostConfig, snapshot,
               trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
-              logWarning(s"$logPrefix callback ${callback.name} stop training")
+              logInfo(s"$logPrefix callback ${callback.name} stop training")
             }
           }
         }
@@ -709,7 +709,7 @@ private[gbm] object GBM extends Logging {
       iter += 1
     }
     if (iter >= boostConfig.getMaxIter) {
-      logWarning(s"maxIter=${boostConfig.getMaxIter} reached, GBM training finished")
+      logInfo(s"maxIter=${boostConfig.getMaxIter} reached, GBM training finished")
     }
 
     data.unpersist(blocking = false)

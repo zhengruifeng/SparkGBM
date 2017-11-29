@@ -264,22 +264,22 @@ private[gbm] object Utils extends Logging {
         logInfo(s"Using partition-based sampling")
 
         val rand = new Random(seed)
-        val shuffled = rand.shuffle(Seq.range(0, numPartitions))
+        val shuffled = rand.shuffle(Seq.range(0, numPartitions)).toArray
 
         val n = numPartitions * fraction
         val m = n.toInt
         val r = n - m
 
         val (selected, partial) = if (m > 0 && r < 1e-2) {
-          (shuffled.take(m).toSet, -1)
+          (shuffled.take(m).sorted, -1)
         } else if (m >= 0 && r > 1 - 1e-2) {
-          (shuffled.take(m + 1).toSet, -1)
+          (shuffled.take(m + 1).sorted, -1)
         } else {
-          (shuffled.take(m).toSet, shuffled.last)
+          (shuffled.take(m).sorted, shuffled.last)
         }
 
         data.mapPartitionsWithIndex { case (pid, it) =>
-          if (selected.contains(pid)) {
+          if (Arrays.binarySearch(selected, pid) >= 0) {
             it
           } else if (pid == partial) {
             val rand = new Random(seed + pid)

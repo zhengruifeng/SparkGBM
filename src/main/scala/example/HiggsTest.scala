@@ -48,8 +48,8 @@ object HiggsTest {
       .setMaxLeaves(128)
       .setMaxBins(128)
       .setSubSample(0.8)
-      .setColSampleByTree(0.8)
-      .setColSampleByLevel(0.8)
+      .setColSampleByTree(1.0)
+      .setColSampleByLevel(1.0)
       .setRegAlpha(0.1)
       .setRegLambda(1.0)
       .setObjectiveFunc("logistic")
@@ -58,6 +58,7 @@ object HiggsTest {
       .setCheckpointInterval(10)
       .setModelCheckpointInterval(10)
       .setModelCheckpointPath(modelCheckpointPath)
+      .setRawPredictionCol("rawPrediction")
 
     val gbmcModel = gbmc.fit(train)
 
@@ -76,6 +77,7 @@ object HiggsTest {
       .setMaxBins(128)
       .setCheckpointInterval(10)
       .setCacheNodeIds(true)
+      .setRawPredictionCol("rawPrediction")
 
     val gbtcModel = gbtc.fit(train)
 

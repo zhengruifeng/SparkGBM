@@ -1,7 +1,7 @@
 package example
 
-import org.apache.spark.ml.classification.{GBMClassifier, GBTClassifier}
-import org.apache.spark.ml.evaluation.BinaryClassificationEvaluator
+import org.apache.spark.ml.classification._
+import org.apache.spark.ml.evaluation._
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.sql.SparkSession
 
@@ -26,17 +26,17 @@ object HiggsTest {
     val modelCheckpointPath = s"/tmp/zrf/spark-modelcheckpoint-${System.nanoTime}"
 
     val train = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-EXT-Train", 1028)
-      .map { l => (l.label, l.features.asML) }
+      .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
 
     val test = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-EXT-Test", 1028)
-      .map { l => (l.label, l.features.asML) }
+      .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
 
-    val evaluator = new BinaryClassificationEvaluator()
+    val evaluator = new MulticlassClassificationEvaluator()
     evaluator.setLabelCol("label")
-      .setRawPredictionCol("rawPrediction")
-      .setMetricName("areaUnderROC")
+      .setPredictionCol("prediction")
+      .setMetricName("f1")
 
     val gbmcStart = System.nanoTime
 
@@ -53,19 +53,19 @@ object HiggsTest {
       .setRegAlpha(0.1)
       .setRegLambda(1.0)
       .setObjectiveFunc("logistic")
-      .setEvaluateFunc(Array("auc"))
+      .setEvaluateFunc(Array.empty)
       .setFloatType("float")
       .setCheckpointInterval(10)
       .setModelCheckpointInterval(10)
       .setModelCheckpointPath(modelCheckpointPath)
-      .setRawPredictionCol("rawPrediction")
+      .setPredictionCol("prediction")
 
     val gbmcModel = gbmc.fit(train)
 
     val gbmcEnd = System.nanoTime
 
-    val gbmcAUC = evaluator.evaluate(gbmcModel.transform(test))
-    println(s"GBM finished, duration: ${(gbmcEnd - gbmcStart) / 1e9} seconds, AUC on test data: $gbmcAUC")
+    val gbmcF1 = evaluator.evaluate(gbmcModel.transform(test))
+    println(s"GBM finished, duration: ${(gbmcEnd - gbmcStart) / 1e9} seconds, F1 on test data: $gbmcF1")
 
     val gbtcStart = System.nanoTime
 
@@ -77,14 +77,14 @@ object HiggsTest {
       .setMaxBins(128)
       .setCheckpointInterval(10)
       .setCacheNodeIds(true)
-      .setRawPredictionCol("rawPrediction")
+      .setPredictionCol("prediction")
 
     val gbtcModel = gbtc.fit(train)
 
     val gbtcEnd = System.nanoTime
 
-    val gbtcAUC = evaluator.evaluate(gbtcModel.transform(test))
-    println(s"GBT finished, duration: ${(gbtcEnd - gbtcStart) / 1e9} seconds, AUC on test data: $gbtcAUC")
+    val gbtcF1 = evaluator.evaluate(gbtcModel.transform(test))
+    println(s"GBT finished, duration: ${(gbtcEnd - gbtcStart) / 1e9} seconds, F1 on test data: $gbtcF1")
 
     spark.stop()
   }

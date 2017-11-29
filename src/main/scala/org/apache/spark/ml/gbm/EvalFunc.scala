@@ -51,7 +51,7 @@ private[gbm] object IncrementalEvalFunc {
 
   def compute(data: RDD[(Double, Double, Double)],
               evals: Array[IncrementalEvalFunc],
-              depth: Int): Array[Double] = {
+              depth: Int): Map[String, Double] = {
 
     evals.foreach(_.init)
 
@@ -68,7 +68,9 @@ private[gbm] object IncrementalEvalFunc {
               eval1.merge(eval2)
           }
           evals1
-      }, depth = depth).map(_.getValue)
+      }, depth = depth)
+      .map(e => (e.name, e.getValue))
+      .toMap
   }
 }
 

@@ -994,14 +994,12 @@ private[gbm] object GBM extends Logging {
     }
 
     if (boostConfig.getIncrementalEvaluateFunc.nonEmpty) {
-      val values = IncrementalEvalFunc.compute(scores,
+      IncrementalEvalFunc.compute(scores,
         boostConfig.getIncrementalEvaluateFunc, boostConfig.getAggregationDepth)
-
-      boostConfig.getIncrementalEvaluateFunc.map(_.name)
-        .zip(values).foreach {
-        case (name, value) =>
-          result.update(name, value)
-      }
+        .foreach {
+          case (name, value) =>
+            result.update(name, value)
+        }
     }
 
     if (boostConfig.getBatchEvaluateFunc.nonEmpty) {

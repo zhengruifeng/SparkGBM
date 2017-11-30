@@ -1,6 +1,10 @@
 package org.apache.spark.ml.gbm
 
-import java.util.Arrays
+import java.{util => ju}
+
+import breeze.math.Semiring
+import breeze.storage.Zero
+import breeze.{linalg => bl}
 
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -14,6 +18,7 @@ import org.apache.spark.Partitioner
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.storage.StorageLevel
 
 
@@ -244,6 +249,27 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
 
 private[gbm] object Utils extends Logging {
 
+  def sampleWithIndices[B: Integral : Zero : Semiring : ClassTag](vector: bl.Vector[B],
+                                                                  indices: Array[Int]): bl.Vector[B] = {
+    vector match {
+      case dv: bl.DenseVector[B] =>
+        bl.DenseVector(indices.map(dv.apply))
+
+      case sv: bl.SparseVector[B] =>
+        val intB = implicitly[Integral[B]]
+        val buff = mutable.ArrayBuffer[(Int, B)]()
+        var i = 0
+        while (i < indices.length) {
+          val v = sv(indices(i))
+          if (!intB.equiv(v, intB.zero)) {
+            buff.append((i, v))
+          }
+          i += 1
+        }
+        bl.SparseVector[B](indices.length)(buff: _*)
+    }
+  }
+
   def sample[T: ClassTag](data: RDD[T],
                           fraction: Double,
                           seed: Long): RDD[T] = {
@@ -279,7 +305,7 @@ private[gbm] object Utils extends Logging {
         }
 
         data.mapPartitionsWithIndex { case (pid, it) =>
-          if (Arrays.binarySearch(selected, pid) >= 0) {
+          if (ju.Arrays.binarySearch(selected, pid) >= 0) {
             it
           } else if (pid == partial) {
             val rand = new Random(seed + pid)
@@ -296,22 +322,46 @@ private[gbm] object Utils extends Logging {
     // For primitive keys, we can use the natural ordering. Otherwise, use the Ordering comparator.
     classTag[K] match {
       case ClassTag.Float =>
-        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Float]], x.asInstanceOf[Float])
+        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Float]], x.asInstanceOf[Float])
       case ClassTag.Double =>
-        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Double]], x.asInstanceOf[Double])
+        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Double]], x.asInstanceOf[Double])
       case ClassTag.Byte =>
-        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Byte]], x.asInstanceOf[Byte])
+        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Byte]], x.asInstanceOf[Byte])
       case ClassTag.Char =>
-        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Char]], x.asInstanceOf[Char])
+        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Char]], x.asInstanceOf[Char])
       case ClassTag.Short =>
-        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Short]], x.asInstanceOf[Short])
+        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Short]], x.asInstanceOf[Short])
       case ClassTag.Int =>
-        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Int]], x.asInstanceOf[Int])
+        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Int]], x.asInstanceOf[Int])
       case ClassTag.Long =>
-        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[Long]], x.asInstanceOf[Long])
+        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Long]], x.asInstanceOf[Long])
       case _ =>
         val comparator = implicitly[Ordering[K]].asInstanceOf[java.util.Comparator[Any]]
-        (l, x) => Arrays.binarySearch(l.asInstanceOf[Array[AnyRef]], x, comparator)
+        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[AnyRef]], x, comparator)
+    }
+  }
+
+  /**
+    * helper function to save dataframes
+    */
+  def saveDataFrames(dataframes: Array[DataFrame],
+                     names: Array[String],
+                     path: String): Unit = {
+    require(dataframes.length == names.length)
+    require(names.length == names.distinct.length)
+    dataframes.zip(names).foreach { case (df, name) =>
+      df.write.parquet(new Path(path, name).toString)
+    }
+  }
+
+  /**
+    * helper function to load dataframes
+    */
+  def loadDataFrames(spark: SparkSession,
+                     names: Array[String],
+                     path: String): Array[DataFrame] = {
+    names.map { name =>
+      spark.read.parquet(new Path(path, name).toString)
     }
   }
 }

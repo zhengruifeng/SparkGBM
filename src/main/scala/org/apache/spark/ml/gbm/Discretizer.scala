@@ -1,9 +1,13 @@
 package org.apache.spark.ml.gbm
 
-import java.util.Arrays
+import java.{util => ju}
+
+import breeze.math.Semiring
+import breeze.storage.Zero
+import breeze.{linalg => bl}
 
 import scala.collection.mutable
-
+import scala.reflect.ClassTag
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
@@ -15,28 +19,109 @@ import org.apache.spark.sql.catalyst.util.QuantileSummaries
   * discretizer for the rows
   *
   * @param colDiscretizers column discretizers for each column
+  * @param zeroIsMissing   whether 0.0 is viewed as missing value
+  * @param sparsity        the sparsity of dataset to create this discretizer
   */
-class Discretizer(val colDiscretizers: Array[ColDiscretizer]) extends Serializable {
+class Discretizer(val colDiscretizers: Array[ColDiscretizer],
+                  val zeroIsMissing: Boolean,
+                  val sparsity: Double) extends Serializable {
 
-  def transform(vec: Vector): Array[Int] = {
-    require(vec.size == colDiscretizers.length)
 
-    vec.toArray.zip(colDiscretizers).map {
-      case (value, col) =>
-        if (value.isNaN || value.isInfinity) {
-          0
-        } else {
-          col.transform(value)
+  def transformToArray(vec: Vector): Array[Int] = {
+    require(vec.size == numCols)
+
+    val bins = Array.ofDim[Int](numCols)
+
+    if (zeroIsMissing) {
+      vec.foreachActive { (i, v) =>
+        bins(i) = discretizeWithIndex(v, i)
+      }
+    } else {
+      var i = 0
+      while (i < numCols) {
+        bins(i) = discretizeWithIndex(vec(i), i)
+        i += 1
+      }
+    }
+
+    bins
+  }
+
+
+  private[gbm] def transformToSparse[B: Integral : Zero : Semiring : ClassTag](vec: Vector): bl.Vector[B] = {
+    require(vec.size == numCols)
+    val intB = implicitly[Integral[B]]
+
+    val buff = mutable.ArrayBuffer[(Int, B)]()
+
+    if (zeroIsMissing) {
+      vec.foreachActive { (i, v) =>
+        val bin = discretizeWithIndex(v, i)
+        if (bin != 0) {
+          buff.append((i, intB.fromInt(bin)))
         }
+      }
+    } else {
+      var i = 0
+      while (i < numCols) {
+        val bin = discretizeWithIndex(vec(i), i)
+        if (bin != 0) {
+          buff.append((i, intB.fromInt(bin)))
+        }
+        i += 1
+      }
+    }
+
+    bl.SparseVector[B](numCols)(buff: _*)
+  }
+
+
+  private[gbm] def transformToDense[B: Integral : Zero : ClassTag](vec: Vector): bl.Vector[B] = {
+    require(vec.size == numCols)
+    val intB = implicitly[Integral[B]]
+
+    val bins = Array.fill(numCols)(intB.zero)
+
+    if (zeroIsMissing) {
+      vec.foreachActive { (i, v) =>
+        val bin = discretizeWithIndex(v, i)
+        if (bin != 0) {
+          bins(i) = intB.fromInt(bin)
+        }
+      }
+    } else {
+      var i = 0
+      while (i < numCols) {
+        val bin = discretizeWithIndex(vec(i), i)
+        bins(i) = intB.fromInt(bin)
+        i += 1
+      }
+    }
+
+    bl.DenseVector[B](bins)
+  }
+
+
+  private[gbm] def discretizeWithIndex(value: Double, index: Int): Int = {
+    if (value.isNaN || value.isInfinity) {
+      0
+    } else if (zeroIsMissing && value == 0) {
+      0
+    } else {
+      colDiscretizers(index).transform(value)
     }
   }
+
 
   def numBins: Array[Int] = {
     // zero bin index is always reserved for missing value
     // column discretizers do not handle missing value, and output bin indices starting from 1
     colDiscretizers.map(_.numBins + 1)
   }
+
+  def numCols: Int = colDiscretizers.length
 }
+
 
 private[gbm] object Discretizer extends Logging {
 
@@ -49,6 +134,7 @@ private[gbm] object Discretizer extends Logging {
     * @param rankCols         indices of ranking columns
     * @param maxBins          maximun number of bins, staring from 0
     * @param numericalBinType method to deal with numerical column
+    * @param zeroIsMissing    whether zero is viewed as missing value
     * @param depth            aggregation depth
     * @return discretizer
     */
@@ -58,6 +144,7 @@ private[gbm] object Discretizer extends Logging {
           rankCols: Set[Int],
           maxBins: Int,
           numericalBinType: String,
+          zeroIsMissing: Boolean,
           depth: Int): Discretizer = {
     require(maxBins >= 4)
     require(numCols >= 1)
@@ -78,45 +165,77 @@ private[gbm] object Discretizer extends Logging {
       }
     }
 
-    val aggregated = vectors.treeAggregate[Array[ColAgg]](emptyAggs)(
-      seqOp = {
-        case (aggs, vec) =>
-          require(aggs.length == vec.size)
-          var i = 0
-          while (i < aggs.length) {
-            // column aggs do not deal with missing value
-            val v = vec(i)
-            if (!v.isNaN && !v.isInfinity) {
-              aggs(i).update(v)
-            }
-            i += 1
-          }
-          aggs
 
-      }, combOp = {
-        case (aggs1, aggs2) =>
-          require(aggs1.length == aggs2.length)
-          var i = 0
-          while (i < aggs1.length) {
-            aggs1(i).merge(aggs2(i))
-            i += 1
-          }
-          aggs1
-      }, depth = depth)
+    val (count, aggregated) =
+      if (zeroIsMissing) {
+        vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
+          seqOp = {
+            case ((cnt, aggs), vec) =>
+              require(aggs.length == vec.size)
+              vec.foreachActive { (i, v) =>
+                // column aggs do not deal with missing value
+                if (!v.isNaN && !v.isInfinity && v != 0) {
+                  aggs(i).update(v)
+                }
+              }
+              (cnt + 1, aggs)
+          }, combOp = {
+            case ((cnt1, aggs1), (cnt2, aggs2)) =>
+              require(aggs1.length == aggs2.length)
+              var i = 0
+              while (i < aggs1.length) {
+                aggs1(i).merge(aggs2(i))
+                i += 1
+              }
+              (cnt1 + cnt2, aggs1)
+          }, depth = depth)
 
-    val colDiscretizers = aggregated.map(_.toColDiscretizer)
+      } else {
 
-    logInfo(s"Discretizer building finished, duration ${(System.nanoTime - start) / 1e9} seconds")
+        vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
+          seqOp = {
+            case ((cnt, aggs), vec) =>
+              require(aggs.length == vec.size)
+              var i = 0
+              while (i < aggs.length) {
+                // column aggs do not deal with missing value
+                val v = vec(i)
+                if (!v.isNaN && !v.isInfinity) {
+                  aggs(i).update(v)
+                }
+                i += 1
+              }
+              (cnt + 1, aggs)
+          }, combOp = {
+            case ((cnt1, aggs1), (cnt2, aggs2)) =>
+              require(aggs1.length == aggs2.length)
+              var i = 0
+              while (i < aggs1.length) {
+                aggs1(i).merge(aggs2(i))
+                i += 1
+              }
+              (cnt1 + cnt2, aggs1)
+          }, depth = depth)
+      }
 
-    new Discretizer(colDiscretizers)
+
+    // number of non-missing
+    var nnm = 0.0
+    aggregated.foreach(agg => nnm += agg.count)
+
+    val sparsity = 1 - nnm / count / numCols
+
+    logInfo(s"Discretizer building finished, data sparsity: $sparsity, duration: ${(System.nanoTime - start) / 1e9} sec")
+
+    new Discretizer(aggregated.map(_.toColDiscretizer), zeroIsMissing, sparsity)
   }
 
 
   /** helper function to convert Discretizer to dataframes */
   def toDF(spark: SparkSession,
-           discretizer: Discretizer): DataFrame = {
+           model: Discretizer): Array[DataFrame] = {
 
-    val datum = discretizer.colDiscretizers.zipWithIndex.map {
+    val colDatum = model.colDiscretizers.zipWithIndex.map {
       case (num: QuantileNumColDiscretizer, i) =>
         (i, "quantile", num.splits, Array.emptyIntArray)
       case (num: IntervalNumColDiscretizer, i) =>
@@ -127,14 +246,23 @@ private[gbm] object Discretizer extends Logging {
         (i, "rank", Array.emptyDoubleArray, rank.array)
     }
 
-    spark.createDataFrame(datum).toDF("featureIndex", "type", "doubles", "ints")
+    val colDF = spark.createDataFrame(colDatum)
+      .toDF("featureIndex", "type", "doubles", "ints")
+
+    val extraDF = spark.createDataFrame(
+      Seq((model.zeroIsMissing, model.sparsity)))
+      .toDF("zeroIsMissing", "sparsity")
+
+    Array(colDF, extraDF)
   }
 
 
   /** helper function to convert dataframes back to Discretizer */
-  def fromDF(df: DataFrame): Discretizer = {
+  def fromDF(dataframes: Array[DataFrame]): Discretizer = {
+    val Array(colDF, extraDF) = dataframes
+
     val (indices, colDiscretizers) =
-      df.select("featureIndex", "type", "doubles", "ints").rdd
+      colDF.select("featureIndex", "type", "doubles", "ints").rdd
         .map { row =>
           val i = row.getInt(0)
           val tpe = row.getString(1)
@@ -162,7 +290,11 @@ private[gbm] object Discretizer extends Logging {
     require(indices.length == indices.distinct.length)
     require(indices.length == indices.max + 1)
 
-    new Discretizer(colDiscretizers)
+    val extraRow = extraDF.select("zeroIsMissing", "sparsity").head()
+    val zeroIsMissing = extraRow.getBoolean(0)
+    val sparsity = extraRow.getDouble(1)
+
+    new Discretizer(colDiscretizers, zeroIsMissing, sparsity)
   }
 }
 
@@ -198,7 +330,7 @@ private[gbm] class QuantileNumColDiscretizer(val splits: Array[Double]) extends 
     if (splits.isEmpty) {
       1
     } else {
-      val index = Arrays.binarySearch(splits, value)
+      val index = ju.Arrays.binarySearch(splits, value)
       if (index >= 0) {
         index + 1
       } else {
@@ -261,7 +393,7 @@ private[gbm] class RankColDiscretizer(val array: Array[Int]) extends ColDiscreti
 
   override def transform(value: Double): Int = {
     require(value.toInt == value)
-    val index = Arrays.binarySearch(array, value.toInt)
+    val index = ju.Arrays.binarySearch(array, value.toInt)
     require(index >= 0, s"value $value not in ${array.mkString("(", ", ", ")")}")
     index + 1
   }
@@ -280,6 +412,8 @@ private[gbm] trait ColAgg extends Serializable {
   def merge(other: ColAgg): ColAgg
 
   def toColDiscretizer: ColDiscretizer
+
+  def count: Long
 }
 
 
@@ -290,22 +424,25 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
   var summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001)
+  var count = 0L
 
   override def update(value: Double): QuantileNumColAgg = {
     summary = summary.insert(value)
+    count += 1
     this
   }
 
   override def merge(other: ColAgg): QuantileNumColAgg = {
-    val otherSummary = other.asInstanceOf[QuantileNumColAgg].summary
-    summary = summary.compress().merge(otherSummary.compress())
+    val o = other.asInstanceOf[QuantileNumColAgg]
+    summary = summary.compress().merge(o.summary.compress())
+    count += o.count
     this
   }
 
   // maxBins = 3 -> interval = 0.5, queries = [0.25, 0.75], splits = [q0.25, q0.75]
   override def toColDiscretizer: QuantileNumColDiscretizer = {
-    summary = summary.compress()
-    if (summary.count != 0) {
+    if (count != 0) {
+      summary = summary.compress()
       val interval = 1.0 / (maxBins - 1)
       val start = interval / 2
       val queries = Array.range(0, maxBins - 1).map(i => start + interval * i)
@@ -327,10 +464,12 @@ private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
 
   var max = Double.MinValue
   var min = Double.MaxValue
+  var count = 0L
 
   override def update(value: Double): IntervalNumColAgg = {
     max = math.max(max, value)
     min = math.min(min, value)
+    count += 1
     this
   }
 
@@ -338,13 +477,14 @@ private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
     val o = other.asInstanceOf[IntervalNumColAgg]
     max = math.max(max, o.max)
     min = math.min(min, o.min)
+    count += o.count
     this
   }
 
   // min = 0, max = 10, maxBins = 11, step = 10/10 = 1
   // if less than min+step/2 = 0.5 => 1, if greater than max-step/2 = 9.5 => 10
   override def toColDiscretizer: IntervalNumColDiscretizer = {
-    if (max > min) {
+    if (count > 0) {
       val step = (max - min) / (maxBins - 1)
       val start = min + step / 2
       new IntervalNumColDiscretizer(start, step, maxBins)
@@ -387,6 +527,8 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
     val map = array.zipWithIndex.toMap
     new CatColDiscretizer(map)
   }
+
+  override def count: Long = counter.values.sum
 }
 
 
@@ -397,20 +539,23 @@ private[gbm] class RankAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
   val set = mutable.Set[Int]()
+  var count = 0L
 
   override def update(value: Double): RankAgg = {
     require(value.toInt == value)
     set.add(value.toInt)
     require(set.size <= maxBins)
+    count += 1
     this
   }
 
   override def merge(other: ColAgg): RankAgg = {
-    other.asInstanceOf[RankAgg].set
-      .foreach { v =>
-        set.add(v)
-        require(set.size <= maxBins)
-      }
+    val o = other.asInstanceOf[RankAgg]
+    o.set.foreach { v =>
+      set.add(v)
+      require(set.size <= maxBins)
+    }
+    count += o.count
     this
   }
 

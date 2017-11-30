@@ -5,8 +5,6 @@ import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 import scala.util.Random
 
-import org.apache.hadoop.fs.Path
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
@@ -386,6 +384,29 @@ class GBM extends Logging with Serializable {
   def getFloatType: String = floatType
 
 
+  /** whether 0.0 is viewed as missing value */
+  private var zeroIsMissing: Boolean = false
+
+  def setZeroIsMissing(value: Boolean): this.type = {
+    zeroIsMissing = value
+    this
+  }
+
+  def getZeroIsMissing: Boolean = zeroIsMissing
+
+
+  /** threshold to store the bins in a sparse format */
+  private var sparsityThreshold: Double = 0.9
+
+  def setSparsityThreshold(value: Double): this.type = {
+    require(value >= 0 && value <= 1)
+    sparsityThreshold = value
+    this
+  }
+
+  def getSparsityThreshold: Double = sparsityThreshold
+
+
   /** training */
   def fit(data: RDD[(Double, Double, Vector)]): GBMModel = {
     fit(data, None)
@@ -427,7 +448,7 @@ class GBM extends Logging with Serializable {
         require(rankCols.min >= 0 && rankCols.max < numCols)
       }
       require(catCols.intersect(rankCols).isEmpty)
-      Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, aggregationDepth)
+      Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, false, aggregationDepth)
     }
     logInfo(s"Average number of bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
 
@@ -460,6 +481,7 @@ class GBM extends Logging with Serializable {
       .setMaxBruteBins(maxBruteBins)
       .setFloatType(floatType)
       .setSeed(seed)
+      .setIsSparse(discretizer.sparsity > sparsityThreshold)
 
     if (initialModel.isEmpty) {
       boostConfig.setBaseScore(baseScore)
@@ -471,12 +493,12 @@ class GBM extends Logging with Serializable {
     }
 
     val trainRDD = data.map { case (weight, label, features) =>
-      (weight, label, discretizer.transform(features))
+      (weight, label, discretizer.transformToArray(features))
     }
 
     val testRDD = if (validation) {
       test.get.map { case (weight, label, features) =>
-        (weight, label, discretizer.transform(features))
+        (weight, label, discretizer.transformToArray(features))
       }
     } else {
       sc.emptyRDD[(Double, Double, Array[Int])]
@@ -646,7 +668,7 @@ private[gbm] object GBM extends Logging {
       val start = System.nanoTime
       val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter,
         numTrees, dropped.toSet, colSampleRand)
-      logInfo(s"$logPrefix finish, duration ${(System.nanoTime - start) / 1e9} seconds")
+      logInfo(s"$logPrefix finish, duration: ${(System.nanoTime - start) / 1e9} sec")
 
       if (tree.isEmpty) {
         // fail to build a new tree
@@ -692,7 +714,8 @@ private[gbm] object GBM extends Logging {
         // callback
         if (boostConfig.getCallbackFunc.nonEmpty) {
           // using cloning to avoid model modification
-          val snapshot = new GBMModel(new Discretizer(discretizer.colDiscretizers.clone()),
+          val snapshot = new GBMModel(
+            new Discretizer(discretizer.colDiscretizers.clone(), discretizer.zeroIsMissing, discretizer.sparsity),
             boostConfig.getBaseScore, trees.toArray.clone(), weights.toArray.clone())
 
           // callback can update boosting configuration
@@ -1095,7 +1118,7 @@ class GBMModel(val discretizer: Discretizer,
       n = numTrees
     }
 
-    val bins = discretizer.transform(features)
+    val bins = discretizer.transformToArray(features)
     var score = baseScore
     var i = 0
     while (i < n) {
@@ -1130,7 +1153,7 @@ class GBMModel(val discretizer: Discretizer,
       n = numTrees
     }
 
-    val bins = discretizer.transform(features)
+    val bins = discretizer.transformToArray(features)
 
     if (oneHot) {
 
@@ -1175,74 +1198,55 @@ object GBMModel {
   private[ml] def save(spark: SparkSession,
                        model: GBMModel,
                        path: String): Unit = {
-
-    val (discretizerDF, weightsDF, treesDF, extraDF) = toDF(spark, model)
-
-    val discretizerPath = new Path(path, "discretizer").toString
-    discretizerDF.write.parquet(discretizerPath)
-
-    val weightsPath = new Path(path, "weights").toString
-    weightsDF.write.parquet(weightsPath)
-
-    val treesPath = new Path(path, "trees").toString
-    treesDF.write.parquet(treesPath)
-
-    val extraPath = new Path(path, "extra").toString
-    extraDF.write.parquet(extraPath)
+    val names = Array("discretizerCol", "discretizerExtra", "weights", "trees", "extra")
+    val dataframes = toDF(spark, model)
+    Utils.saveDataFrames(dataframes, names, path)
   }
 
 
   /** load GBMModel from a path */
   def load(path: String): GBMModel = {
     val spark = SparkSession.builder().getOrCreate()
-
-    val discretizerPath = new Path(path, "discretizer").toString
-    val discretizerDF = spark.read.parquet(discretizerPath)
-
-    val weightsPath = new Path(path, "weights").toString
-    val weightsDF = spark.read.parquet(weightsPath)
-
-    val treesPath = new Path(path, "trees").toString
-    val treesDF = spark.read.parquet(treesPath)
-
-    val extraPath = new Path(path, "extra").toString
-    val extraDF = spark.read.parquet(extraPath)
-
-    fromDF(discretizerDF, weightsDF, treesDF, extraDF)
+    val names = Array("discretizerCol", "discretizerExtra", "weights", "trees", "extra")
+    val dataframes = Utils.loadDataFrames(spark, names, path)
+    fromDF(dataframes)
   }
 
 
   /** helper function to convert GBMModel to dataframes */
   private[gbm] def toDF(spark: SparkSession,
-                        model: GBMModel): (DataFrame, DataFrame, DataFrame, DataFrame) = {
-    val discretizerDF = Discretizer.toDF(spark, model.discretizer)
+                        model: GBMModel): Array[DataFrame] = {
+
+    val Array(disColDF, disExtraDF) = Discretizer.toDF(spark, model.discretizer)
 
     val weightsDatum = model.weights.zipWithIndex
-    val weightsDF = spark.createDataFrame(weightsDatum).toDF("weight", "treeIndex")
+    val weightsDF = spark.createDataFrame(weightsDatum)
+      .toDF("weight", "treeIndex")
 
     val treesDatum = model.trees.zipWithIndex.flatMap {
       case (tree, index) =>
         val (nodeData, _) = NodeData.createData(tree.root, 0)
         nodeData.map((_, index))
     }
-    val treesDF = spark.createDataFrame(treesDatum).toDF("node", "treeIndex")
+    val treesDF = spark.createDataFrame(treesDatum)
+      .toDF("node", "treeIndex")
 
-    val extraDF = spark.createDataFrame(Seq(
-      ("baseScore", model.baseScore.toString))).toDF("key", "value")
+    val extraDF = spark.createDataFrame(
+      Seq(("baseScore", model.baseScore.toString)))
+      .toDF("key", "value")
 
-    (discretizerDF, weightsDF, treesDF, extraDF)
+    Array(disColDF, disExtraDF, weightsDF, treesDF, extraDF)
   }
 
 
   /** helper function to convert dataframes back to GBMModel */
-  private[gbm] def fromDF(discretizerDF: DataFrame,
-                          weightsDF: DataFrame,
-                          treesDF: DataFrame,
-                          extraDF: DataFrame): GBMModel = {
-    val spark = discretizerDF.sparkSession
+  private[gbm] def fromDF(dataframes: Array[DataFrame]): GBMModel = {
+    val Array(disColDF, disExtraDF, weightsDF, treesDF, extraDF) = dataframes
+
+    val spark = disColDF.sparkSession
     import spark.implicits._
 
-    val discretizer = Discretizer.fromDF(discretizerDF)
+    val discretizer = Discretizer.fromDF(Array(disColDF, disExtraDF))
 
     val (indices, weights) =
       weightsDF.select("treeIndex", "weight").rdd

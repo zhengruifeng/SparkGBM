@@ -103,7 +103,7 @@ class ModelCheckpoint(val interval: Int,
 
       }.onComplete {
         case Success(v) =>
-          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration: $v sec")
 
         case Failure(t) =>
           logWarning(s"fail to checkpoint model, ${t.toString}")
@@ -154,7 +154,7 @@ class ClassificationModelCheckpoint(val interval: Int,
 
       }.onComplete {
         case Success(v) =>
-          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration: $v sec")
 
         case Failure(t) =>
           logWarning(s"fail to checkpoint model, ${t.toString}")
@@ -205,7 +205,7 @@ class RegressionModelCheckpoint(val interval: Int,
 
       }.onComplete {
         case Success(v) =>
-          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration $v seconds")
+          logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration: $v sec")
 
         case Failure(t) =>
           logWarning(s"fail to checkpoint model, ${t.toString}")

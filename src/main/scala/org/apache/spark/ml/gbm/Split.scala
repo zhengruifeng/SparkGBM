@@ -10,9 +10,19 @@ abstract class Split extends Serializable {
 
   def goLeft[B: Integral](bins: Array[B]): Boolean
 
-  def leftWeight: Double
+  def stats: Array[Double]
 
-  def rightWeight: Double
+  def leftWeight: Double = stats(0)
+
+  def leftGrad: Double = stats(1)
+
+  def leftHess: Double = stats(2)
+
+  def rightWeight: Double = stats(3)
+
+  def rightGrad: Double = stats(4)
+
+  def rightHess: Double = stats(5)
 
   def gain: Double
 }
@@ -21,9 +31,9 @@ abstract class Split extends Serializable {
 class SeqSplit(val featureId: Int,
                val missingGoLeft: Boolean,
                val gain: Double,
-               val leftWeight: Double,
-               val rightWeight: Double,
-               val threshold: Int) extends Split {
+               val threshold: Int,
+               val stats: Array[Double]) extends Split {
+  require(stats.length == 6)
 
   override def goLeft[B: Integral](bins: Array[B]): Boolean = {
     val intB = implicitly[Integral[B]]
@@ -40,9 +50,9 @@ class SeqSplit(val featureId: Int,
 class SetSplit(val featureId: Int,
                val missingGoLeft: Boolean,
                val gain: Double,
-               val leftWeight: Double,
-               val rightWeight: Double,
-               val leftSet: Array[Int]) extends Split {
+               val leftSet: Array[Int],
+               val stats: Array[Double]) extends Split {
+  require(stats.length == 6)
 
   override def goLeft[B: Integral](bins: Array[B]): Boolean = {
     val intB = implicitly[Integral[B]]
@@ -83,10 +93,14 @@ private[gbm] object Split {
     val gradSeq = Array.range(0, hist.length, 2).map(i => numH.toDouble(hist(i)))
     val hessSeq = Array.range(1, hist.length, 2).map(i => numH.toDouble(hist(i)))
 
-    val nnz = gradSeq.zip(hessSeq)
-      .count { case (g, h) =>
-        g != 0 || h != 0
+    var nnz = 0
+    var i = 0
+    while (i < gradSeq.length) {
+      if (gradSeq(i) != 0 || hessSeq(i) != 0) {
+        nnz += 1
       }
+      i += 1
+    }
 
     if (nnz <= 1) {
       return None
@@ -104,13 +118,13 @@ private[gbm] object Split {
       return None
     }
 
-    val values = Array(split.get.gain, split.get.leftWeight, split.get.rightWeight)
-    if (validate(values)) {
+    if (validate(split.get.stats :+ split.get.gain)) {
       split
     } else {
       None
     }
   }
+
 
   /**
     * validate values for numerical stability
@@ -121,6 +135,7 @@ private[gbm] object Split {
   def validate(values: Array[Double]): Boolean = {
     values.forall(v => !v.isNaN && !v.isInfinity)
   }
+
 
   /**
     * sequentially search the best split, with specially dealing with missing value
@@ -144,26 +159,35 @@ private[gbm] object Split {
       // do not need to place missing value to the right side
       None
     } else {
-      // missing go right
-      // find best split on indices of [i1, i2, i3, i4, i0]
-      seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConfig)
+
+      val gradAbsSum = gradSeq.map(_.abs).sum
+      val hessAbsSum = hessSeq.map(_.abs).sum
+      if (gradSeq.head.abs < gradAbsSum * 1e-3 && hessSeq.head.abs < hessAbsSum * 1e-3) {
+        // hist of missing value is insignificant
+        None
+      } else {
+
+        // missing go right
+        // find best split on indices of [i1, i2, i3, i4, i0]
+        seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConfig)
+      }
     }
 
     (search1, search2) match {
-      case (Some((cut1, gain1, weightLeft1, weightRight1)), Some((cut2, gain2, weightLeft2, weightRight2))) =>
+      case (Some((cut1, gain1, stats1)), Some((cut2, gain2, stats2))) =>
         if (gain1 >= gain2) {
-          Some(new SeqSplit(featureId, true, gain1, weightLeft1, weightRight1, cut1))
+          Some(new SeqSplit(featureId, true, gain1, cut1, stats1))
         } else {
           // adjust the cut of split2
           // cut = 2, [i1, i2, i3 | i4, i0] -> cut = 3
-          Some(new SeqSplit(featureId, false, gain2, weightLeft2, weightRight2, cut2 + 1))
+          Some(new SeqSplit(featureId, false, gain2, cut2 + 1, stats2))
         }
 
-      case (Some((cut, gain, weightLeft, weightRight)), None) =>
-        Some(new SeqSplit(featureId, true, gain, weightLeft, weightRight, cut))
+      case (Some((cut, gain, stats)), None) =>
+        Some(new SeqSplit(featureId, true, gain, cut, stats))
 
-      case (None, Some((cut, gain, weightLeft, weightRight))) =>
-        Some(new SeqSplit(featureId, false, gain, weightLeft, weightRight, cut + 1))
+      case (None, Some((cut, gain, stats))) =>
+        Some(new SeqSplit(featureId, false, gain, cut + 1, stats))
 
       case _ => None
     }
@@ -200,12 +224,13 @@ private[gbm] object Split {
       return None
     }
 
-    val (cut, gain, weight1, weight2) = search.get
+    val (cut, gain, stats) = search.get
     val indices1 = sortedIndices.take(cut + 1)
 
-    val split = createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, weight1, weight2)
+    val split = createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, stats)
     Some(split)
   }
+
 
   /**
     * Search the best set split by brute force
@@ -248,8 +273,7 @@ private[gbm] object Split {
     var hess1 = 0.0
     var hess2 = 0.0
 
-    var bestWeight1 = Double.NaN
-    var bestWeight2 = Double.NaN
+    val stats = Array.fill(6)(Double.NaN)
 
     // the first element in nnz hist is always unselected in set1
     val k = 1L << (len - 1)
@@ -291,8 +315,14 @@ private[gbm] object Split {
             bestSet1.clear()
             set1.foreach(bestSet1.add)
             bestScore = score
-            bestWeight1 = weight1
-            bestWeight2 = weight2
+
+            stats(0) = weight1
+            stats(1) = grad1
+            stats(2) = hess1
+
+            stats(3) = weight2
+            stats(4) = grad2
+            stats(5) = hess2
           }
         }
       }
@@ -300,7 +330,7 @@ private[gbm] object Split {
       num += 1
     }
 
-    if (!validate(Array(bestScore, bestWeight1, bestWeight2))) {
+    if (!validate(stats :+ bestScore)) {
       return None
     }
 
@@ -310,7 +340,7 @@ private[gbm] object Split {
     }
 
     val indices1 = bestSet1.toArray
-    val split = createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, bestWeight1, bestWeight2)
+    val split = createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, stats)
     Some(split)
   }
 
@@ -321,11 +351,11 @@ private[gbm] object Split {
     * @param gradSeq     grad array
     * @param hessSeq     hess array
     * @param boostConfig boosting config info
-    * @return best split if any
+    * @return best split containing (cut, gain, Array(weightL, weightR, gradL, gradR, hessL, hessR)), if any
     */
   def seqSearch(gradSeq: Array[Double],
                 hessSeq: Array[Double],
-                boostConfig: BoostConfig): Option[(Int, Double, Double, Double)] = {
+                boostConfig: BoostConfig): Option[(Int, Double, Array[Double])] = {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
@@ -337,14 +367,15 @@ private[gbm] object Split {
     var bestCut = -1
     var bestScore = Double.MinValue
 
+    // weightLeft, weightRight, gradLeft, gradRight, hessLeft, hessRight
+    val stats = Array.fill(6)(Double.NaN)
+
     var gradLeft = 0.0
     var gradRight = 0.0
 
     var hessLeft = 0.0
     var hessRight = 0.0
 
-    var bestWeightLeft = Double.NaN
-    var bestWeightRight = Double.NaN
 
     (0 until gradSeq.length - 1).foreach { i =>
       if (gradSeq(i) != 0 || hessSeq(i) != 0) {
@@ -363,8 +394,14 @@ private[gbm] object Split {
             if (score > bestScore) {
               bestCut = i
               bestScore = score
-              bestWeightLeft = weightLeft
-              bestWeightRight = weightRight
+
+              stats(0) = weightLeft
+              stats(1) = gradLeft
+              stats(2) = hessLeft
+
+              stats(3) = weightRight
+              stats(4) = gradRight
+              stats(5) = hessRight
             }
           }
 
@@ -373,17 +410,18 @@ private[gbm] object Split {
       }
     }
 
-    if (!validate(Array(bestScore, bestWeightLeft, bestWeightRight))) {
+    if (!validate(stats :+ bestScore)) {
       return None
     }
 
     val gain = bestScore - baseScore
     if (bestCut >= 0 && gain >= boostConfig.getMinGain) {
-      Some((bestCut, gain, bestWeightLeft, bestWeightRight))
+      Some((bestCut, gain, stats))
     } else {
       None
     }
   }
+
 
   /**
     * Compute the weight and score, given the sum of hist.
@@ -415,6 +453,7 @@ private[gbm] object Split {
     }
   }
 
+
   /**
     * Given a valid set split, choose the form of SetSplit by the size of set.
     *
@@ -423,8 +462,7 @@ private[gbm] object Split {
     * @param hessSeq   hess array
     * @param gain      gain
     * @param indices1  indices of raw set1
-    * @param weight1   weight assigned to set1
-    * @param weight2   weight assigned to set2
+    * @param stats     array containing (weight1, grad1, hess1, weight2, grad2, hess2)
     * @return a SetSplit
     */
   def createSetSplit(featureId: Int,
@@ -432,9 +470,9 @@ private[gbm] object Split {
                      hessSeq: Array[Double],
                      gain: Double,
                      indices1: Array[Int],
-                     weight1: Double,
-                     weight2: Double): SetSplit = {
+                     stats: Array[Double]): SetSplit = {
     require(indices1.max < gradSeq.length)
+    require(stats.length == 6)
 
     // ignore zero hist
     val set1 = mutable.Set[Int]()
@@ -462,9 +500,9 @@ private[gbm] object Split {
 
     // choose the smaller set
     if (set1.size <= set2.size) {
-      new SetSplit(featureId, missingInSet1, gain, weight1, weight2, set1.toArray.sorted)
+      new SetSplit(featureId, missingInSet1, gain, set1.toArray.sorted, stats)
     } else {
-      new SetSplit(featureId, missingInSet2, gain, weight2, weight1, set2.toArray.sorted)
+      new SetSplit(featureId, missingInSet2, gain, set2.toArray.sorted, stats.takeRight(3) ++ stats.take(3))
     }
   }
 }

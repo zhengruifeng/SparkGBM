@@ -655,7 +655,7 @@ private[gbm] object GBM extends Logging {
 
       } else {
         // update base model buffer
-        updateTrees(weights, trees, tree.get, dropped.toSet, boostConfig)
+        updateTreeBuffer(weights, trees, tree.get, dropped.toSet, boostConfig)
 
         // whether to keep the weights of previous trees
         val keepWeights = boostConfig.getBoostType != Dart || dropped.isEmpty
@@ -735,11 +735,11 @@ private[gbm] object GBM extends Logging {
     * @param dropped     indices of dropped trees
     * @param boostConfig boosting configuration
     */
-  def updateTrees(weights: ArrayBuffer[Double],
-                  trees: ArrayBuffer[TreeModel],
-                  tree: TreeModel,
-                  dropped: Set[Int],
-                  boostConfig: BoostConfig): Unit = {
+  def updateTreeBuffer(weights: ArrayBuffer[Double],
+                       trees: ArrayBuffer[TreeModel],
+                       tree: TreeModel,
+                       dropped: Set[Int],
+                       boostConfig: BoostConfig): Unit = {
 
     trees.append(tree)
 

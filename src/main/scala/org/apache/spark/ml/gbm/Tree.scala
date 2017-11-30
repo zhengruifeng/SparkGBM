@@ -290,7 +290,8 @@ private[gbm] object Tree extends Logging {
       var nnz = 0
       var i = 0
       while (i < hist.length) {
-        if (hist(i) != 0 || hist(i + 1) != 0) {
+        if (!numH.equiv(hist(i), numH.zero) ||
+          !numH.equiv(hist(i + 1), numH.zero)) {
           hessSum += numH.toDouble(hist(i + 1))
           nnz += 1
         }

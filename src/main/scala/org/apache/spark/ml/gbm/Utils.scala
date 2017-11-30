@@ -2,10 +2,6 @@ package org.apache.spark.ml.gbm
 
 import java.{util => ju}
 
-import breeze.math.Semiring
-import breeze.storage.Zero
-import breeze.{linalg => bl}
-
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -247,28 +243,10 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
   }
 }
 
+
+
+
 private[gbm] object Utils extends Logging {
-
-  def sampleWithIndices[B: Integral : Zero : Semiring : ClassTag](vector: bl.Vector[B],
-                                                                  indices: Array[Int]): bl.Vector[B] = {
-    vector match {
-      case dv: bl.DenseVector[B] =>
-        bl.DenseVector(indices.map(dv.apply))
-
-      case sv: bl.SparseVector[B] =>
-        val intB = implicitly[Integral[B]]
-        val buff = mutable.ArrayBuffer[(Int, B)]()
-        var i = 0
-        while (i < indices.length) {
-          val v = sv(indices(i))
-          if (!intB.equiv(v, intB.zero)) {
-            buff.append((i, v))
-          }
-          i += 1
-        }
-        bl.SparseVector[B](indices.length)(buff: _*)
-    }
-  }
 
   def sample[T: ClassTag](data: RDD[T],
                           fraction: Double,
@@ -367,31 +345,3 @@ private[gbm] object Utils extends Logging {
 }
 
 
-private trait FromDouble[H] extends Serializable {
-  def fromDouble(value: Double): H
-}
-
-
-private object DoubleFromDouble extends FromDouble[Double] {
-  override def fromDouble(value: Double): Double = value
-}
-
-
-private object FloatFromDouble extends FromDouble[Float] {
-  override def fromDouble(value: Double): Float = value.toFloat
-}
-
-
-private object DecimalFromDouble extends FromDouble[BigDecimal] {
-  override def fromDouble(value: Double): BigDecimal = BigDecimal(value)
-}
-
-
-private[gbm] object FromDouble {
-
-  implicit final val doubleFromDouble: FromDouble[Double] = DoubleFromDouble
-
-  implicit final val floatFromDouble: FromDouble[Float] = FloatFromDouble
-
-  implicit final val decimalFromDouble: FromDouble[BigDecimal] = DecimalFromDouble
-}

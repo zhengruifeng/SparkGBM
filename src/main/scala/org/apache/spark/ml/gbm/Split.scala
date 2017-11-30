@@ -10,6 +10,8 @@ abstract class Split extends Serializable {
 
   def goLeft[B: Integral](bins: Array[B]): Boolean
 
+  def gain: Double
+
   def stats: Array[Double]
 
   def leftWeight: Double = stats(0)
@@ -23,8 +25,6 @@ abstract class Split extends Serializable {
   def rightGrad: Double = stats(4)
 
   def rightHess: Double = stats(5)
-
-  def gain: Double
 }
 
 

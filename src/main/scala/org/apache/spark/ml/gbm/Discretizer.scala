@@ -2,9 +2,7 @@ package org.apache.spark.ml.gbm
 
 import java.{util => ju}
 
-import breeze.math.Semiring
-import breeze.storage.Zero
-import breeze.{linalg => bl}
+import scala.{specialized => spec}
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
@@ -48,17 +46,19 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   }
 
 
-  private[gbm] def transformToSparse[B: Integral : Zero : Semiring : ClassTag](vec: Vector): bl.Vector[B] = {
+  private[gbm] def transformToSparse[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): BinVector[B] = {
     require(vec.size == numCols)
-    val intB = implicitly[Integral[B]]
+    val intB: Integral[B] = implicitly[Integral[B]]
 
-    val buff = mutable.ArrayBuffer[(Int, B)]()
+    val indexBuff = mutable.ArrayBuffer[Int]()
+    val valueBuff = mutable.ArrayBuffer[B]()
 
     if (zeroIsMissing) {
       vec.foreachActive { (i, v) =>
         val bin = discretizeWithIndex(v, i)
         if (bin != 0) {
-          buff.append((i, intB.fromInt(bin)))
+          indexBuff.append(i)
+          valueBuff.append(intB.fromInt(bin))
         }
       }
     } else {
@@ -66,17 +66,18 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
       while (i < numCols) {
         val bin = discretizeWithIndex(vec(i), i)
         if (bin != 0) {
-          buff.append((i, intB.fromInt(bin)))
+          indexBuff.append(i)
+          valueBuff.append(intB.fromInt(bin))
         }
         i += 1
       }
     }
 
-    bl.SparseVector[B](numCols)(buff: _*)
+    BinVector.sparse[B](numCols, indexBuff.toArray, valueBuff.toArray)
   }
 
 
-  private[gbm] def transformToDense[B: Integral : Zero : ClassTag](vec: Vector): bl.Vector[B] = {
+  private[gbm] def transformToDense[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): BinVector[B] = {
     require(vec.size == numCols)
     val intB = implicitly[Integral[B]]
 
@@ -98,7 +99,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
       }
     }
 
-    bl.DenseVector[B](bins)
+    BinVector.dense[B](bins)
   }
 
 

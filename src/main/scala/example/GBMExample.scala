@@ -8,7 +8,7 @@ import org.apache.spark.sql.SparkSession
 
 /**
   * Example of rdd-based API
-  * spark-submit --class example.GBMExample target/SparkGBM-0.0.1.jar 2>/dev/null
+  * spark-submit --class example.GBMExample target/SparkGBM-0.0.1.jar 2>log
   */
 object GBMExample {
 

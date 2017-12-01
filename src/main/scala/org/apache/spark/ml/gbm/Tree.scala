@@ -314,7 +314,7 @@ private[gbm] object Tree extends Logging {
     }
 
     data.filter { case (_, nodeId) =>
-      (nodeId >= minNodeId && nodeId % 2 == 0) || nodeId == 1L
+      nodeId >= minNodeId && nodeId % 2 == 1L
 
     }.flatMap { case ((grad, hess, bins), nodeId) =>
       // only accumulate hist on non-missing bins

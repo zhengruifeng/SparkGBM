@@ -140,6 +140,10 @@ class GBMRegressor(override val uid: String) extends
 
   def setFloatType(value: String): this.type = set(floatType, value)
 
+  def setZeroAsMissing(value: Boolean): this.type = set(zeroAsMissing, value)
+
+  def setSparsityThreshold(value: Double): this.type = set(sparsityThreshold, value)
+
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)
   }
@@ -245,6 +249,8 @@ class GBMRegressor(override val uid: String) extends
       .setMaxDrop($(maxDrop))
       .setMaxBruteBins($(maxBruteBins))
       .setNumericalBinType($(numericalBinType))
+      .setZeroAsMissing($(zeroAsMissing))
+      .setSparsityThreshold($(sparsityThreshold))
       .setInitialModel(initialModel)
 
     val gbmModel = gbm.fit(data, test)

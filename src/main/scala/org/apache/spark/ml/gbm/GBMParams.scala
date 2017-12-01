@@ -63,14 +63,14 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   setDefault(maxBins -> 128)
 
   /**
-    * Maximum number of leaves of the tree (>= 1).
+    * Maximum number of leaves of the tree (>= 2).
     * (default = 1000)
     *
     * @group param
     */
   final val maxLeaves: IntParam =
-    new IntParam(this, "maxLeaves", "Maximum number of leaves of the tree. (>= 1).",
-      ParamValidators.gtEq(1))
+    new IntParam(this, "maxLeaves", "Maximum number of leaves of the tree. (>= 2).",
+      ParamValidators.gtEq(2))
 
   def getMaxLeaves: Int = $(maxLeaves)
 
@@ -440,5 +440,34 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getFloatType: String = $(floatType)
 
   setDefault(floatType -> "float")
+
+
+  /**
+    * Whether zero is viewed as missing value.
+    * (default = false)
+    *
+    * @group param
+    */
+  final val zeroAsMissing: BooleanParam =
+    new BooleanParam(this, "zeroAsMissing", "Whether zero is viewed as missing value.")
+
+  def getZeroAsMissing: Boolean = $(zeroAsMissing)
+
+  setDefault(zeroAsMissing -> false)
+
+
+  /**
+    * Sparsity threshold to build trees in a sparse fashion.
+    * (default = 0.9)
+    *
+    * @group param
+    */
+  final val sparsityThreshold: DoubleParam =
+    new DoubleParam(this, "sparsityThreshold", "Sparsity threshold to build trees in a sparse fashion.",
+      ParamValidators.inRange(0.0, 1.0))
+
+  def getSparsityThreshold: Double = $(sparsityThreshold)
+
+  setDefault(sparsityThreshold -> 0.9)
 }
 

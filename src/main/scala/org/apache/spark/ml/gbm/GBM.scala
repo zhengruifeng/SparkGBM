@@ -45,7 +45,7 @@ class GBM extends Logging with Serializable {
   private var maxLeaves: Int = 1000
 
   def setMaxLeaves(value: Int): this.type = {
-    require(value >= 1)
+    require(value >= 2)
     maxLeaves = value
     this
   }
@@ -384,18 +384,18 @@ class GBM extends Logging with Serializable {
   def getFloatType: String = floatType
 
 
-  /** whether 0.0 is viewed as missing value */
-  private var zeroIsMissing: Boolean = false
+  /** whether zero is viewed as missing value */
+  private var zeroAsMissing: Boolean = false
 
-  def setZeroIsMissing(value: Boolean): this.type = {
-    zeroIsMissing = value
+  def setZeroAsMissing(value: Boolean): this.type = {
+    zeroAsMissing = value
     this
   }
 
-  def getZeroIsMissing: Boolean = zeroIsMissing
+  def getZeroAsMissing: Boolean = zeroAsMissing
 
 
-  /** threshold to store the bins in a sparse format */
+  /** sparsity threshold to build trees in a sparse fashion */
   private var sparsityThreshold: Double = 0.9
 
   def setSparsityThreshold(value: Double): this.type = {
@@ -452,6 +452,7 @@ class GBM extends Logging with Serializable {
     }
     logInfo(s"Average number of bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
 
+
     val boostConfig = new BoostConfig
     boostConfig.setMaxIter(maxIter)
       .setMaxDepth(maxDepth)
@@ -481,30 +482,33 @@ class GBM extends Logging with Serializable {
       .setMaxBruteBins(maxBruteBins)
       .setFloatType(floatType)
       .setSeed(seed)
-      .setIsSparse(discretizer.sparsity > sparsityThreshold)
+
 
     if (initialModel.isEmpty) {
       boostConfig.setBaseScore(baseScore)
+
+      logInfo(s"Sparsity of train data: ${discretizer.sparsity}")
+      boostConfig.setHandleSparsity(discretizer.sparsity >= sparsityThreshold)
+
     } else {
-      boostConfig.setBaseScore(initialModel.get.baseScore)
+
       if (initialModel.get.baseScore != baseScore) {
         logWarning(s"baseScore is already provided by the initial model, related param (baseScore) will be ignored")
       }
+      boostConfig.setBaseScore(initialModel.get.baseScore)
+
+      val sparse = Discretizer.computeSparsity(data.map(_._3), numCols, zeroAsMissing, aggregationDepth)
+      logInfo(s"Sparsity of train data: $sparse")
+      boostConfig.setHandleSparsity(sparse >= sparsityThreshold)
     }
 
-    val trainRDD = data.map { case (weight, label, features) =>
-      (weight, label, discretizer.transformToArray(features))
-    }
-
-    val testRDD = if (validation) {
-      test.get.map { case (weight, label, features) =>
-        (weight, label, discretizer.transformToArray(features))
-      }
+    if (boostConfig.getHandleSparsity) {
+      logInfo(s"Using sparse bin vectors")
     } else {
-      sc.emptyRDD[(Double, Double, Array[Int])]
+      logInfo(s"Using dense bin vectors")
     }
 
-    GBM.boost(trainRDD, testRDD, boostConfig, validation, discretizer, initialModel)
+    GBM.boost(data, test.getOrElse(sc.emptyRDD), boostConfig, validation, discretizer, initialModel)
   }
 }
 
@@ -522,10 +526,10 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * Train a GBMModel, automatically choose the bin type
+    * train a GBM model
     */
-  def boost(data: RDD[(Double, Double, Array[Int])],
-            test: RDD[(Double, Double, Array[Int])],
+  def boost(data: RDD[(Double, Double, Vector)],
+            test: RDD[(Double, Double, Vector)],
             boostConfig: BoostConfig,
             validation: Boolean,
             discretizer: Discretizer,
@@ -534,55 +538,52 @@ private[gbm] object GBM extends Logging {
     val maxBinIndex = discretizer.numBins.max - 1
 
     if (maxBinIndex <= Byte.MaxValue) {
-
-      logInfo("Data representation of bins: Array[Byte]")
-      boostWithBin[Byte](data, test, boostConfig, validation, discretizer, initialModel)
+      logInfo("Data representation of bins: Vector[Byte]")
+      boostWithBinType[Byte](data, test, boostConfig, validation, discretizer, initialModel)
 
     } else if (maxBinIndex <= Short.MaxValue) {
-
-      logInfo("Data representation of bins: Array[Short]")
-      boostWithBin[Short](data, test, boostConfig, validation, discretizer, initialModel)
+      logInfo("Data representation of bins: Vector[Short]")
+      boostWithBinType[Short](data, test, boostConfig, validation, discretizer, initialModel)
 
     } else {
-
-      logInfo("Data representation of bins: Array[Int]")
-      boostWithBin[Int](data, test, boostConfig, validation, discretizer, initialModel)
+      logInfo("Data representation of bins: Vector[Int]")
+      boostWithBinType[Int](data, test, boostConfig, validation, discretizer, initialModel)
     }
   }
 
 
   /**
-    * Train a GBMModel, with given bin type
+    * train a GBM model, with the given type of bin
     */
-  def boostWithBin[B: Integral : ClassTag](data: RDD[(Double, Double, Array[Int])],
-                                           test: RDD[(Double, Double, Array[Int])],
-                                           boostConfig: BoostConfig,
-                                           validation: Boolean,
-                                           discretizer: Discretizer,
-                                           initialModel: Option[GBMModel]): GBMModel = {
+  def boostWithBinType[B: Integral : ClassTag](data: RDD[(Double, Double, Vector)],
+                                               test: RDD[(Double, Double, Vector)],
+                                               boostConfig: BoostConfig,
+                                               validation: Boolean,
+                                               discretizer: Discretizer,
+                                               initialModel: Option[GBMModel]): GBMModel = {
     val intB = implicitly[Integral[B]]
 
-    val dataB = data.map { case (weight, label, bins) =>
-      (weight, label, bins.map(intB.fromInt))
+    val binData = data.map { case (weight, label, vec) =>
+      (weight, label, discretizer.transformToVector[B](vec, boostConfig.getHandleSparsity))
     }
-    val testB = test.map { case (weight, label, bins) =>
-      (weight, label, bins.map(intB.fromInt))
+    val binTest = test.map { case (weight, label, vec) =>
+      (weight, label, discretizer.transformToVector[B](vec, boostConfig.getHandleSparsity))
     }
 
     boostConfig.getFloatType match {
       case Float =>
         logInfo("Data representation of gradient: Float")
-        boostWithFloat[Float, B](dataB, testB, boostConfig, validation, discretizer, initialModel)
+        boostImpl[Float, B](binData, binTest, boostConfig, validation, discretizer, initialModel)
 
       case Double =>
         logInfo("Data representation of gradient: Double")
-        boostWithFloat[Double, B](dataB, testB, boostConfig, validation, discretizer, initialModel)
+        boostImpl[Double, B](binData, binTest, boostConfig, validation, discretizer, initialModel)
     }
   }
 
 
   /**
-    * Implementation of GBM, train a GBMModel, with given bin type and float precision
+    * implementation of GBM, train a GBMModel, with given bin type and float precision
     *
     * @param data         training instances containing (weight, label, bins)
     * @param test         validation instances containing (weight, label, bins)
@@ -594,12 +595,12 @@ private[gbm] object GBM extends Logging {
     * @tparam B type of bin
     * @return the model
     */
-  def boostWithFloat[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[(Double, Double, Array[B])],
-                                                                                 test: RDD[(Double, Double, Array[B])],
-                                                                                 boostConfig: BoostConfig,
-                                                                                 validation: Boolean,
-                                                                                 discretizer: Discretizer,
-                                                                                 initialModel: Option[GBMModel]): GBMModel = {
+  def boostImpl[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[(Double, Double, BinVector[B])],
+                                                                            test: RDD[(Double, Double, BinVector[B])],
+                                                                            boostConfig: BoostConfig,
+                                                                            validation: Boolean,
+                                                                            discretizer: Discretizer,
+                                                                            initialModel: Option[GBMModel]): GBMModel = {
     val spark = SparkSession.builder().getOrCreate()
     val sc = spark.sparkContext
 
@@ -715,7 +716,7 @@ private[gbm] object GBM extends Logging {
         if (boostConfig.getCallbackFunc.nonEmpty) {
           // using cloning to avoid model modification
           val snapshot = new GBMModel(
-            new Discretizer(discretizer.colDiscretizers.clone(), discretizer.zeroIsMissing, discretizer.sparsity),
+            new Discretizer(discretizer.colDiscretizers.clone(), discretizer.zeroAsMissing, discretizer.sparsity),
             boostConfig.getBaseScore, trees.toArray.clone(), weights.toArray.clone())
 
           // callback can update boosting configuration
@@ -785,7 +786,7 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * Drop trees
+    * drop trees
     *
     * @param dropped     indices of dropped trees
     * @param boostConfig boosting configuration
@@ -814,7 +815,7 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * Build a new tree
+    * build a new tree
     *
     * @param instances     instances containing (weight, label, bins)
     * @param preds         previous predictions
@@ -828,7 +829,7 @@ private[gbm] object GBM extends Logging {
     * @tparam B
     * @return a new tree if possible
     */
-  def buildTree[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
+  def buildTree[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, BinVector[B])],
                                                                             preds: RDD[Array[H]],
                                                                             weights: Array[Double],
                                                                             boostConfig: BoostConfig,
@@ -861,13 +862,13 @@ private[gbm] object GBM extends Logging {
       case GBTree =>
         rowSampled.map { case ((weight, label, bins), pred) =>
           val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, numH.toDouble(pred.head))
-          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), cols.map(bins))
+          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), bins.slice(cols))
         }
 
       case Dart if dropped.isEmpty =>
         rowSampled.map { case ((weight, label, bins), pred) =>
           val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, numH.toDouble(pred.head))
-          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), cols.map(bins))
+          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), bins.slice(cols))
         }
 
       case Dart if dropped.nonEmpty =>
@@ -883,7 +884,7 @@ private[gbm] object GBM extends Logging {
           }
 
           val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, score)
-          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), cols.map(bins))
+          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), bins.slice(cols))
         }
     }
 
@@ -893,7 +894,7 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * Compute prediction of instances, containing the final score and the scores of each tree.
+    * compute prediction of instances, containing the final score and the scores of each tree.
     *
     * @param instances instances containing (weight, label, bins)
     * @param trees     array of trees with weights
@@ -902,7 +903,7 @@ private[gbm] object GBM extends Logging {
     * @tparam B
     * @return RDD containing final score and the scores of each tree
     */
-  def computePrediction[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
+  def computePrediction[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, BinVector[B])],
                                                                                     trees: Array[(TreeModel, Double)],
                                                                                     baseScore: Double): RDD[Array[H]] = {
     val numH = implicitly[Numeric[H]]
@@ -928,7 +929,7 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * Update prediction of instances, containing the final score and the predictions of each tree.
+    * update prediction of instances, containing the final score and the predictions of each tree.
     *
     * @param instances   instances containing (weight, label, bins)
     * @param preds       previous predictions
@@ -940,7 +941,7 @@ private[gbm] object GBM extends Logging {
     * @tparam B
     * @return RDD containing final score and the predictions of each tree
     */
-  def updatePrediction[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
+  def updatePrediction[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](instances: RDD[(Double, Double, BinVector[B])],
                                                                                    preds: RDD[Array[H]],
                                                                                    weights: Array[Double],
                                                                                    tree: TreeModel,
@@ -994,7 +995,7 @@ private[gbm] object GBM extends Logging {
     * @tparam B
     * @return Evaluation result with names as the keys and metrics as the values
     */
-  def evaluate[H: Numeric : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, Array[B])],
+  def evaluate[H: Numeric : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, BinVector[B])],
                                                               preds: RDD[Array[H]],
                                                               boostConfig: BoostConfig): Map[String, Double] = {
 

@@ -56,7 +56,11 @@ trait Node extends Serializable {
 
   def index[B: Integral](bins: Array[B]): Long
 
+  private[gbm] def index[B: Integral](bins: BinVector[B]): Long
+
   def predict[B: Integral](bins: Array[B]): Double
+
+  private[gbm] def predict[B: Integral](bins: BinVector[B]): Double
 
   def subtreeDepth: Int
 
@@ -103,6 +107,18 @@ class InternalNode(val featureId: Int,
     }
   }
 
+  private[gbm] def goLeft[B: Integral](bins: BinVector[B]): Boolean = {
+    val intB = implicitly[Integral[B]]
+    val bin = intB.toInt(bins(featureId))
+    if (bin == 0) {
+      missingGoLeft
+    } else if (isSeq) {
+      bin <= data.head
+    } else {
+      java.util.Arrays.binarySearch(data, bin) >= 0
+    }
+  }
+
   override def index[B: Integral](bins: Array[B]): Long = {
     if (goLeft(bins)) {
       leftNode.index(bins)
@@ -111,7 +127,23 @@ class InternalNode(val featureId: Int,
     }
   }
 
+  private[gbm] override def index[B: Integral](bins: BinVector[B]): Long = {
+    if (goLeft(bins)) {
+      leftNode.index(bins)
+    } else {
+      rightNode.index(bins)
+    }
+  }
+
   override def predict[B: Integral](bins: Array[B]): Double = {
+    if (goLeft(bins)) {
+      leftNode.predict(bins)
+    } else {
+      rightNode.predict(bins)
+    }
+  }
+
+  private[gbm] override def predict[B: Integral](bins: BinVector[B]): Double = {
     if (goLeft(bins)) {
       leftNode.predict(bins)
     } else {
@@ -139,7 +171,11 @@ class LeafNode(val weight: Double,
 
   override def index[B: Integral](bins: Array[B]): Long = leafId
 
+  private[gbm] override def index[B: Integral](bins: BinVector[B]): Long = leafId
+
   override def predict[B: Integral](bins: Array[B]): Double = weight
+
+  private[gbm] override def predict[B: Integral](bins: BinVector[B]): Double = weight
 }
 
 

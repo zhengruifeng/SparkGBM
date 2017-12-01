@@ -17,11 +17,11 @@ import org.apache.spark.sql.catalyst.util.QuantileSummaries
   * discretizer for the rows
   *
   * @param colDiscretizers column discretizers for each column
-  * @param zeroIsMissing   whether 0.0 is viewed as missing value
+  * @param zeroAsMissing   whether zero is viewed as missing value
   * @param sparsity        the sparsity of dataset to create this discretizer
   */
 class Discretizer(val colDiscretizers: Array[ColDiscretizer],
-                  val zeroIsMissing: Boolean,
+                  val zeroAsMissing: Boolean,
                   val sparsity: Double) extends Serializable {
 
 
@@ -30,7 +30,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
 
     val bins = Array.ofDim[Int](numCols)
 
-    if (zeroIsMissing) {
+    if (zeroAsMissing) {
       vec.foreachActive { (i, v) =>
         bins(i) = discretizeWithIndex(v, i)
       }
@@ -46,14 +46,24 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   }
 
 
-  private[gbm] def transformToSparse[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): BinVector[B] = {
+  private[gbm] def transformToVector[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector,
+                                                                                     sparse: Boolean): BinVector[B] = {
     require(vec.size == numCols)
+    if (sparse) {
+      transformToSparse[B](vec)
+    } else {
+      transformToDense[B](vec)
+    }
+  }
+
+
+  private def transformToSparse[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): BinVector[B] = {
     val intB: Integral[B] = implicitly[Integral[B]]
 
     val indexBuff = mutable.ArrayBuffer[Int]()
     val valueBuff = mutable.ArrayBuffer[B]()
 
-    if (zeroIsMissing) {
+    if (zeroAsMissing) {
       vec.foreachActive { (i, v) =>
         val bin = discretizeWithIndex(v, i)
         if (bin != 0) {
@@ -77,13 +87,12 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   }
 
 
-  private[gbm] def transformToDense[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): BinVector[B] = {
-    require(vec.size == numCols)
+  private def transformToDense[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): BinVector[B] = {
     val intB = implicitly[Integral[B]]
 
     val bins = Array.fill(numCols)(intB.zero)
 
-    if (zeroIsMissing) {
+    if (zeroAsMissing) {
       vec.foreachActive { (i, v) =>
         val bin = discretizeWithIndex(v, i)
         if (bin != 0) {
@@ -106,7 +115,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   private[gbm] def discretizeWithIndex(value: Double, index: Int): Int = {
     if (value.isNaN || value.isInfinity) {
       0
-    } else if (zeroIsMissing && value == 0) {
+    } else if (zeroAsMissing && value == 0) {
       0
     } else {
       colDiscretizers(index).transform(value)
@@ -135,7 +144,7 @@ private[gbm] object Discretizer extends Logging {
     * @param rankCols         indices of ranking columns
     * @param maxBins          maximun number of bins, staring from 0
     * @param numericalBinType method to deal with numerical column
-    * @param zeroIsMissing    whether zero is viewed as missing value
+    * @param zeroAsMissing    whether zero is viewed as missing value
     * @param depth            aggregation depth
     * @return discretizer
     */
@@ -145,7 +154,7 @@ private[gbm] object Discretizer extends Logging {
           rankCols: Set[Int],
           maxBins: Int,
           numericalBinType: String,
-          zeroIsMissing: Boolean,
+          zeroAsMissing: Boolean,
           depth: Int): Discretizer = {
     require(maxBins >= 4)
     require(numCols >= 1)
@@ -168,7 +177,7 @@ private[gbm] object Discretizer extends Logging {
 
 
     val (count, aggregated) =
-      if (zeroIsMissing) {
+      if (zeroAsMissing) {
         vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
           seqOp = {
             case ((cnt, aggs), vec) =>
@@ -221,14 +230,71 @@ private[gbm] object Discretizer extends Logging {
 
 
     // number of non-missing
-    var nnm = 0.0
-    aggregated.foreach(agg => nnm += agg.count)
+    val nnm = aggregated.map(_.count.toDouble).sum
 
     val sparsity = 1 - nnm / count / numCols
 
     logInfo(s"Discretizer building finished, data sparsity: $sparsity, duration: ${(System.nanoTime - start) / 1e9} sec")
 
-    new Discretizer(aggregated.map(_.toColDiscretizer), zeroIsMissing, sparsity)
+    new Discretizer(aggregated.map(_.toColDiscretizer), zeroAsMissing, sparsity)
+  }
+
+
+  def computeSparsity(data: RDD[Vector],
+                      numCols: Int,
+                      zeroAsMissing: Boolean,
+                      depth: Int): Double = {
+
+    val (count, nnms) = if (zeroAsMissing) {
+      data.treeAggregate[(Long, Array[Long])]((0L, Array.ofDim[Long](numCols)))(
+        seqOp = {
+          case ((cnt, nnms), vec) =>
+            require(nnms.length == vec.size)
+            vec.foreachActive { (i, v) =>
+              if (!v.isNaN && !v.isInfinity && v != 0) {
+                nnms(i) += 1
+              }
+            }
+            (cnt + 1, nnms)
+        }, combOp = {
+          case ((cnt1, nnms1), (cnt2, nnms2)) =>
+            require(nnms1.length == nnms2.length)
+            var i = 0
+            while (i < nnms1.length) {
+              nnms1(i) += nnms2(i)
+              i += 1
+            }
+            (cnt1 + cnt2, nnms1)
+        }, depth = depth)
+
+    } else {
+
+      data.treeAggregate[(Long, Array[Long])]((0L, Array.ofDim[Long](numCols)))(
+        seqOp = {
+          case ((cnt, nnms), vec) =>
+            require(nnms.length == vec.size)
+            var i = 0
+            while (i < nnms.length) {
+              val v = vec(i)
+              if (!v.isNaN && !v.isInfinity) {
+                nnms(i) += 1
+              }
+              i += 1
+            }
+            (cnt + 1, nnms)
+        }, combOp = {
+          case ((cnt1, nnms1), (cnt2, nnms2)) =>
+            require(nnms1.length == nnms2.length)
+            var i = 0
+            while (i < nnms1.length) {
+              nnms1(i) += nnms2(i)
+              i += 1
+            }
+            (cnt1 + cnt2, nnms1)
+        }, depth = depth)
+    }
+
+    1 - nnms.map(_.toDouble).sum / count / numCols
   }
 
 
@@ -251,8 +317,8 @@ private[gbm] object Discretizer extends Logging {
       .toDF("featureIndex", "type", "doubles", "ints")
 
     val extraDF = spark.createDataFrame(
-      Seq((model.zeroIsMissing, model.sparsity)))
-      .toDF("zeroIsMissing", "sparsity")
+      Seq((model.zeroAsMissing, model.sparsity)))
+      .toDF("zeroAsMissing", "sparsity")
 
     Array(colDF, extraDF)
   }
@@ -291,11 +357,11 @@ private[gbm] object Discretizer extends Logging {
     require(indices.length == indices.distinct.length)
     require(indices.length == indices.max + 1)
 
-    val extraRow = extraDF.select("zeroIsMissing", "sparsity").head()
-    val zeroIsMissing = extraRow.getBoolean(0)
+    val extraRow = extraDF.select("zeroAsMissing", "sparsity").head()
+    val zeroAsMissing = extraRow.getBoolean(0)
     val sparsity = extraRow.getDouble(1)
 
-    new Discretizer(colDiscretizers, zeroIsMissing, sparsity)
+    new Discretizer(colDiscretizers, zeroAsMissing, sparsity)
   }
 }
 

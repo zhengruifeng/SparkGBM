@@ -130,6 +130,10 @@ class GBMClassifier(override val uid: String)
 
   def setFloatType(value: String): this.type = set(floatType, value)
 
+  def setZeroAsMissing(value: Boolean): this.type = set(zeroAsMissing, value)
+
+  def setSparsityThreshold(value: Double): this.type = set(sparsityThreshold, value)
+
   override def fit(dataset: Dataset[_]): GBMClassificationModel = {
     fit(dataset, None)
   }
@@ -233,6 +237,8 @@ class GBMClassifier(override val uid: String)
       .setMaxDrop($(maxDrop))
       .setMaxBruteBins($(maxBruteBins))
       .setNumericalBinType($(numericalBinType))
+      .setZeroAsMissing($(zeroAsMissing))
+      .setSparsityThreshold($(sparsityThreshold))
       .setInitialModel(initialModel)
 
     val gbmModel = gbm.fit(data, test)

@@ -2,13 +2,15 @@ package org.apache.spark.ml.gbm
 
 import scala.collection.mutable
 
-abstract class Split extends Serializable {
+private[gbm] abstract class Split extends Serializable {
 
   def featureId: Int
 
   def missingGoLeft: Boolean
 
   def goLeft[B: Integral](bins: Array[B]): Boolean
+
+  def goLeft[B: Integral](bins: BinVector[B]): Boolean
 
   def gain: Double
 
@@ -28,11 +30,11 @@ abstract class Split extends Serializable {
 }
 
 
-class SeqSplit(val featureId: Int,
-               val missingGoLeft: Boolean,
-               val gain: Double,
-               val threshold: Int,
-               val stats: Array[Double]) extends Split {
+private[gbm] class SeqSplit(val featureId: Int,
+                            val missingGoLeft: Boolean,
+                            val gain: Double,
+                            val threshold: Int,
+                            val stats: Array[Double]) extends Split {
   require(stats.length == 6)
 
   override def goLeft[B: Integral](bins: Array[B]): Boolean = {
@@ -44,17 +46,38 @@ class SeqSplit(val featureId: Int,
       bin <= threshold
     }
   }
+
+
+  override def goLeft[B: Integral](bins: BinVector[B]): Boolean = {
+    val intB = implicitly[Integral[B]]
+    val bin = intB.toInt(bins(featureId))
+    if (bin == 0) {
+      missingGoLeft
+    } else {
+      bin <= threshold
+    }
+  }
 }
 
 
-class SetSplit(val featureId: Int,
-               val missingGoLeft: Boolean,
-               val gain: Double,
-               val leftSet: Array[Int],
-               val stats: Array[Double]) extends Split {
+private[gbm] class SetSplit(val featureId: Int,
+                            val missingGoLeft: Boolean,
+                            val gain: Double,
+                            val leftSet: Array[Int],
+                            val stats: Array[Double]) extends Split {
   require(stats.length == 6)
 
   override def goLeft[B: Integral](bins: Array[B]): Boolean = {
+    val intB = implicitly[Integral[B]]
+    val bin = intB.toInt(bins(featureId))
+    if (bin == 0) {
+      missingGoLeft
+    } else {
+      java.util.Arrays.binarySearch(leftSet, bin) >= 0
+    }
+  }
+
+  override def goLeft[B: Integral](bins: BinVector[B]): Boolean = {
     val intB = implicitly[Integral[B]]
     val bin = intB.toInt(bins(featureId))
     if (bin == 0) {

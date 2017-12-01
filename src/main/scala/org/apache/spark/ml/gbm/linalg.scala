@@ -5,9 +5,9 @@ import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
 
-trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
+private[gbm] trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
 
-  def size: Int
+  def num: Int
 
   def apply(index: Int): V
 
@@ -18,14 +18,14 @@ trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
   def activeIter: Iterator[(Int, V)]
 }
 
-object BinVector {
-  def dense[@spec(Byte, Short, Int) V: Integral : ClassTag](values: Array[V]): BinVector[V] = {
+private[gbm] object BinVector {
+  def dense[V: Integral : ClassTag](values: Array[V]): BinVector[V] = {
     new DenseBinVector[V](values)
   }
 
-  def sparse[@spec(Byte, Short, Int) V: Integral : ClassTag](size: Int,
-                                                             indices: Array[Int],
-                                                             values: Array[V]): BinVector[V] = {
+  def sparse[V: Integral : ClassTag](size: Int,
+                                     indices: Array[Int],
+                                     values: Array[V]): BinVector[V] = {
     if (indices.last <= Byte.MaxValue) {
       new SparseBinVector[Byte, V](size, indices.map(_.toByte), values)
     } else if (indices.last <= Short.MaxValue) {
@@ -37,16 +37,16 @@ object BinVector {
 }
 
 
-class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val values: Array[V]) extends BinVector[V] {
+private class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val values: Array[V]) extends BinVector[V] {
 
-  override def size = values.length
+  override def num = values.length
 
   override def apply(index: Int) = values(index)
 
   override def slice(sorted: Array[Int]) =
     BinVector.dense(sorted.map(values))
 
-  def totalIter: Iterator[(Int, V)] =
+  override def totalIter =
     Iterator.range(0, values.length).map(i => (i, values(i)))
 
   override def activeIter = {
@@ -56,24 +56,12 @@ class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val values:
 }
 
 
-class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int) V: Integral : ClassTag](val size: Int,
-                                                                                                                      val indices: Array[K],
-                                                                                                                      val values: Array[V]) extends BinVector[V] {
+private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int) V: Integral : ClassTag](val num: Int,
+                                                                                                                              val indices: Array[K],
+                                                                                                                              val values: Array[V]) extends BinVector[V] {
 
-  {
-    require(indices.length == values.length)
-    require(size >= 0)
-
-    val intK = implicitly[Integral[K]]
-    if (indices.nonEmpty) {
-      var i = 0
-      while (i < indices.length - 1) {
-        require(intK.lt(indices(i), indices(i + 1)))
-        i += 1
-      }
-      require(intK.toInt(indices.last) < size)
-    }
-  }
+  require(indices.length == values.length)
+  require(num >= 0)
 
   private def binarySearch = Utils.makeBinarySearch[K]
 
@@ -97,7 +85,7 @@ class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte
     while (i < sorted.length && j < indices.length) {
       val k = intK.toInt(indices(j))
       if (sorted(i) == k) {
-        indexBuff.append(k)
+        indexBuff.append(i)
         valueBuff.append(values(j))
         i += 1
         j += 1
@@ -111,32 +99,31 @@ class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte
     BinVector.sparse[V](sorted.length, indexBuff.toArray, valueBuff.toArray)
   }
 
-  def totalIter: Iterator[(Int, V)] =
-    new Iterator[(Int, V)]() {
-      val intK = implicitly[Integral[K]]
-      val intV = implicitly[Integral[V]]
+  override def totalIter = new Iterator[(Int, V)]() {
+    private val intK = implicitly[Integral[K]]
+    private val intV = implicitly[Integral[V]]
 
-      var i = 0
-      var j = 0
+    private var i = 0
+    private var j = 0
 
-      override def hasNext = i < size
+    override def hasNext = i < num
 
-      override def next() = {
-        val v = if (j == indices.length) {
-          intV.zero
+    override def next() = {
+      val v = if (j == indices.length) {
+        intV.zero
+      } else {
+        val k = intK.toInt(indices(j))
+        if (i == k) {
+          j += 1
+          values(j - 1)
         } else {
-          val k = intK.toInt(indices(j))
-          if (i == k) {
-            j += 1
-            values(j - 1)
-          } else {
-            intV.zero
-          }
+          intV.zero
         }
-        i += 1
-        (i - 1, v)
       }
+      i += 1
+      (i - 1, v)
     }
+  }
 
   override def activeIter = {
     val intK = implicitly[Integral[K]]

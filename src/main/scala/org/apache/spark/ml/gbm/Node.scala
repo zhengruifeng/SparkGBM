@@ -1,5 +1,7 @@
 package org.apache.spark.ml.gbm
 
+import org.apache.spark.ml.linalg._
+
 private[gbm] class LearningNode(val nodeId: Long,
                                 var isLeaf: Boolean,
                                 var prediction: Double,
@@ -54,13 +56,13 @@ private[gbm] object LearningNode {
 
 trait Node extends Serializable {
 
-  def index[B: Integral](bins: Array[B]): Long
-
   private[gbm] def index[B: Integral](bins: BinVector[B]): Long
 
-  def predict[B: Integral](bins: Array[B]): Double
+  private[gbm] def index(vec: Vector, discretizer: Discretizer): Long
 
   private[gbm] def predict[B: Integral](bins: BinVector[B]): Double
+
+  private[gbm] def predict(vec: Vector, discretizer: Discretizer): Double
 
   def subtreeDepth: Int
 
@@ -95,36 +97,20 @@ class InternalNode(val featureId: Int,
     require(data.length == 1)
   }
 
-  def goLeft[B: Integral](bins: Array[B]): Boolean = {
+  def goLeft[B: Integral](bin: B): Boolean = {
     val intB = implicitly[Integral[B]]
-    val bin = intB.toInt(bins(featureId))
-    if (bin == 0) {
+    val b = intB.toInt(bin)
+    if (b == 0) {
       missingGoLeft
     } else if (isSeq) {
-      bin <= data.head
+      b <= data.head
     } else {
-      java.util.Arrays.binarySearch(data, bin) >= 0
+      java.util.Arrays.binarySearch(data, b) >= 0
     }
   }
 
   private[gbm] def goLeft[B: Integral](bins: BinVector[B]): Boolean = {
-    val intB = implicitly[Integral[B]]
-    val bin = intB.toInt(bins(featureId))
-    if (bin == 0) {
-      missingGoLeft
-    } else if (isSeq) {
-      bin <= data.head
-    } else {
-      java.util.Arrays.binarySearch(data, bin) >= 0
-    }
-  }
-
-  override def index[B: Integral](bins: Array[B]): Long = {
-    if (goLeft(bins)) {
-      leftNode.index(bins)
-    } else {
-      rightNode.index(bins)
-    }
+    goLeft(bins(featureId))
   }
 
   private[gbm] override def index[B: Integral](bins: BinVector[B]): Long = {
@@ -135,11 +121,13 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  override def predict[B: Integral](bins: Array[B]): Double = {
-    if (goLeft(bins)) {
-      leftNode.predict(bins)
+  private[gbm] override def index(vec: Vector, discretizer: Discretizer): Long = {
+    val v = vec(featureId)
+    val b = discretizer.discretizeWithIndex(v, featureId)
+    if (goLeft[Int](b)) {
+      leftNode.index(vec, discretizer)
     } else {
-      rightNode.predict(bins)
+      rightNode.index(vec, discretizer)
     }
   }
 
@@ -148,6 +136,16 @@ class InternalNode(val featureId: Int,
       leftNode.predict(bins)
     } else {
       rightNode.predict(bins)
+    }
+  }
+
+  override private[gbm] def predict(vec: Vector, discretizer: Discretizer): Double = {
+    val v = vec(featureId)
+    val b = discretizer.discretizeWithIndex(v, featureId)
+    if (goLeft[Int](b)) {
+      leftNode.predict(vec, discretizer)
+    } else {
+      rightNode.predict(vec, discretizer)
     }
   }
 
@@ -160,6 +158,8 @@ class InternalNode(val featureId: Int,
       leftNode.nodeIterator ++
       rightNode.nodeIterator
   }
+
+
 }
 
 class LeafNode(val weight: Double,
@@ -169,13 +169,13 @@ class LeafNode(val weight: Double,
 
   override def nodeIterator: Iterator[Node] = Iterator(this)
 
-  override def index[B: Integral](bins: Array[B]): Long = leafId
-
   private[gbm] override def index[B: Integral](bins: BinVector[B]): Long = leafId
 
-  override def predict[B: Integral](bins: Array[B]): Double = weight
+  private[gbm] override def index(vec: Vector, discretizer: Discretizer) = leafId
 
   private[gbm] override def predict[B: Integral](bins: BinVector[B]): Double = weight
+
+  private[gbm] override def predict(vec: Vector, discretizer: Discretizer) = weight
 }
 
 

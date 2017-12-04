@@ -5,6 +5,7 @@ import scala.reflect.ClassTag
 
 import org.apache.spark.{HashPartitioner, Partitioner}
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 
 private[gbm] object Tree extends Logging {
@@ -492,13 +493,13 @@ class TreeModel(val root: Node) extends Serializable {
 
   lazy val numNodes: Long = root.numDescendants
 
-  def predict[B: Integral](bins: BinVector[B]): Double = root.predict[B](bins)
+  private[gbm] def predict[B: Integral](bins: BinVector[B]): Double = root.predict[B](bins)
 
-  def predict[B: Integral](bins: Array[B]): Double = root.predict[B](bins)
+  def predict(vec: Vector, discretizer: Discretizer): Double = root.predict(vec, discretizer)
 
-  def index[B: Integral](bins: BinVector[B]): Long = root.index[B](bins)
+  private[gbm] def index[B: Integral](bins: BinVector[B]): Long = root.index[B](bins)
 
-  def index[B: Integral](bins: Array[B]): Long = root.index[B](bins)
+  def index(vec: Vector, discretizer: Discretizer): Long = root.index(vec, discretizer)
 
   def computeImportance: Map[Int, Double] = {
     val gains = collection.mutable.Map[Int, Double]()

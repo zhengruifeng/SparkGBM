@@ -561,8 +561,6 @@ private[gbm] object GBM extends Logging {
                                                validation: Boolean,
                                                discretizer: Discretizer,
                                                initialModel: Option[GBMModel]): GBMModel = {
-    val intB = implicitly[Integral[B]]
-
     val binData = data.map { case (weight, label, vec) =>
       (weight, label, discretizer.transformToVector[B](vec, boostConfig.getHandleSparsity))
     }
@@ -1119,11 +1117,10 @@ class GBMModel(val discretizer: Discretizer,
       n = numTrees
     }
 
-    val bins = discretizer.transformToArray(features)
     var score = baseScore
     var i = 0
     while (i < n) {
-      score += trees(i).predict(bins) * weights(i)
+      score += trees(i).predict(features, discretizer) * weights(i)
       i += 1
     }
     score
@@ -1154,8 +1151,6 @@ class GBMModel(val discretizer: Discretizer,
       n = numTrees
     }
 
-    val bins = discretizer.transformToArray(features)
-
     if (oneHot) {
 
       val indices = Array.ofDim[Int](n)
@@ -1163,7 +1158,7 @@ class GBMModel(val discretizer: Discretizer,
       var step = 0
       var i = 0
       while (i < n) {
-        val index = trees(i).index(bins)
+        val index = trees(i).index(features, discretizer)
         indices(i) = step + index.toInt
         step += numLeaves(i).toInt
         i += 1
@@ -1178,7 +1173,7 @@ class GBMModel(val discretizer: Discretizer,
       val indices = Array.ofDim[Double](n)
       var i = 0
       while (i < n) {
-        indices(i) = trees(i).index(bins).toDouble
+        indices(i) = trees(i).index(features, discretizer).toDouble
         i += 1
       }
 

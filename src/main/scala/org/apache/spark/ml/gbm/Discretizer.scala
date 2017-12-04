@@ -47,9 +47,9 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
 
 
   private[gbm] def transformToVector[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector,
-                                                                                     sparse: Boolean): BinVector[B] = {
+                                                                                     handleSparsity: Boolean): BinVector[B] = {
     require(vec.size == numCols)
-    if (sparse) {
+    if (handleSparsity) {
       transformToSparse[B](vec)
     } else {
       transformToDense[B](vec)

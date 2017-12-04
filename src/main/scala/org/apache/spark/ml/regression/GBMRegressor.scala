@@ -42,7 +42,7 @@ trait GBMRegressionParams extends GBMParams {
 
   def getEvaluateFunc: Array[String] = $(evaluateFunc)
 
-  setDefault(evaluateFunc -> Array(GBMRegressor.RMSEEval, GBMRegressor.MSEEval, GBMRegressor.MAEEval))
+  setDefault(evaluateFunc -> Array(GBMRegressor.RMSEEval, GBMRegressor.MSEEval, GBMRegressor.MAEEval, GBMRegressor.R2Eval))
 
   /**
     * Delta in huber loss for robust regression

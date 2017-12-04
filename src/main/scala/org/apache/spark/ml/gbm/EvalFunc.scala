@@ -20,7 +20,7 @@ private[ml] trait EvalFunc extends Logging with Serializable {
 trait BatchEvalFunc extends EvalFunc {
 
   /**
-    * compute the metric in a batch fashion, Must not persist/unpersist the input data
+    * compute the metric in a batch fashion, MUST NOT change the storage level of input data
     *
     * @param data scored dataset containing (weight, label, score)
     * @return the metric value
@@ -80,30 +80,36 @@ private[gbm] object IncrementalEvalFunc {
   */
 trait SimpleEvalFunc extends IncrementalEvalFunc {
 
+  protected var count = 0.0
+  protected var avg = 0.0
+
   /** compute the metric on each instance */
   def compute(label: Double, score: Double): Double
 
-  var count = 0.0
-  var sum = 0.0
-
   override def update(weight: Double, label: Double, score: Double): Unit = {
-    count += weight
-    sum += weight * compute(label, score)
+    if (weight > 0) {
+      count += weight
+      val diff = compute(label, score) - avg
+      avg += diff / count
+    }
   }
 
   override def merge(other: IncrementalEvalFunc): Unit = {
     val o = other.asInstanceOf[SimpleEvalFunc]
-    count += o.count
-    sum += o.sum
+    if (o.count > 0) {
+      count += o.count
+      val diff = o.avg - avg
+      avg += o.count / count * diff
+    }
   }
 
   override def getValue: Double = {
-    sum / count
+    avg
   }
 
   override def init: Unit = {
     count = 0.0
-    sum = 0.0
+    avg = 0.0
   }
 }
 
@@ -131,7 +137,7 @@ class RMSEEval extends SimpleEvalFunc {
   }
 
   override def getValue: Double = {
-    math.sqrt(sum / count)
+    math.sqrt(avg)
   }
 
   override def isLargerBetter: Boolean = false
@@ -151,6 +157,68 @@ class MAEEval extends SimpleEvalFunc {
   override def isLargerBetter: Boolean = false
 
   override def name = "MAE"
+}
+
+
+/**
+  * R2 score
+  */
+class R2Eval extends IncrementalEvalFunc {
+
+  protected var count = 0.0
+  private var avgLabel = 0.0
+  private var avgLabel2 = 0.0
+  private var avgError2 = 0.0
+
+  /** update the internal statistics aggregator */
+  override def update(weight: Double, label: Double, score: Double): Unit = {
+    if (weight > 0) {
+      count += weight
+
+      var diff = label - avgLabel
+      avgLabel += diff / count
+
+      diff = label * label - avgLabel2
+      avgLabel2 += diff / count
+
+      diff = (label - score) * (label - score) - avgError2
+      avgError2 += diff / count
+    }
+  }
+
+  /** merge the internal aggregators */
+  override def merge(other: IncrementalEvalFunc): Unit = {
+    val o = other.asInstanceOf[R2Eval]
+    if (o.count > 0) {
+      count += o.count
+
+      var diff = o.avgLabel - avgLabel
+      avgLabel += o.count / count * diff
+
+      diff = o.avgLabel2 - avgLabel2
+      avgLabel2 += o.count / count * diff
+
+      diff = o.avgError2 - avgError2
+      avgError2 += o.count / count * diff
+    }
+  }
+
+  /** compute the final metric value */
+  override def getValue: Double = {
+    1 - avgError2 / (avgLabel2 - avgLabel * avgLabel)
+  }
+
+  /** initial the internal statistics */
+  override def init: Unit = {
+    count = 0.0
+    avgLabel = 0.0
+    avgLabel2 = 0.0
+    avgError2 = 0.0
+  }
+
+  override def isLargerBetter: Boolean = true
+
+  override def name: String = "R2"
 }
 
 
@@ -220,8 +288,8 @@ class AUCEval(val numBins: Int) extends IncrementalEvalFunc {
 
   def this() = this(1 << 16)
 
-  val histPos: Array[Double] = Array.ofDim[Double](numBins)
-  val histNeg: Array[Double] = Array.ofDim[Double](numBins)
+  private val histPos: Array[Double] = Array.ofDim[Double](numBins)
+  private val histNeg: Array[Double] = Array.ofDim[Double](numBins)
 
   override def update(weight: Double, label: Double, score: Double): Unit = {
     require(label == 0 || label == 1)

@@ -196,6 +196,8 @@ class GBMRegressor(override val uid: String) extends
           new MSEEval
         case GBMRegressor.RMSEEval =>
           new RMSEEval
+        case GBMRegressor.R2Eval =>
+          new R2Eval
       }.map(_.asInstanceOf[EvalFunc])
 
     val callBackFunc = ArrayBuffer[CallbackFunc]()
@@ -289,8 +291,11 @@ object GBMRegressor extends DefaultParamsReadable[GBMRegressor] {
   /** String name for MAEEval */
   private[regression] val MAEEval: String = "mae"
 
+  /** String name for R2Eval */
+  private[regression] val R2Eval: String = "r2"
+
   /** Set of evaluate functions that GBMRegressor supports */
-  private[regression] val supportedEvals = Set(RMSEEval, MSEEval, MAEEval)
+  private[regression] val supportedEvals = Set(RMSEEval, MSEEval, MAEEval, R2Eval)
 }
 
 class GBMRegressionModel(override val uid: String, val model: GBMModel)

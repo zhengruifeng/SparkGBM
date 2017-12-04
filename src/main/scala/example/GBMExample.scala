@@ -41,7 +41,7 @@ object GBMExample {
     val r2Eval = new BatchEvalFunc {
       override def compute(data: RDD[(Double, Double, Double)]): Double = {
         /** ignore weight */
-        new RegressionMetrics(data.map(t => (t._2, t._3))).r2
+        new RegressionMetrics(data.map(t => (t._3, t._2))).r2
       }
 
       override def isLargerBetter: Boolean = true
@@ -90,7 +90,7 @@ object GBMExample {
       .setStepSize(0.2)
       .setNumericalBinType("depth")
       .setObjectiveFunc(obj)
-      .setEvaluateFunc(Array(r2Eval, maeEval))
+      .setEvaluateFunc(Array(r2Eval, maeEval, new R2Eval))
       .setCallbackFunc(Array(lrUpdater, recoder))
 
     /** train with validation */

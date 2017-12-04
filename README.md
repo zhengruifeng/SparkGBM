@@ -123,7 +123,7 @@ Besides all the functions in DataFrame-based APIs, RDD-based APIs also support u
     val r2Eval = new BatchEvalFunc {
       override def compute(data: RDD[(Double, Double, Double)]): Double = {
         // ignore weight
-        new RegressionMetrics(data.map(t => (t._2, t._3))).r2
+        new RegressionMetrics(data.map(t => (t._3, t._2))).r2
       }
 
       override def isLargerBetter: Boolean = true

@@ -92,26 +92,29 @@ object GBMExample {
       .setCallbackFunc(Array(lrUpdater))
 
     /** train with validation */
-    val model = gbm.fit(train, test)
+    val dModel = gbm.fit(train, test)
+
+    gbm.setSparsityThreshold(0.0)
+    val sModel = gbm.fit(train, test)
 
     /** model save and load */
     val path = s"/tmp/SparkGBM/model-${System.currentTimeMillis}"
-    model.save(path)
+    dModel.save(path)
     val model2 = GBMModel.load(path)
 
-    println(s"weights of trees: ${model.weights.mkString(",")}")
+    println(s"weights of trees: ${dModel.weights.mkString(",")}")
 
     /** label and score */
     val trainResult = train.map {
       case (_, label, features) =>
-        (label, model.predict(features))
+        (label, dModel.predict(features))
     }
     val trainR2 = new RegressionMetrics(trainResult).r2
     println(s"R2 on train data $trainR2")
 
     val testResult = test.map {
       case (_, label, features) =>
-        (label, model.predict(features))
+        (label, dModel.predict(features))
     }
     val testR2 = new RegressionMetrics(testResult).r2
     println(s"R2 on test data $testR2")

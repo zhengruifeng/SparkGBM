@@ -158,8 +158,6 @@ class InternalNode(val featureId: Int,
       leftNode.nodeIterator ++
       rightNode.nodeIterator
   }
-
-
 }
 
 class LeafNode(val weight: Double,

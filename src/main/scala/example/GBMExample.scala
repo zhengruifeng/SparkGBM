@@ -83,14 +83,13 @@ object GBMExample {
 
 
     val gbm = new GBM
-    gbm.setMaxIter(20)
+    gbm.setMaxIter(30)
       .setMaxDepth(5)
       .setStepSize(0.2)
       .setNumericalBinType("depth")
       .setObjectiveFunc(obj)
       .setEvaluateFunc(Array(r2Eval, maeEval))
       .setCallbackFunc(Array(lrUpdater))
-      .setSparsityThreshold(0.0)
 
     /** train with validation */
     val model = gbm.fit(train, test)
@@ -103,13 +102,19 @@ object GBMExample {
     println(s"weights of trees: ${model.weights.mkString(",")}")
 
     /** label and score */
-    val result = test.map {
+    val trainResult = train.map {
       case (_, label, features) =>
         (label, model.predict(features))
     }
+    val trainR2 = new RegressionMetrics(trainResult).r2
+    println(s"R2 on train data $trainR2")
 
-    val r2 = new RegressionMetrics(result).r2
-    println(s"R2 on test data $r2")
+    val testResult = test.map {
+      case (_, label, features) =>
+        (label, model.predict(features))
+    }
+    val testR2 = new RegressionMetrics(testResult).r2
+    println(s"R2 on test data $testR2")
 
     spark.stop()
   }

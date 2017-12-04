@@ -101,7 +101,7 @@ class MetricRecoder extends CallbackFunc {
     false
   }
 
-  override def name = "EarlyStop"
+  override def name = "MetricRecoder"
 }
 
 

@@ -6,7 +6,7 @@ It is designed to be scalable and efficient with the following advantages:
 
 2, Purely writen in Scala/Spark, no other dependancy
 
-3, Relative faster training speed compared with ml.GBT
+3, Faster training speed compared with `ml.GBT`
 
 
 ## Features
@@ -20,7 +20,7 @@ From XGBoost we introduced:
 
 3, Column subsampling by tree and by level
 
-4, Missing values handling
+4, Sparsity-awareness
 
 From LightGBM we introduced:
 

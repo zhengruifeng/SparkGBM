@@ -60,11 +60,13 @@ trait Node extends Serializable {
 
   private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long
 
-  private[gbm] def index(vec: Vector, discretizer: Discretizer): Long
+  private[gbm] def index(vec: Vector,
+                         discretizer: Discretizer): Long
 
   private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double
 
-  private[gbm] def predict(vec: Vector, discretizer: Discretizer): Double
+  private[gbm] def predict(vec: Vector,
+                           discretizer: Discretizer): Double
 
   def subtreeDepth: Int
 
@@ -123,7 +125,8 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private[gbm] override def index(vec: Vector, discretizer: Discretizer): Long = {
+  private[gbm] override def index(vec: Vector,
+                                  discretizer: Discretizer): Long = {
     val v = vec(featureId)
     val b = discretizer.discretizeWithIndex(v, featureId)
     if (goLeft[Int](b)) {
@@ -141,7 +144,8 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  override private[gbm] def predict(vec: Vector, discretizer: Discretizer): Double = {
+  override private[gbm] def predict(vec: Vector,
+                                    discretizer: Discretizer): Double = {
     val v = vec(featureId)
     val b = discretizer.discretizeWithIndex(v, featureId)
     if (goLeft[Int](b)) {
@@ -171,11 +175,13 @@ class LeafNode(val weight: Double,
 
   private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long = leafId
 
-  private[gbm] override def index(vec: Vector, discretizer: Discretizer) = leafId
+  private[gbm] override def index(vec: Vector,
+                                  discretizer: Discretizer) = leafId
 
   private[gbm] override def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double = weight
 
-  private[gbm] override def predict(vec: Vector, discretizer: Discretizer) = weight
+  private[gbm] override def predict(vec: Vector,
+                                    discretizer: Discretizer) = weight
 }
 
 

@@ -25,7 +25,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
                   val sparsity: Double) extends Serializable {
 
 
-  def transformToArray(vec: Vector): Array[Int] = {
+  def transform(vec: Vector): Array[Int] = {
     require(vec.size == numCols)
 
     val bins = Array.ofDim[Int](numCols)
@@ -240,6 +240,9 @@ private[gbm] object Discretizer extends Logging {
   }
 
 
+  /**
+    * Comupte the proportion of missing value
+    */
   def computeSparsity(data: RDD[Vector],
                       numCols: Int,
                       zeroAsMissing: Boolean,
@@ -282,8 +285,12 @@ private[gbm] object Discretizer extends Logging {
       },
       combOp = {
         case ((cnt1, avg1), (cnt2, avg2)) =>
-          val diff = cnt2 / (cnt1 + cnt2) * (avg2 - avg1)
-          (cnt1 + cnt2, avg1 + diff)
+          if (cnt1 + cnt2 > 0) {
+            val diff = cnt2 / (cnt1 + cnt2) * (avg2 - avg1)
+            (cnt1 + cnt2, avg1 + diff)
+          } else {
+            (0L, 0.0)
+          }
       },
       depth = depth
     )

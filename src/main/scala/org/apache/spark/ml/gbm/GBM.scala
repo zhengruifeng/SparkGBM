@@ -950,7 +950,7 @@ private[gbm] object GBM extends Logging {
 
     if (keepWeights) {
       instances.zip(preds).map { case ((_, _, bins), pred) =>
-        val p = toH.fromDouble(tree.predict(bins))
+        val p = toH.fromDouble(tree.predict[B](bins))
 
         val newPred = pred :+ p
 
@@ -962,8 +962,9 @@ private[gbm] object GBM extends Logging {
       }
 
     } else {
+
       instances.zip(preds).map { case ((_, _, bins), pred) =>
-        val p = toH.fromDouble(tree.predict(bins))
+        val p = toH.fromDouble(tree.predict[B](bins))
 
         val newPred = pred :+ p
 

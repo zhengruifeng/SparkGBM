@@ -206,35 +206,91 @@ private[gbm] object Tree extends Logging {
                                                                                handleSparsity: Boolean,
                                                                                splits: Map[Long, Split]): RDD[((Long, Int), Array[H])] = {
     if (handleSparsity) {
-      computeHistsSparse[H, B](data, minNodeId, parallelism, splits)
+
+      val numH = implicitly[Numeric[H]]
+      val toH = implicitly[FromDouble[H]]
+
+      // pre-computed sum of histogram of right leaves
+      val histSums = if (splits.isEmpty) {
+
+        // in the first iteration, splits is empty, we should explicitly compute the sum of histogram
+        data.filter { case (_, nodeId) =>
+          nodeId >= minNodeId && nodeId % 2 == 1L
+        }.map { case ((grad, hess, _), nodeId) =>
+          (nodeId, (grad, hess))
+        }.reduceByKey(func = {
+          case ((grad1, hess1), (grad2, hess2)) =>
+            (numH.plus(grad1, grad2), numH.plus(hess1, hess2))
+        }).collectAsMap().toMap
+
+      } else {
+
+        // in the following iterations, we can directly compute the sum of histogram of leaves by last splits
+        splits.map { case (nodeId, split) =>
+          (nodeId * 2 + 1, (toH.fromDouble(split.rightGrad), toH.fromDouble(split.rightHess)))
+        }
+      }
+
+      // compute the histogram of non-zero indices
+      val getIter = (vec: BinVector[B]) => vec.activeIter
+
+      computeHistsImpl(data, minNodeId, parallelism, getIter)
+        .map { case ((nodeId, col), hist) =>
+          require(numH.equiv(hist(0), numH.zero))
+          require(numH.equiv(hist(1), numH.zero))
+
+          val (gradSum, hessSum) = histSums(nodeId)
+
+          var grad = numH.zero
+          var hess = numH.zero
+
+          var i = 2
+          while (i < hist.length) {
+            grad = numH.plus(grad, hist(i))
+            hess = numH.plus(hess, hist(i + 1))
+            i += 2
+          }
+
+          hist(0) = numH.minus(gradSum, grad)
+          hist(1) = numH.minus(hessSum, hess)
+
+          ((nodeId, col), hist)
+        }
+
     } else {
-      computeHistsDense[H, B](data, minNodeId, parallelism)
+
+      // compute the histogram of all indices
+      val getIter = (vec: BinVector[B]) => vec.totalIter
+      computeHistsImpl(data, minNodeId, parallelism, getIter)
     }
   }
 
 
   /**
-    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId on given index iterator
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param minNodeId   minimum nodeId for this level
     * @param parallelism parallelism
+    * @param getIter     index iterator of indices to be computed
     * @tparam H
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
-  def computeHistsDense[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
-                                                                       minNodeId: Long,
-                                                                       parallelism: Int): RDD[((Long, Int), Array[H])] = {
+  def computeHistsImpl[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                      minNodeId: Long,
+                                                                      parallelism: Int,
+                                                                      getIter: BinVector[B] => Iterator[(Int, B)]): RDD[((Long, Int), Array[H])] = {
+
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
 
-
     data.filter { case (_, nodeId) =>
+      // right leaves
       nodeId >= minNodeId && nodeId % 2 == 1L
 
     }.flatMap { case ((grad, hess, bins), nodeId) =>
-      bins.totalIter.map { case (col, bin) =>
+      getIter(bins).map { case (col, bin) =>
         ((nodeId, col), (bin, grad, hess))
       }
 
@@ -271,112 +327,6 @@ private[gbm] object Tree extends Logging {
           }
           hist2
       })
-  }
-
-
-  /**
-    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId, in a sparse fashion
-    *
-    * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
-    * @param minNodeId   minimum nodeId for this level
-    * @param parallelism parallelism
-    * @param splits      splits found in the last round
-    * @tparam H
-    * @tparam B
-    * @return histogram data containing (nodeId, columnId, histogram)
-    */
-  def computeHistsSparse[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
-                                                                                     minNodeId: Long,
-                                                                                     parallelism: Int,
-                                                                                     splits: Map[Long, Split]): RDD[((Long, Int), Array[H])] = {
-
-    val intB = implicitly[Integral[B]]
-    val numH = implicitly[Numeric[H]]
-    val toH = implicitly[FromDouble[H]]
-
-    // compute the sum of (grad, hess) on root node or right leaves
-    val histSums = if (splits.isEmpty) {
-
-      data.filter { case (_, nodeId) =>
-        nodeId >= minNodeId && nodeId % 2 == 1L
-      }.map { case ((grad, hess, _), nodeId) =>
-        (nodeId, (grad, hess))
-      }.reduceByKey(func = {
-        case ((grad1, hess1), (grad2, hess2)) =>
-          (numH.plus(grad1, grad2), numH.plus(hess1, hess2))
-      }).collectAsMap().toMap
-
-    } else {
-
-      splits.map { case (nodeId, split) =>
-        (nodeId * 2 + 1, (toH.fromDouble(split.leftGrad), toH.fromDouble(split.leftHess)))
-      }
-    }
-
-    data.filter { case (_, nodeId) =>
-      nodeId >= minNodeId && nodeId % 2 == 1L
-
-    }.flatMap { case ((grad, hess, bins), nodeId) =>
-      // only accumulate hist on non-missing bins
-      bins.activeIter.map { case (col, bin) =>
-        ((nodeId, col), (bin, grad, hess))
-      }
-
-    }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
-      seqOp = {
-        case (hist, (bin, grad, hess)) =>
-          val index = intB.toInt(bin) << 1
-
-          if (hist.length < index + 2) {
-            val newHist = hist ++ Array.fill(index + 2 - hist.length)(numH.zero)
-            newHist(index) = grad
-            newHist(index + 1) = hess
-            newHist
-          } else {
-            hist(index) = numH.plus(hist(index), grad)
-            hist(index + 1) = numH.plus(hist(index + 1), hess)
-            hist
-          }
-
-      }, combOp = {
-        case (hist1, hist2) if hist1.length >= hist2.length =>
-          var i = 0
-          while (i < hist2.length) {
-            hist1(i) = numH.plus(hist1(i), hist2(i))
-            i += 1
-          }
-          hist1
-
-        case (hist1, hist2) =>
-          var i = 0
-          while (i < hist1.length) {
-            hist2(i) = numH.plus(hist1(i), hist2(i))
-            i += 1
-          }
-          hist2
-
-      }).map { case ((nodeId, col), hist) =>
-
-      require(numH.equiv(hist(0), numH.zero))
-      require(numH.equiv(hist(1), numH.zero))
-
-      val (gradSum, hessSum) = histSums(nodeId)
-
-      var grad = numH.zero
-      var hess = numH.zero
-
-      var i = 2
-      while (i < hist.length) {
-        grad = numH.plus(grad, hist(i))
-        hess = numH.plus(hess, hist(i + 1))
-        i += 2
-      }
-
-      hist(0) = numH.minus(gradSum, grad)
-      hist(1) = numH.minus(hessSum, hess)
-
-      ((nodeId, col), hist)
-    }
   }
 
 

@@ -7,7 +7,7 @@ import scala.{specialized => spec}
 
 private[gbm] trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
 
-  def num: Int
+  def len: Int
 
   def apply(index: Int): V
 
@@ -39,7 +39,7 @@ private[gbm] object BinVector {
 
 private class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val values: Array[V]) extends BinVector[V] {
 
-  override def num = values.length
+  override def len = values.length
 
   override def apply(index: Int) = values(index)
 
@@ -56,12 +56,12 @@ private class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val
 }
 
 
-private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int) V: Integral : ClassTag](val num: Int,
+private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int) V: Integral : ClassTag](val len: Int,
                                                                                                                               val indices: Array[K],
                                                                                                                               val values: Array[V]) extends BinVector[V] {
 
   require(indices.length == values.length)
-  require(num >= 0)
+  require(len >= 0)
 
   private def binarySearch = Utils.makeBinarySearch[K]
 
@@ -106,7 +106,7 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
     private var i = 0
     private var j = 0
 
-    override def hasNext = i < num
+    override def hasNext = i < len
 
     override def next() = {
       val v = if (j == indices.length) {
@@ -136,21 +136,25 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
 
 
 private trait FromDouble[H] extends Serializable {
+
   def fromDouble(value: Double): H
 }
 
 
 private object DoubleFromDouble extends FromDouble[Double] {
+
   override def fromDouble(value: Double): Double = value
 }
 
 
 private object FloatFromDouble extends FromDouble[Float] {
+
   override def fromDouble(value: Double): Float = value.toFloat
 }
 
 
 private object DecimalFromDouble extends FromDouble[BigDecimal] {
+
   override def fromDouble(value: Double): BigDecimal = BigDecimal(value)
 }
 

@@ -374,7 +374,7 @@ private[gbm] object Split {
     * @param gradSeq     grad array
     * @param hessSeq     hess array
     * @param boostConfig boosting config info
-    * @return best split containing (cut, gain, Array(weightL, weightR, gradL, gradR, hessL, hessR)), if any
+    * @return best split containing (cut, gain, Array(weightL, gradL, hessL, weightR, gradR, hessR)), if any
     */
   def seqSearch(gradSeq: Array[Double],
                 hessSeq: Array[Double],

@@ -245,56 +245,50 @@ private[gbm] object Discretizer extends Logging {
                       zeroAsMissing: Boolean,
                       depth: Int): Double = {
 
-    val (count, nnms) = if (zeroAsMissing) {
-      data.treeAggregate[(Long, Array[Long])]((0L, Array.ofDim[Long](numCols)))(
-        seqOp = {
-          case ((cnt, nnms), vec) =>
-            require(nnms.length == vec.size)
-            vec.foreachActive { (i, v) =>
-              if (!v.isNaN && !v.isInfinity && v != 0) {
-                nnms(i) += 1
-              }
-            }
-            (cnt + 1, nnms)
-        }, combOp = {
-          case ((cnt1, nnms1), (cnt2, nnms2)) =>
-            require(nnms1.length == nnms2.length)
-            var i = 0
-            while (i < nnms1.length) {
-              nnms1(i) += nnms2(i)
-              i += 1
-            }
-            (cnt1 + cnt2, nnms1)
-        }, depth = depth)
+    val nnmCounter = if (zeroAsMissing) {
+      (vec: Vector) => {
+        var nnm = 0
+        vec.foreachActive { (i, v) =>
+          if (!v.isNaN && !v.isInfinity && v != 0) {
+            nnm += 1
+          }
+        }
+        nnm
+      }
 
     } else {
 
-      data.treeAggregate[(Long, Array[Long])]((0L, Array.ofDim[Long](numCols)))(
-        seqOp = {
-          case ((cnt, nnms), vec) =>
-            require(nnms.length == vec.size)
-            var i = 0
-            while (i < nnms.length) {
-              val v = vec(i)
-              if (!v.isNaN && !v.isInfinity) {
-                nnms(i) += 1
-              }
-              i += 1
-            }
-            (cnt + 1, nnms)
-        }, combOp = {
-          case ((cnt1, nnms1), (cnt2, nnms2)) =>
-            require(nnms1.length == nnms2.length)
-            var i = 0
-            while (i < nnms1.length) {
-              nnms1(i) += nnms2(i)
-              i += 1
-            }
-            (cnt1 + cnt2, nnms1)
-        }, depth = depth)
+      (vec: Vector) => {
+        var nnm = 0
+        var i = 0
+        while (i < numCols) {
+          val v = vec(i)
+          if (!v.isNaN && !v.isInfinity) {
+            nnm += 1
+          }
+          i += 1
+        }
+        nnm
+      }
     }
 
-    1 - nnms.map(_.toDouble).sum / count / numCols
+    val (_, nnm) = data.treeAggregate[(Long, Double)]((0L, 0.0))(
+      seqOp = {
+        case ((cnt, avg), vec) =>
+          require(vec.size == numCols)
+          val nnm = nnmCounter(vec)
+          val diff = (nnm - avg) / (cnt + 1)
+          (cnt + 1, avg + diff)
+      },
+      combOp = {
+        case ((cnt1, avg1), (cnt2, avg2)) =>
+          val diff = cnt2 / (cnt1 + cnt2) * (avg2 - avg1)
+          (cnt1 + cnt2, avg1 + diff)
+      },
+      depth = depth
+    )
+
+    1 - nnm / numCols
   }
 
 

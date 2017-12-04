@@ -90,6 +90,7 @@ object GBMExample {
       .setObjectiveFunc(obj)
       .setEvaluateFunc(Array(r2Eval, maeEval))
       .setCallbackFunc(Array(lrUpdater))
+      .setSparsityThreshold(0.0)
 
     /** train with validation */
     val model = gbm.fit(train, test)

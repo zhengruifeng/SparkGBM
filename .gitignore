@@ -92,6 +92,6 @@ spark-warehouse/
 
 .Rproj.user
 /log
-log
+log*
 src/main/java/
 src/test/

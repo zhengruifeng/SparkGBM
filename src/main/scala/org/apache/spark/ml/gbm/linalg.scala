@@ -26,9 +26,10 @@ private[gbm] object BinVector {
   def sparse[V: Integral : ClassTag](size: Int,
                                      indices: Array[Int],
                                      values: Array[V]): BinVector[V] = {
-    if (indices.last <= Byte.MaxValue) {
+    val lastIndex = indices.lastOption.getOrElse(0)
+    if (lastIndex <= Byte.MaxValue) {
       new SparseBinVector[Byte, V](size, indices.map(_.toByte), values)
-    } else if (indices.last <= Short.MaxValue) {
+    } else if (lastIndex <= Short.MaxValue) {
       new SparseBinVector[Short, V](size, indices.map(_.toShort), values)
     } else {
       new SparseBinVector[Int, V](size, indices, values)

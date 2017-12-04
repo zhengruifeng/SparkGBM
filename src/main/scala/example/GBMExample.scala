@@ -81,6 +81,8 @@ object GBMExample {
       override def name: String = "Learning Rate Updater"
     }
 
+    val recoder = new MetricRecoder
+
 
     val gbm = new GBM
     gbm.setMaxIter(15)
@@ -89,10 +91,14 @@ object GBMExample {
       .setNumericalBinType("depth")
       .setObjectiveFunc(obj)
       .setEvaluateFunc(Array(r2Eval, maeEval))
-      .setCallbackFunc(Array(lrUpdater))
+      .setCallbackFunc(Array(lrUpdater, recoder))
 
     /** train with validation */
     val model = gbm.fit(train, test)
+
+    recoder.testMetricsRecoder.zipWithIndex.foreach { case (metrics, iter) =>
+      println(s"iter $iter, test metrics $metrics")
+    }
 
     /** model save and load */
     val path = s"/tmp/SparkGBM/model-${System.currentTimeMillis}"

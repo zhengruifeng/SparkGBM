@@ -1,5 +1,6 @@
 package org.apache.spark.ml.gbm
 
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.{Failure, Success}
@@ -72,6 +73,32 @@ class EarlyStop(val iters: Int) extends CallbackFunc {
     }
 
     stop
+  }
+
+  override def name = "EarlyStop"
+}
+
+
+/**
+  * just recode the metrics during training
+  */
+class MetricRecoder extends CallbackFunc {
+
+  val trainMetricsRecoder = ArrayBuffer[Map[String, Double]]()
+  val testMetricsRecoder = ArrayBuffer[Map[String, Double]]()
+
+  override def compute(spark: SparkSession,
+                       boostConfig: BoostConfig,
+                       model: GBMModel,
+                       trainMetrics: Array[Map[String, Double]],
+                       testMetrics: Array[Map[String, Double]]): Boolean = {
+    trainMetricsRecoder.clear()
+    trainMetricsRecoder.appendAll(trainMetrics)
+
+    testMetricsRecoder.clear()
+    testMetricsRecoder.appendAll(testMetrics)
+
+    false
   }
 
   override def name = "EarlyStop"

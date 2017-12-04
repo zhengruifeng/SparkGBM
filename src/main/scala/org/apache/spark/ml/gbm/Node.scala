@@ -1,5 +1,7 @@
 package org.apache.spark.ml.gbm
 
+import scala.{specialized => spec}
+
 import org.apache.spark.ml.linalg._
 
 private[gbm] class LearningNode(val nodeId: Long,
@@ -56,11 +58,11 @@ private[gbm] object LearningNode {
 
 trait Node extends Serializable {
 
-  private[gbm] def index[B: Integral](bins: BinVector[B]): Long
+  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long
 
   private[gbm] def index(vec: Vector, discretizer: Discretizer): Long
 
-  private[gbm] def predict[B: Integral](bins: BinVector[B]): Double
+  private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double
 
   private[gbm] def predict(vec: Vector, discretizer: Discretizer): Double
 
@@ -97,7 +99,7 @@ class InternalNode(val featureId: Int,
     require(data.length == 1)
   }
 
-  def goLeft[B: Integral](bin: B): Boolean = {
+  private def goLeft[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     val intB = implicitly[Integral[B]]
     val b = intB.toInt(bin)
     if (b == 0) {
@@ -109,15 +111,15 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private[gbm] def goLeft[B: Integral](bins: BinVector[B]): Boolean = {
-    goLeft(bins(featureId))
+  private[gbm] def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
+    goLeft[B](bins(featureId))
   }
 
-  private[gbm] override def index[B: Integral](bins: BinVector[B]): Long = {
+  private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long = {
     if (goLeft(bins)) {
-      leftNode.index(bins)
+      leftNode.index[B](bins)
     } else {
-      rightNode.index(bins)
+      rightNode.index[B](bins)
     }
   }
 
@@ -131,11 +133,11 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private[gbm] override def predict[B: Integral](bins: BinVector[B]): Double = {
+  private[gbm] override def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double = {
     if (goLeft(bins)) {
-      leftNode.predict(bins)
+      leftNode.predict[B](bins)
     } else {
-      rightNode.predict(bins)
+      rightNode.predict[B](bins)
     }
   }
 
@@ -167,11 +169,11 @@ class LeafNode(val weight: Double,
 
   override def nodeIterator: Iterator[Node] = Iterator(this)
 
-  private[gbm] override def index[B: Integral](bins: BinVector[B]): Long = leafId
+  private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long = leafId
 
   private[gbm] override def index(vec: Vector, discretizer: Discretizer) = leafId
 
-  private[gbm] override def predict[B: Integral](bins: BinVector[B]): Double = weight
+  private[gbm] override def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double = weight
 
   private[gbm] override def predict(vec: Vector, discretizer: Discretizer) = weight
 }

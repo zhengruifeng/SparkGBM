@@ -2,6 +2,7 @@ package org.apache.spark.ml.gbm
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
+import scala.{specialized => spec}
 
 import org.apache.spark.{HashPartitioner, Partitioner}
 import org.apache.spark.internal.Logging
@@ -493,11 +494,11 @@ class TreeModel(val root: Node) extends Serializable {
 
   lazy val numNodes: Long = root.numDescendants
 
-  private[gbm] def predict[B: Integral](bins: BinVector[B]): Double = root.predict[B](bins)
+  private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double = root.predict[B](bins)
 
   def predict(vec: Vector, discretizer: Discretizer): Double = root.predict(vec, discretizer)
 
-  private[gbm] def index[B: Integral](bins: BinVector[B]): Long = root.index[B](bins)
+  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long = root.index[B](bins)
 
   def index(vec: Vector, discretizer: Discretizer): Long = root.index(vec, discretizer)
 

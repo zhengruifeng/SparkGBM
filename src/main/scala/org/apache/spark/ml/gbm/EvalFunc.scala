@@ -288,8 +288,8 @@ class AUCEval(val numBins: Int) extends IncrementalEvalFunc {
 
   def this() = this(1 << 16)
 
-  private val histPos: Array[Double] = Array.ofDim[Double](numBins)
-  private val histNeg: Array[Double] = Array.ofDim[Double](numBins)
+  private val histPos = Array.ofDim[Double](numBins)
+  private val histNeg = Array.ofDim[Double](numBins)
 
   override def update(weight: Double, label: Double, score: Double): Unit = {
     require(label == 0 || label == 1)

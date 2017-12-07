@@ -109,7 +109,7 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
 
     override def hasNext = i < len
 
-    override def next() = {
+    override def next = {
       val v = if (j == indices.length) {
         intV.zero
       } else {

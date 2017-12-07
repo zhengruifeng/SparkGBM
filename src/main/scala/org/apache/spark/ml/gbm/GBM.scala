@@ -850,23 +850,31 @@ private[gbm] object GBM extends Logging {
         .take(numCols).toArray.sorted
     }
 
+    // column sampling function
+    val slice = if (boostConfig.getColSampleByTree == 1) {
+      (bins: BinVector[B]) => bins
+    } else {
+      (bins: BinVector[B]) => bins.slice(cols)
+    }
+
     // indices of categorical columns in the selected column subset
     val catCols = cols.zipWithIndex
       .filter { case (col, _) =>
         boostConfig.getCatCols.contains(col)
       }.map(_._2).toSet
 
+
     val colSampled = boostConfig.getBoostType match {
       case GBTree =>
         rowSampled.map { case ((weight, label, bins), pred) =>
           val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, numH.toDouble(pred.head))
-          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), bins.slice(cols))
+          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), slice(bins))
         }
 
       case Dart if dropped.isEmpty =>
         rowSampled.map { case ((weight, label, bins), pred) =>
           val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, numH.toDouble(pred.head))
-          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), bins.slice(cols))
+          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), slice(bins))
         }
 
       case Dart if dropped.nonEmpty =>
@@ -882,7 +890,7 @@ private[gbm] object GBM extends Logging {
           }
 
           val (grad, hess) = boostConfig.getObjectiveFunc.compute(label, score)
-          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), bins.slice(cols))
+          (toH.fromDouble(grad * weight), toH.fromDouble(hess * weight), slice(bins))
         }
     }
 

@@ -638,11 +638,11 @@ private[gbm] object GBM extends Logging {
     val testMetricsHistory = ArrayBuffer[Map[String, Double]]()
 
     // random number generator for drop out
-    val dartRand = new Random(boostConfig.getSeed)
+    val dartRng = new Random(boostConfig.getSeed)
     val dropped = mutable.Set[Int]()
 
     // random number generator for column sampling
-    val colSampleRand = new Random(boostConfig.getSeed)
+    val colSampleRng = new Random(boostConfig.getSeed)
 
     var iter = 0
     var finished = false
@@ -654,7 +654,7 @@ private[gbm] object GBM extends Logging {
 
       // drop out
       if (boostConfig.getBoostType == Dart) {
-        dropTrees(dropped, boostConfig, numTrees, dartRand)
+        dropTrees(dropped, boostConfig, numTrees, dartRng)
         if (dropped.nonEmpty) {
           logInfo(s"$logPrefix ${dropped.size} trees dropped")
         } else {
@@ -666,7 +666,7 @@ private[gbm] object GBM extends Logging {
       logInfo(s"$logPrefix start")
       val start = System.nanoTime
       val tree = buildTree(data, trainPreds, weights.toArray, boostConfig, iter,
-        numTrees, dropped.toSet, colSampleRand)
+        numTrees, dropped.toSet, colSampleRng)
       logInfo(s"$logPrefix finish, duration: ${(System.nanoTime - start) / 1e9} sec")
 
       if (tree.isEmpty) {
@@ -789,23 +789,23 @@ private[gbm] object GBM extends Logging {
     * @param dropped     indices of dropped trees
     * @param boostConfig boosting configuration
     * @param numTrees    number of trees
-    * @param dartRand    random number generator
+    * @param dartRng     random number generator
     */
   def dropTrees(dropped: mutable.Set[Int],
                 boostConfig: BoostConfig,
                 numTrees: Int,
-                dartRand: Random): Unit = {
+                dartRng: Random): Unit = {
     dropped.clear()
 
     if (boostConfig.getDropSkip < 1 &&
-      dartRand.nextDouble < 1 - boostConfig.getDropSkip) {
+      dartRng.nextDouble < 1 - boostConfig.getDropSkip) {
       var k = (numTrees * boostConfig.getDropRate).ceil.toInt
       k = math.max(k, boostConfig.getMinDrop)
       k = math.min(k, boostConfig.getMaxDrop)
       k = math.min(k, numTrees)
 
       if (k > 0) {
-        dartRand.shuffle(Seq.range(0, numTrees))
+        dartRng.shuffle(Seq.range(0, numTrees))
           .take(k).foreach(dropped.add)
       }
     }
@@ -815,14 +815,14 @@ private[gbm] object GBM extends Logging {
   /**
     * build a new tree
     *
-    * @param instances     instances containing (weight, label, bins)
-    * @param preds         previous predictions
-    * @param weights       weights of trees
-    * @param boostConfig   boosting configuration
-    * @param iteration     current iteration
-    * @param numTrees      current number of trees
-    * @param dropped       indices of columns which are selected to drop during building of current tree
-    * @param colSampleRand random number generator for column sampling
+    * @param instances    instances containing (weight, label, bins)
+    * @param preds        previous predictions
+    * @param weights      weights of trees
+    * @param boostConfig  boosting configuration
+    * @param iteration    current iteration
+    * @param numTrees     current number of trees
+    * @param dropped      indices of columns which are selected to drop during building of current tree
+    * @param colSampleRng random number generator for column sampling
     * @tparam H
     * @tparam B
     * @return a new tree if possible
@@ -834,7 +834,7 @@ private[gbm] object GBM extends Logging {
                                                                             iteration: Int,
                                                                             numTrees: Int,
                                                                             dropped: Set[Int],
-                                                                            colSampleRand: Random): Option[TreeModel] = {
+                                                                            colSampleRng: Random): Option[TreeModel] = {
     val numH = implicitly[Numeric[H]]
     val toH = implicitly[FromDouble[H]]
 
@@ -846,7 +846,7 @@ private[gbm] object GBM extends Logging {
       Array.range(0, boostConfig.getNumCols)
     } else {
       val numCols = (boostConfig.getNumCols * boostConfig.getColSampleByTree).ceil.toInt
-      colSampleRand.shuffle(Seq.range(0, boostConfig.getNumCols))
+      colSampleRng.shuffle(Seq.range(0, boostConfig.getNumCols))
         .take(numCols).toArray.sorted
     }
 

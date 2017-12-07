@@ -266,8 +266,8 @@ private[gbm] object Utils extends Logging {
 
         logInfo(s"Using partition-based sampling")
 
-        val rand = new Random(seed)
-        val shuffled = rand.shuffle(Seq.range(0, numPartitions)).toArray
+        val rng = new Random(seed)
+        val shuffled = rng.shuffle(Seq.range(0, numPartitions)).toArray
 
         val n = numPartitions * fraction
         val m = n.toInt
@@ -286,8 +286,8 @@ private[gbm] object Utils extends Logging {
           if (ju.Arrays.binarySearch(selected, pid) >= 0) {
             it
           } else if (pid == partial) {
-            val rand = new Random(seed + pid)
-            it.filter(_ => rand.nextDouble() < r)
+            val rng = new Random(seed + pid)
+            it.filter(_ => rng.nextDouble() < r)
           } else {
             Iterator.empty
           }

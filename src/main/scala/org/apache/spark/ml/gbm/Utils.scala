@@ -213,12 +213,11 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
     }
   }
 
-  private val ordering = implicitly[Ordering[K]]
-
   private val binarySearch = Utils.makeBinarySearch[K]
 
   private val search = {
     if (splits.length <= 128) {
+      val ordering = implicitly[Ordering[K]]
       (array: Array[K], k: K) =>
         var i = 0
         while (i < array.length && ordering.gt(k, array(i))) {
@@ -260,7 +259,7 @@ private[gbm] object Utils extends Logging {
       val numPartitions = data.getNumPartitions
       val parallelism = data.sparkContext.defaultParallelism
 
-      if (numPartitions * fraction < parallelism * 5) {
+      if (numPartitions * fraction < parallelism * 10) {
         data.sample(false, fraction, seed)
 
       } else {
@@ -273,10 +272,11 @@ private[gbm] object Utils extends Logging {
         val n = numPartitions * fraction
         val m = n.toInt
         val r = n - m
+        val eps = 1e-2
 
-        val (selected, partial) = if (m > 0 && r < 1e-2) {
+        val (selected, partial) = if (m > 0 && r < eps) {
           (shuffled.take(m).sorted, -1)
-        } else if (m >= 0 && r > 1 - 1e-2) {
+        } else if (m >= 0 && r > 1 - eps) {
           (shuffled.take(m + 1).sorted, -1)
         } else {
           (shuffled.take(m).sorted, shuffled.last)

@@ -2,10 +2,10 @@ package org.apache.spark.ml.gbm
 
 import java.{util => ju}
 
-import scala.{specialized => spec}
-
 import scala.collection.mutable
 import scala.reflect.ClassTag
+import scala.{specialized => spec}
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
@@ -175,59 +175,39 @@ private[gbm] object Discretizer extends Logging {
       }
     }
 
+    // get the iterator of non-missing items
+    val getIter = if (zeroAsMissing) {
+      (vec: Vector) =>
+        vec.asBreeze.activeIterator.filter { case (i, v) =>
+          v != 0 && !v.isNaN && !v.isInfinity
+        }
+
+    } else {
+      (vec: Vector) =>
+        vec.asBreeze.iterator.filter { case (i, v) =>
+          !v.isNaN && !v.isInfinity
+        }
+    }
 
     val (count, aggregated) =
-      if (zeroAsMissing) {
-        vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
-          seqOp = {
-            case ((cnt, aggs), vec) =>
-              require(aggs.length == vec.size)
-              vec.foreachActive { (i, v) =>
-                // column aggs do not deal with missing value
-                if (!v.isNaN && !v.isInfinity && v != 0) {
-                  aggs(i).update(v)
-                }
-              }
-              (cnt + 1, aggs)
-          }, combOp = {
-            case ((cnt1, aggs1), (cnt2, aggs2)) =>
-              require(aggs1.length == aggs2.length)
-              var i = 0
-              while (i < aggs1.length) {
-                aggs1(i).merge(aggs2(i))
-                i += 1
-              }
-              (cnt1 + cnt2, aggs1)
-          }, depth = depth)
-
-      } else {
-
-        vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
-          seqOp = {
-            case ((cnt, aggs), vec) =>
-              require(aggs.length == vec.size)
-              var i = 0
-              while (i < aggs.length) {
-                // column aggs do not deal with missing value
-                val v = vec(i)
-                if (!v.isNaN && !v.isInfinity) {
-                  aggs(i).update(v)
-                }
-                i += 1
-              }
-              (cnt + 1, aggs)
-          }, combOp = {
-            case ((cnt1, aggs1), (cnt2, aggs2)) =>
-              require(aggs1.length == aggs2.length)
-              var i = 0
-              while (i < aggs1.length) {
-                aggs1(i).merge(aggs2(i))
-                i += 1
-              }
-              (cnt1 + cnt2, aggs1)
-          }, depth = depth)
-      }
-
+      vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
+        seqOp = {
+          case ((cnt, aggs), vec) =>
+            require(aggs.length == vec.size)
+            getIter(vec).foreach { case (i, v) =>
+              aggs(i).update(v)
+            }
+            (cnt + 1, aggs)
+        }, combOp = {
+          case ((cnt1, aggs1), (cnt2, aggs2)) =>
+            require(aggs1.length == aggs2.length)
+            var i = 0
+            while (i < aggs1.length) {
+              aggs1(i).merge(aggs2(i))
+              i += 1
+            }
+            (cnt1 + cnt2, aggs1)
+        }, depth = depth)
 
     // number of non-missing
     val nnm = aggregated.map(_.count.toDouble).sum
@@ -248,7 +228,8 @@ private[gbm] object Discretizer extends Logging {
                       zeroAsMissing: Boolean,
                       depth: Int): Double = {
 
-    val nnmCounter = if (zeroAsMissing) {
+    // compute number of non-missing
+    val countNNM = if (zeroAsMissing) {
       (vec: Vector) => {
         var nnm = 0
         vec.foreachActive { (i, v) =>
@@ -262,14 +243,21 @@ private[gbm] object Discretizer extends Logging {
     } else {
 
       (vec: Vector) => {
-        var nnm = 0
-        var i = 0
-        while (i < numCols) {
-          val v = vec(i)
-          if (!v.isNaN && !v.isInfinity) {
-            nnm += 1
-          }
-          i += 1
+        var nnm = vec.size
+        vec match {
+          case dv: DenseVector =>
+            dv.values.foreach { v =>
+              if (v.isNaN || v.isInfinity) {
+                nnm -= 1
+              }
+            }
+
+          case sv: SparseVector =>
+            sv.values.foreach { v =>
+              if (v.isNaN || v.isInfinity) {
+                nnm -= 1
+              }
+            }
         }
         nnm
       }
@@ -279,7 +267,7 @@ private[gbm] object Discretizer extends Logging {
       seqOp = {
         case ((cnt, avg), vec) =>
           require(vec.size == numCols)
-          val nnm = nnmCounter(vec)
+          val nnm = countNNM(vec)
           val diff = (nnm - avg) / (cnt + 1)
           (cnt + 1, avg + diff)
       },

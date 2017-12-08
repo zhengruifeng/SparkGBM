@@ -480,7 +480,7 @@ private[gbm] object Tree extends Logging {
         (leaves(n), c)
       }.distinct.sorted
 
-      new GBMRangePartitioner[(Long, Int)](splits)
+      new RangePartitioner[(Long, Int)](splits)
     }
   }
 }

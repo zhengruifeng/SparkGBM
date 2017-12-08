@@ -202,7 +202,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   * @param splits splitting points
   * @tparam K
   */
-private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array[K]) extends Partitioner {
+private[gbm] class RangePartitioner[K: Ordering : ClassTag](val splits: Array[K]) extends Partitioner {
 
   {
     require(splits.nonEmpty)

@@ -24,21 +24,19 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
                   val zeroAsMissing: Boolean,
                   val sparsity: Double) extends Serializable {
 
-
   def transform(vec: Vector): Array[Int] = {
     require(vec.size == numCols)
 
     val bins = Array.ofDim[Int](numCols)
 
     if (zeroAsMissing) {
-      vec.foreachActive { (i, v) =>
+      Utils.getActiveIter(vec).foreach { case (i, v) =>
         bins(i) = discretizeWithIndex(v, i)
       }
+
     } else {
-      var i = 0
-      while (i < numCols) {
-        bins(i) = discretizeWithIndex(vec(i), i)
-        i += 1
+      Utils.getTotalIter(vec).foreach { case (i, v) =>
+        bins(i) = discretizeWithIndex(v, i)
       }
     }
 
@@ -46,69 +44,40 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   }
 
 
-  private[gbm] def transformToVector[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector,
-                                                                                     handleSparsity: Boolean): BinVector[B] = {
-    require(vec.size == numCols)
-    if (handleSparsity) {
-      transformToSparse[B](vec)
-    } else {
-      transformToDense[B](vec)
-    }
-  }
+  private[gbm] def getTransformFunc[@spec(Byte, Short, Int) B: Integral : ClassTag](handleSparsity: Boolean): Vector => BinVector[B] = {
 
-
-  private def transformToSparse[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): BinVector[B] = {
     val intB: Integral[B] = implicitly[Integral[B]]
 
-    val indexBuff = mutable.ArrayBuffer[Int]()
-    val valueBuff = mutable.ArrayBuffer[B]()
-
-    if (zeroAsMissing) {
-      vec.foreachActive { (i, v) =>
-        val bin = discretizeWithIndex(v, i)
-        if (bin != 0) {
-          indexBuff.append(i)
-          valueBuff.append(intB.fromInt(bin))
-        }
-      }
+    val getIter = if (zeroAsMissing) {
+      (vec: Vector) => Utils.getActiveIter(vec)
     } else {
-      var i = 0
-      while (i < numCols) {
-        val bin = discretizeWithIndex(vec(i), i)
-        if (bin != 0) {
-          indexBuff.append(i)
-          valueBuff.append(intB.fromInt(bin))
-        }
-        i += 1
-      }
+      (vec: Vector) => Utils.getTotalIter(vec)
     }
 
-    BinVector.sparse[B](numCols, indexBuff.toArray, valueBuff.toArray)
-  }
-
-
-  private def transformToDense[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): BinVector[B] = {
-    val intB = implicitly[Integral[B]]
-
-    val bins = Array.fill(numCols)(intB.zero)
-
-    if (zeroAsMissing) {
-      vec.foreachActive { (i, v) =>
-        val bin = discretizeWithIndex(v, i)
-        if (bin != 0) {
-          bins(i) = intB.fromInt(bin)
+    if (handleSparsity) {
+      (vec: Vector) =>
+        val indexBuff = mutable.ArrayBuffer[Int]()
+        val valueBuff = mutable.ArrayBuffer[B]()
+        getIter(vec).foreach { case (i, v) =>
+          val bin = discretizeWithIndex(v, i)
+          if (bin != 0) {
+            indexBuff.append(i)
+            valueBuff.append(intB.fromInt(bin))
+          }
         }
-      }
-    } else {
-      var i = 0
-      while (i < numCols) {
-        val bin = discretizeWithIndex(vec(i), i)
-        bins(i) = intB.fromInt(bin)
-        i += 1
-      }
-    }
+        BinVector.sparse[B](numCols, indexBuff.toArray, valueBuff.toArray)
 
-    BinVector.dense[B](bins)
+    } else {
+      (vec: Vector) =>
+        val bins = Array.fill(numCols)(intB.zero)
+        getIter(vec).foreach { case (i, v) =>
+          val bin = discretizeWithIndex(v, i)
+          if (bin != 0) {
+            bins(i) = intB.fromInt(bin)
+          }
+        }
+        BinVector.dense[B](bins)
+    }
   }
 
 
@@ -163,7 +132,7 @@ private[gbm] object Discretizer extends Logging {
     logInfo(s"Discretizer building start")
 
     // zero bin index is always reserved for missing value
-    val emptyAggs = Array.range(0, numCols).map { col =>
+    val createAgg = (col: Int) => {
       if (catCols.contains(col)) {
         new CatColAgg(maxBins - 1)
       } else if (rankCols.contains(col)) {
@@ -175,39 +144,63 @@ private[gbm] object Discretizer extends Logging {
       }
     }
 
-    // get the iterator of non-missing items
-    val getIter = if (zeroAsMissing) {
-      (vec: Vector) =>
-        Utils.getActiveIter(vec).filter { case (i, v) =>
-          v != 0 && !v.isNaN && !v.isInfinity
-        }
-
-    } else {
-      (vec: Vector) =>
-        Utils.getTotalIter(vec).filter { case (i, v) =>
-          !v.isNaN && !v.isInfinity
-        }
-    }
+    val emptyAggs = Array.range(0, numCols).map(createAgg)
 
     val (count, aggregated) =
-      vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
-        seqOp = {
-          case ((cnt, aggs), vec) =>
-            require(aggs.length == vec.size)
-            getIter(vec).foreach { case (i, v) =>
-              aggs(i).update(v)
-            }
-            (cnt + 1, aggs)
-        }, combOp = {
-          case ((cnt1, aggs1), (cnt2, aggs2)) =>
-            require(aggs1.length == aggs2.length)
-            var i = 0
-            while (i < aggs1.length) {
-              aggs1(i).merge(aggs2(i))
-              i += 1
-            }
-            (cnt1 + cnt2, aggs1)
-        }, depth = depth)
+      if (zeroAsMissing) {
+        vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
+          seqOp = {
+            case ((cnt, aggs), vec) =>
+              require(vec.size == numCols)
+              Utils.getActiveIter(vec).foreach { case (i, v) =>
+                if (!v.isNaN && !v.isInfinity) {
+                  aggs(i).update(v)
+                }
+              }
+              (cnt + 1, aggs)
+          }, combOp = {
+            case ((cnt1, aggs1), (cnt2, aggs2)) =>
+              var i = 0
+              while (i < numCols) {
+                aggs1(i).merge(aggs2(i))
+                i += 1
+              }
+              (cnt1 + cnt2, aggs1)
+          }, depth = depth)
+
+      } else {
+
+        val (count, nnzs, aggs) =
+          vectors.treeAggregate[(Long, Array[Long], Array[ColAgg])]((0L, Array.ofDim[Long](numCols), emptyAggs))(
+            seqOp = {
+              case ((cnt, nnzs, aggs), vec) =>
+                require(vec.size == numCols)
+                Utils.getActiveIter(vec).foreach { case (i, v) =>
+                  nnzs(i) += 1
+                  if (!v.isNaN && !v.isInfinity) {
+                    aggs(i).update(v)
+                  }
+                }
+                (cnt + 1, nnzs, aggs)
+            }, combOp = {
+              case ((cnt1, nnzs1, aggs1), (cnt2, nnzs2, aggs2)) =>
+                var i = 0
+                while (i < numCols) {
+                  nnzs1(i) += nnzs2(i)
+                  aggs1(i).merge(aggs2(i))
+                  i += 1
+                }
+                (cnt1 + cnt2, nnzs1, aggs1)
+            }, depth = depth)
+
+        var i = 0
+        while (i < numCols) {
+          aggs(i).updateZeros(count - nnzs(i))
+          i += 1
+        }
+
+        (count, aggs)
+      }
 
     // number of non-missing
     val nnm = aggregated.map(_.count.toDouble).sum
@@ -231,35 +224,17 @@ private[gbm] object Discretizer extends Logging {
     // compute number of non-missing
     val countNNM = if (zeroAsMissing) {
       (vec: Vector) => {
-        var nnm = 0
-        vec.foreachActive { (i, v) =>
-          if (!v.isNaN && !v.isInfinity && v != 0) {
-            nnm += 1
-          }
+        Utils.getActiveIter(vec).count { case (i, v) =>
+          !v.isNaN && !v.isInfinity
         }
-        nnm
       }
 
     } else {
 
       (vec: Vector) => {
-        var nnm = vec.size
-        vec match {
-          case dv: DenseVector =>
-            dv.values.foreach { v =>
-              if (v.isNaN || v.isInfinity) {
-                nnm -= 1
-              }
-            }
-
-          case sv: SparseVector =>
-            sv.values.foreach { v =>
-              if (v.isNaN || v.isInfinity) {
-                nnm -= 1
-              }
-            }
+        vec.size - Utils.getActiveIter(vec).count { case (i, v) =>
+          v.isNaN || v.isInfinity
         }
-        nnm
       }
     }
 
@@ -465,6 +440,8 @@ private[gbm] trait ColAgg extends Serializable {
 
   def update(value: Double): ColAgg
 
+  def updateZeros(nz: Long): ColAgg
+
   def merge(other: ColAgg): ColAgg
 
   def toColDiscretizer: ColDiscretizer
@@ -485,6 +462,16 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
   override def update(value: Double): QuantileNumColAgg = {
     summary = summary.insert(value)
     count += 1
+    this
+  }
+
+  override def updateZeros(nz: Long): QuantileNumColAgg = {
+    var i = 0L
+    while (i < nz) {
+      summary = summary.insert(0.0)
+      count += 1
+      i += 1
+    }
     this
   }
 
@@ -529,6 +516,15 @@ private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
     this
   }
 
+  override def updateZeros(nz: Long): IntervalNumColAgg = {
+    if (nz > 0) {
+      max = math.max(max, 0.0)
+      min = math.min(min, 0.0)
+      count += nz
+    }
+    this
+  }
+
   override def merge(other: ColAgg): IntervalNumColAgg = {
     val o = other.asInstanceOf[IntervalNumColAgg]
     max = math.max(max, o.max)
@@ -568,6 +564,15 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
     this
   }
 
+  override def updateZeros(nz: Long): CatColAgg = {
+    if (nz > 0) {
+      val cnt = counter.getOrElse(0, 0L)
+      counter.update(0, cnt + nz)
+      require(counter.size <= maxBins)
+    }
+    this
+  }
+
   override def merge(other: ColAgg): CatColAgg = {
     other.asInstanceOf[CatColAgg].counter
       .foreach { case (v, c) =>
@@ -602,6 +607,15 @@ private[gbm] class RankAgg(val maxBins: Int) extends ColAgg {
     set.add(value.toInt)
     require(set.size <= maxBins)
     count += 1
+    this
+  }
+
+  override def updateZeros(nz: Long): RankAgg = {
+    if (nz > 0) {
+      set.add(0)
+      require(set.size <= maxBins)
+      count += nz
+    }
     this
   }
 

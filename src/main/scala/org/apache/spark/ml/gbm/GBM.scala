@@ -561,11 +561,13 @@ private[gbm] object GBM extends Logging {
                                                validation: Boolean,
                                                discretizer: Discretizer,
                                                initialModel: Option[GBMModel]): GBMModel = {
+    val transformFunc = discretizer.getTransformFunc[B](boostConfig.getHandleSparsity)
+
     val binData = data.map { case (weight, label, vec) =>
-      (weight, label, discretizer.transformToVector[B](vec, boostConfig.getHandleSparsity))
+      (weight, label, transformFunc(vec))
     }
     val binTest = test.map { case (weight, label, vec) =>
-      (weight, label, discretizer.transformToVector[B](vec, boostConfig.getHandleSparsity))
+      (weight, label, transformFunc(vec))
     }
 
     boostConfig.getFloatType match {

@@ -25,11 +25,11 @@ object HiggsTest {
 
     val modelCheckpointPath = s"/tmp/zrf/spark-modelcheckpoint-${System.nanoTime}"
 
-    val train = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-DENSEEXT-Train", 1028)
+    val train = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-SPARSEEXT-Train", 1000028)
       .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
 
-    val test = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-DENSEEXT-Test", 1028)
+    val test = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-SPARSEEXT-Test", 1000028)
       .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
 
@@ -59,6 +59,7 @@ object HiggsTest {
       .setModelCheckpointInterval(10)
       .setModelCheckpointPath(modelCheckpointPath)
       .setPredictionCol("prediction")
+      .setZeroAsMissing(true)
 
     val gbmcModel = gbmc.fit(train)
 

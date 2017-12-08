@@ -178,13 +178,13 @@ private[gbm] object Discretizer extends Logging {
     // get the iterator of non-missing items
     val getIter = if (zeroAsMissing) {
       (vec: Vector) =>
-        vec.asBreeze.activeIterator.filter { case (i, v) =>
+        Utils.getActiveIter(vec).filter { case (i, v) =>
           v != 0 && !v.isNaN && !v.isInfinity
         }
 
     } else {
       (vec: Vector) =>
-        vec.asBreeze.iterator.filter { case (i, v) =>
+        Utils.getTotalIter(vec).filter { case (i, v) =>
           !v.isNaN && !v.isInfinity
         }
     }

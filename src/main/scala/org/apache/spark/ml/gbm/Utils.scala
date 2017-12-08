@@ -13,6 +13,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.Partitioner
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.storage.StorageLevel
@@ -243,9 +244,54 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
 }
 
 
-
-
 private[gbm] object Utils extends Logging {
+
+  def getTotalIter(vec: Vector): Iterator[(Int, Double)] = {
+    vec match {
+      case dv: DenseVector =>
+        Iterator.range(0, dv.size)
+          .map(i => (i, dv.values(i)))
+
+      case sv: SparseVector =>
+        new Iterator[(Int, Double)]() {
+          private var i = 0
+          private var j = 0
+
+          override def hasNext: Boolean = i < sv.size
+
+          override def next(): (Int, Double) = {
+            val v = if (j == sv.indices.length) {
+              0.0
+            } else {
+              val k = sv.indices(j)
+              if (i == k) {
+                j += 1
+                sv.values(j - 1)
+              } else {
+                0.0
+              }
+            }
+            i += 1
+            (i - 1, v)
+          }
+        }
+    }
+  }
+
+  def getActiveIter(vec: Vector): Iterator[(Int, Double)] = {
+    vec match {
+      case dv: DenseVector =>
+        Iterator.range(0, dv.size)
+          .map(i => (i, dv.values(i)))
+          .filter(t => t._2 != 0)
+
+      case sv: SparseVector =>
+        Iterator.range(0, sv.indices.length)
+          .map(i => (sv.indices(i), sv.values(i)))
+          .filter(t => t._2 != 0)
+    }
+  }
+
 
   def sample[T: ClassTag](data: RDD[T],
                           fraction: Double,

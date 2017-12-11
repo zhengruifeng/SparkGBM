@@ -4,6 +4,8 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
+import org.apache.spark.SparkContext
+
 
 private[gbm] trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
 
@@ -19,6 +21,7 @@ private[gbm] trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
 }
 
 private[gbm] object BinVector {
+
   def dense[V: Integral : ClassTag](values: Array[V]): BinVector[V] = {
     new DenseBinVector[V](values)
   }
@@ -33,6 +36,19 @@ private[gbm] object BinVector {
       new SparseBinVector[Short, V](size, indices.map(_.toShort), values)
     } else {
       new SparseBinVector[Int, V](size, indices, values)
+    }
+  }
+
+  private[this] var kryoRegistered: Boolean = false
+
+  def registerKryoClasses(sc: SparkContext): Unit = {
+    if (!kryoRegistered) {
+      sc.getConf.registerKryoClasses(
+        Array(classOf[BinVector[Object]],
+          classOf[DenseBinVector[Object]],
+          classOf[SparseBinVector[Object, Object]])
+      )
+      kryoRegistered = true
     }
   }
 }

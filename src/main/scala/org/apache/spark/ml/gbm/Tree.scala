@@ -25,6 +25,7 @@ private[gbm] object Tree extends Logging {
                                                                         boostConfig: BoostConfig,
                                                                         treeConfig: TreeConfig): Option[TreeModel] = {
     val sc = data.sparkContext
+    Split.registerKryoClasses(sc)
 
     data.persist(boostConfig.getStorageLevel)
 

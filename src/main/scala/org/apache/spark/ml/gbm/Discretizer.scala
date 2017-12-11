@@ -6,6 +6,7 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
+import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
@@ -128,6 +129,8 @@ private[gbm] object Discretizer extends Logging {
     require(maxBins >= 4)
     require(numCols >= 1)
 
+    ColAgg.registerKryoClasses(vectors.sparkContext)
+
     val start = System.nanoTime
     logInfo(s"Discretizer building start")
 
@@ -136,7 +139,7 @@ private[gbm] object Discretizer extends Logging {
       if (catCols.contains(col)) {
         new CatColAgg(maxBins - 1)
       } else if (rankCols.contains(col)) {
-        new RankAgg(maxBins - 1)
+        new RankColAgg(maxBins - 1)
       } else if (numericalBinType == GBM.Depth) {
         new QuantileNumColAgg(maxBins - 1)
       } else {
@@ -154,6 +157,7 @@ private[gbm] object Discretizer extends Logging {
         }
         val aggs = emptyAggs
 
+        // only absorb non-zero values
         iter.foreach { vec =>
           require(vec.size == numCols)
           Utils.getActiveIter(vec).foreach { case (i, v) =>
@@ -194,7 +198,7 @@ private[gbm] object Discretizer extends Logging {
 
     val sparsity = 1 - nnm / count / numCols
 
-    logInfo(s"Discretizer building finished, data sparsity: $sparsity, duration: ${(System.nanoTime - start) / 1e9} sec")
+    logInfo(s"Discretizer building finished, data count $count, numCols: $numCols, total NNM $nnm, sparsity: $sparsity, duration: ${(System.nanoTime - start) / 1e9} sec")
 
     new Discretizer(aggregated.map(_.toColDiscretizer), zeroAsMissing, sparsity)
   }
@@ -313,6 +317,22 @@ private[gbm] object Discretizer extends Logging {
     val sparsity = extraRow.getDouble(1)
 
     new Discretizer(colDiscretizers, zeroAsMissing, sparsity)
+  }
+
+  private[this] var kryoRegistered: Boolean = false
+
+  def registerKryoClasses(sc: SparkContext): Unit = {
+    if (!kryoRegistered) {
+      sc.getConf.registerKryoClasses(
+        Array(classOf[ColDiscretizer],
+          classOf[Array[ColDiscretizer]],
+          classOf[QuantileNumColDiscretizer],
+          classOf[IntervalNumColDiscretizer],
+          classOf[CatColDiscretizer],
+          classOf[RankColDiscretizer])
+      )
+      kryoRegistered = true
+    }
   }
 }
 
@@ -437,6 +457,27 @@ private[gbm] trait ColAgg extends Serializable {
 }
 
 
+private[gbm] object ColAgg {
+
+  private[this] var kryoRegistered: Boolean = false
+
+  def registerKryoClasses(sc: SparkContext): Unit = {
+    if (!kryoRegistered) {
+      sc.getConf.registerKryoClasses(
+        Array(classOf[ColAgg],
+          classOf[Array[ColAgg]],
+          classOf[(Long, Array[ColAgg])],
+          classOf[QuantileNumColAgg],
+          classOf[IntervalNumColAgg],
+          classOf[CatColAgg],
+          classOf[RankColAgg])
+      )
+      kryoRegistered = true
+    }
+  }
+}
+
+
 /**
   * aggregrator for numerical column, find splits of same depth
   */
@@ -455,7 +496,7 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
   override def updateZeros(nz: Long): QuantileNumColAgg = {
     if (nz > 0) {
       val nzSummary = QuantileNumColAgg.createNZSummary(nz)
-      summary = summary.compress.merge(nzSummary.compress).compress
+      summary = summary.compress.merge(nzSummary).compress
       count += nz
     }
     this
@@ -485,15 +526,15 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
 }
 
 
-private object QuantileNumColAgg {
+private[gbm] object QuantileNumColAgg {
 
-  private lazy val nzSummaries = {
+  private[this] lazy val nzSummaries = {
     val array = Array.ofDim[QuantileSummaries](63)
-    array(0) = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001).insert(0.0).compress()
+    array(0) = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001).insert(0.0).compress
     var i = 1
     while (i < array.length) {
-      val s = array(i - 1).compress()
-      array(i) = s.merge(s).compress()
+      val s = array(i - 1).compress
+      array(i) = s.merge(s).compress
       i += 1
     }
     array
@@ -513,12 +554,12 @@ private object QuantileNumColAgg {
     var i = 0
     while (i < binStr.length) {
       if (binStr(i) == char1) {
-        summary = summary.merge(nzSummaries(i)).compress()
+        summary = summary.compress.merge(nzSummaries(i)).compress
       }
       i += 1
     }
 
-    summary = summary.compress()
+    summary = summary.compress
     require(summary.count == nz)
     summary
   }
@@ -622,13 +663,13 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
 /**
   * aggregrator for ranking column
   */
-private[gbm] class RankAgg(val maxBins: Int) extends ColAgg {
+private[gbm] class RankColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
   val set = mutable.Set[Int]()
   var count = 0L
 
-  override def update(value: Double): RankAgg = {
+  override def update(value: Double): RankColAgg = {
     require(value.toInt == value)
     set.add(value.toInt)
     require(set.size <= maxBins)
@@ -636,7 +677,7 @@ private[gbm] class RankAgg(val maxBins: Int) extends ColAgg {
     this
   }
 
-  override def updateZeros(nz: Long): RankAgg = {
+  override def updateZeros(nz: Long): RankColAgg = {
     if (nz > 0) {
       set.add(0)
       require(set.size <= maxBins)
@@ -645,8 +686,8 @@ private[gbm] class RankAgg(val maxBins: Int) extends ColAgg {
     this
   }
 
-  override def merge(other: ColAgg): RankAgg = {
-    val o = other.asInstanceOf[RankAgg]
+  override def merge(other: ColAgg): RankColAgg = {
+    val o = other.asInstanceOf[RankColAgg]
     o.set.foreach { v =>
       set.add(v)
       require(set.size <= maxBins)

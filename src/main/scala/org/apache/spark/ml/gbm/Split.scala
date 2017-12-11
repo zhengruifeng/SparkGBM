@@ -2,6 +2,9 @@ package org.apache.spark.ml.gbm
 
 import scala.collection.mutable
 
+import org.apache.spark.SparkContext
+
+
 private[gbm] abstract class Split extends Serializable {
 
   def featureId: Int
@@ -526,6 +529,19 @@ private[gbm] object Split {
       new SetSplit(featureId, missingInSet1, gain, set1.toArray.sorted, stats)
     } else {
       new SetSplit(featureId, missingInSet2, gain, set2.toArray.sorted, stats.takeRight(3) ++ stats.take(3))
+    }
+  }
+
+  private[this] var kryoRegistered: Boolean = false
+
+  def registerKryoClasses(sc: SparkContext): Unit = {
+    if (!kryoRegistered) {
+      sc.getConf.registerKryoClasses(
+        Array(classOf[Split],
+          classOf[SeqSplit],
+          classOf[SetSplit])
+      )
+      kryoRegistered = true
     }
   }
 }

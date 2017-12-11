@@ -448,7 +448,8 @@ class GBM extends Logging with Serializable {
         require(rankCols.min >= 0 && rankCols.max < numCols)
       }
       require(catCols.intersect(rankCols).isEmpty)
-      Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, false, aggregationDepth)
+
+      Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, zeroAsMissing, aggregationDepth)
     }
     logInfo(s"Average number of bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
 
@@ -561,6 +562,9 @@ private[gbm] object GBM extends Logging {
                                                validation: Boolean,
                                                discretizer: Discretizer,
                                                initialModel: Option[GBMModel]): GBMModel = {
+    Discretizer.registerKryoClasses(data.sparkContext)
+    BinVector.registerKryoClasses(data.sparkContext)
+
     val transformFunc = discretizer.getTransformFunc[B](boostConfig.getHandleSparsity)
 
     val binData = data.map { case (weight, label, vec) =>

@@ -30,8 +30,8 @@ object HiggsExtend {
     }
 
     val Array(train2, test2) = data2.randomSplit(Array(0.8, 0.2), 123L)
-    MLUtils.saveAsLibSVMFile(train2.repartition(256), "/tmp/zrf/HIGGS-DENSEEXT-Train")
-    MLUtils.saveAsLibSVMFile(test2.repartition(256), "/tmp/zrf/HIGGS-DENSEEXT-Test")
+    MLUtils.saveAsLibSVMFile(train2.repartition(1024), "/tmp/zrf/HIGGS-DENSEEXT-Train")
+    MLUtils.saveAsLibSVMFile(test2.repartition(1024), "/tmp/zrf/HIGGS-DENSEEXT-Test")
 
     val data3 = data.mapPartitionsWithIndex { case (index, iter) =>
       val rng = new Random(index)
@@ -48,8 +48,8 @@ object HiggsExtend {
     }
 
     val Array(train3, test3) = data3.randomSplit(Array(0.8, 0.2), 123L)
-    MLUtils.saveAsLibSVMFile(train3.repartition(256), "/tmp/zrf/HIGGS-SPARSEEXT-Train")
-    MLUtils.saveAsLibSVMFile(test3.repartition(256), "/tmp/zrf/HIGGS-SPARSEEXT-Test")
+    MLUtils.saveAsLibSVMFile(train3.repartition(1024), "/tmp/zrf/HIGGS-SPARSEEXT-Train")
+    MLUtils.saveAsLibSVMFile(test3.repartition(1024), "/tmp/zrf/HIGGS-SPARSEEXT-Test")
 
     spark.stop()
   }

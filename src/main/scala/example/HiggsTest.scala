@@ -25,12 +25,12 @@ object HiggsTest {
 
     val modelCheckpointPath = s"/tmp/zrf/spark-modelcheckpoint-${System.nanoTime}"
 
-    val train = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-SPARSEEXT-Train", 1000028)
+    val train = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-SPARSEEXT-Train", 10028)
       .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
       .repartition(256)
 
-    val test = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-SPARSEEXT-Test", 1000028)
+    val test = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-SPARSEEXT-Test", 10028)
       .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
 

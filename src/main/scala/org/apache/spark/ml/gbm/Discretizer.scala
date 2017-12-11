@@ -354,7 +354,7 @@ private[gbm] trait ColDiscretizer extends Serializable {
 
 
 /**
-  * discretizer for one numerical column, each intervals are of same depth (quantile)
+  * discretizer for one numerical column, all intervals are of the same depth (quantile)
   *
   * @param splits splitting points
   */
@@ -382,7 +382,7 @@ private[gbm] class QuantileNumColDiscretizer(val splits: Array[Double]) extends 
 
 
 /**
-  * discretizer for one numerical column, each intervals are of same length
+  * discretizer for one numerical column, all intervals are of the same length
   *
   * @param start   start point
   * @param step    length of each interval

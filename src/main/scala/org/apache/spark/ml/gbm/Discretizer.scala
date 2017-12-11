@@ -193,6 +193,8 @@ private[gbm] object Discretizer extends Logging {
                 (cnt1 + cnt2, nnzs1, aggs1)
             }, depth = depth)
 
+        logInfo(s"avg nnz ${nnzs.map(_.toDouble).sum / numCols}")
+
         var i = 0
         while (i < numCols) {
           aggs(i).updateZeros(count - nnzs(i))
@@ -466,18 +468,17 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
   }
 
   override def updateZeros(nz: Long): QuantileNumColAgg = {
-    var i = 0L
-    while (i < nz) {
-      summary = summary.insert(0.0)
-      count += 1
-      i += 1
+    if (nz > 0) {
+      val nzSummary = QuantileNumColAgg.createNZSummary(nz)
+      summary = summary.merge(nzSummary).compress()
+      count += nz
     }
     this
   }
 
   override def merge(other: ColAgg): QuantileNumColAgg = {
     val o = other.asInstanceOf[QuantileNumColAgg]
-    summary = summary.compress().merge(o.summary.compress())
+    summary = summary.compress().merge(o.summary.compress()).compress()
     count += o.count
     this
   }
@@ -495,6 +496,46 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
       // all values in this column are missing value
       new QuantileNumColDiscretizer(Array.emptyDoubleArray)
     }
+  }
+}
+
+
+private object QuantileNumColAgg {
+
+  private lazy val nzSummaries = {
+    val array = Array.ofDim[QuantileSummaries](63)
+    array(0) = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001).insert(0.0).compress()
+    var i = 1
+    while (i < array.length) {
+      val s = array(i - 1).compress()
+      array(i) = s.merge(s).compress()
+      i += 1
+    }
+    array
+  }
+
+  /**
+    * create a QuantileSummaries which has absorbed nz zeros
+    */
+  def createNZSummary(nz: Long): QuantileSummaries = {
+    require(nz >= 0L)
+
+    var summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001)
+
+    val binStr = nz.toBinaryString.reverse
+    val char1 = "1".head
+
+    var i = 0
+    while (i < binStr.length) {
+      if (binStr(i) == char1) {
+        summary = summary.merge(nzSummaries(i)).compress()
+      }
+      i += 1
+    }
+
+    summary = summary.compress()
+    require(summary.count == nz)
+    summary
   }
 }
 

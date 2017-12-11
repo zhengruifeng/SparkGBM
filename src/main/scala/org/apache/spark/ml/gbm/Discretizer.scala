@@ -198,7 +198,7 @@ private[gbm] object Discretizer extends Logging {
 
     val sparsity = 1 - nnm / count / numCols
 
-    logInfo(s"Discretizer building finished, data count $count, numCols: $numCols, total NNM $nnm, sparsity: $sparsity, duration: ${(System.nanoTime - start) / 1e9} sec")
+    logInfo(s"Discretizer building finished, number of instances: $count, number of columns: $numCols, number of non-missing elements: $nnm, sparsity: $sparsity, duration: ${(System.nanoTime - start) / 1e9} sec")
 
     new Discretizer(aggregated.map(_.toColDiscretizer), zeroAsMissing, sparsity)
   }
@@ -212,7 +212,7 @@ private[gbm] object Discretizer extends Logging {
                       zeroAsMissing: Boolean,
                       depth: Int): Double = {
 
-    // compute number of non-missing
+    // compute number of non-missing for each row
     val countNNM = if (zeroAsMissing) {
       (vec: Vector) => {
         Utils.getActiveIter(vec).count { case (i, v) =>

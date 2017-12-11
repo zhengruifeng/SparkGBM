@@ -45,6 +45,7 @@ private[gbm] object BinVector {
     if (!kryoRegistered) {
       sc.getConf.registerKryoClasses(
         Array(classOf[BinVector[Object]],
+          classOf[(Object, Object, BinVector[Object])],
           classOf[DenseBinVector[Object]],
           classOf[SparseBinVector[Object, Object]])
       )

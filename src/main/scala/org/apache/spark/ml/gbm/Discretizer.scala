@@ -132,7 +132,7 @@ private[gbm] object Discretizer extends Logging {
     logInfo(s"Discretizer building start")
 
     // zero bin index is always reserved for missing value
-    val createAgg = (col: Int) => {
+    val emptyAggs = Array.range(0, numCols).map { col =>
       if (catCols.contains(col)) {
         new CatColAgg(maxBins - 1)
       } else if (rankCols.contains(col)) {
@@ -144,65 +144,50 @@ private[gbm] object Discretizer extends Logging {
       }
     }
 
-    val emptyAggs = Array.range(0, numCols).map(createAgg)
-
     val (count, aggregated) =
-      if (zeroAsMissing) {
-        vectors.treeAggregate[(Long, Array[ColAgg])]((0L, emptyAggs))(
-          seqOp = {
-            case ((cnt, aggs), vec) =>
-              require(vec.size == numCols)
-              Utils.getActiveIter(vec).foreach { case (i, v) =>
-                if (!v.isNaN && !v.isInfinity) {
-                  aggs(i).update(v)
-                }
-              }
-              (cnt + 1, aggs)
-          }, combOp = {
-            case ((cnt1, aggs1), (cnt2, aggs2)) =>
-              var i = 0
-              while (i < numCols) {
-                aggs1(i).merge(aggs2(i))
-                i += 1
-              }
-              (cnt1 + cnt2, aggs1)
-          }, depth = depth)
+      vectors.mapPartitions { iter =>
+        var cnt = 0L
+        val nnzs = if (zeroAsMissing) {
+          Array.emptyLongArray
+        } else {
+          Array.ofDim[Long](numCols)
+        }
+        val aggs = emptyAggs
 
-      } else {
-
-        val (count, nnzs, aggs) =
-          vectors.treeAggregate[(Long, Array[Long], Array[ColAgg])]((0L, Array.ofDim[Long](numCols), emptyAggs))(
-            seqOp = {
-              case ((cnt, nnzs, aggs), vec) =>
-                require(vec.size == numCols)
-                Utils.getActiveIter(vec).foreach { case (i, v) =>
-                  nnzs(i) += 1
-                  if (!v.isNaN && !v.isInfinity) {
-                    aggs(i).update(v)
-                  }
-                }
-                (cnt + 1, nnzs, aggs)
-            }, combOp = {
-              case ((cnt1, nnzs1, aggs1), (cnt2, nnzs2, aggs2)) =>
-                var i = 0
-                while (i < numCols) {
-                  nnzs1(i) += nnzs2(i)
-                  aggs1(i).merge(aggs2(i))
-                  i += 1
-                }
-                (cnt1 + cnt2, nnzs1, aggs1)
-            }, depth = depth)
-
-        logInfo(s"avg nnz ${nnzs.map(_.toDouble).sum / numCols}")
-
-        var i = 0
-        while (i < numCols) {
-          aggs(i).updateZeros(count - nnzs(i))
-          i += 1
+        iter.foreach { vec =>
+          require(vec.size == numCols)
+          Utils.getActiveIter(vec).foreach { case (i, v) =>
+            if (!zeroAsMissing) {
+              nnzs(i) += 1
+            }
+            if (!v.isNaN && !v.isInfinity) {
+              aggs(i).update(v)
+            }
+          }
+          cnt += 1
         }
 
-        (count, aggs)
-      }
+        // if zero is not missing, add zeros back
+        if (!zeroAsMissing) {
+          var i = 0
+          while (i < numCols) {
+            aggs(i).updateZeros(cnt - nnzs(i))
+            i += 1
+          }
+        }
+
+        Iterator.single((cnt, aggs))
+
+      }.treeReduce(f = {
+        case ((cnt1, aggs1), (cnt2, aggs2)) =>
+          var i = 0
+          while (i < numCols) {
+            aggs1(i).merge(aggs2(i))
+            i += 1
+          }
+          (cnt1 + cnt2, aggs1)
+      }, depth = depth)
+
 
     // number of non-missing
     val nnm = aggregated.map(_.count.toDouble).sum
@@ -470,7 +455,7 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
   override def updateZeros(nz: Long): QuantileNumColAgg = {
     if (nz > 0) {
       val nzSummary = QuantileNumColAgg.createNZSummary(nz)
-      summary = summary.merge(nzSummary).compress()
+      summary = summary.compress.merge(nzSummary.compress).compress
       count += nz
     }
     this
@@ -478,7 +463,7 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
 
   override def merge(other: ColAgg): QuantileNumColAgg = {
     val o = other.asInstanceOf[QuantileNumColAgg]
-    summary = summary.compress().merge(o.summary.compress()).compress()
+    summary = summary.compress.merge(o.summary.compress).compress
     count += o.count
     this
   }
@@ -486,7 +471,7 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
   // maxBins = 3 -> interval = 0.5, queries = [0.25, 0.75], splits = [q0.25, q0.75]
   override def toColDiscretizer: QuantileNumColDiscretizer = {
     if (count != 0) {
-      summary = summary.compress()
+      summary = summary.compress
       val interval = 1.0 / (maxBins - 1)
       val start = interval / 2
       val queries = Array.range(0, maxBins - 1).map(i => start + interval * i)

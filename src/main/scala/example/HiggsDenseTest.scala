@@ -6,14 +6,14 @@ import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.sql.SparkSession
 
 /**
-  * spark-submit --class example.HiggsTest --master yarn-client --driver-memory 8G --executor-memory 2G --num-executors 32 SparkGBM-0.0.1.jar 2>log
+  * spark-submit --class example.HiggsDenseTest --master yarn-client --driver-memory 8G --executor-memory 2G --num-executors 32 SparkGBM-0.0.1.jar 2>log
   */
-object HiggsTest {
+object HiggsDenseTest {
 
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
       .builder
-      .appName("HiggsTest")
+      .appName("HiggsDenseTest")
       .getOrCreate()
 
     import spark.implicits._
@@ -25,12 +25,12 @@ object HiggsTest {
 
     val modelCheckpointPath = s"/tmp/zrf/spark-modelcheckpoint-${System.nanoTime}"
 
-    val train = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-SPARSEEXT-Train", 10028)
+    val train = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-DENSEEXT-Train", 1028)
       .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
       .repartition(256)
 
-    val test = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-SPARSEEXT-Test", 10028)
+    val test = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-DENSEEXT-Test", 1028)
       .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
 
@@ -60,7 +60,6 @@ object HiggsTest {
       .setModelCheckpointInterval(10)
       .setModelCheckpointPath(modelCheckpointPath)
       .setPredictionCol("prediction")
-      .setZeroAsMissing(true)
 
     val gbmcModel = gbmc.fit(train)
 

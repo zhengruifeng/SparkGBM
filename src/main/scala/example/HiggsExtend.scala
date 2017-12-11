@@ -8,6 +8,9 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg._
 import scala.util.Random
 
+/**
+  * spark-submit --class example.HiggsExtend --master yarn-client --driver-memory 8G --executor-memory 2G --num-executors 32 SparkGBM-0.0.1.jar
+  */
 object HiggsExtend {
 
   def main(args: Array[String]): Unit = {

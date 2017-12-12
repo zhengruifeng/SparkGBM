@@ -235,7 +235,7 @@ private[gbm] object Tree extends Logging {
 
         // in the following iterations, we can directly obtain the sum of histogram of leaves from last splits
         splits.map { case (nodeId, split) =>
-          (nodeId * 2 + 1, (toH.fromDouble(split.rightGrad), toH.fromDouble(split.rightHess)))
+          ((nodeId << 1) + 1, (toH.fromDouble(split.rightGrad), toH.fromDouble(split.rightHess)))
         }
       }
 
@@ -277,7 +277,7 @@ private[gbm] object Tree extends Logging {
 
   /**
     * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId on given index iterator
-    * Assume that histogram aggregation (nodeId x col x bin) on each partition is sparse
+    * Assume that histogram aggregation (nodeId, col, bin) on each partition is sparse
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param getIter     index iterator of indices to be computed
@@ -324,7 +324,7 @@ private[gbm] object Tree extends Logging {
       }
 
     }.reduceByKey(
-      // partition (nodeId x col x bin) based on (nodeId x col)
+      // aggregate (nodeId, col, bin), while only partitioning by (nodeId, col)
       partitioner = partitioner1,
       func = {
         case ((grad1, hess1), (grad2, hess2)) =>
@@ -333,7 +333,7 @@ private[gbm] object Tree extends Logging {
       }).map { case ((nodeId, col, bin), (grad, hess)) =>
       ((nodeId, col), (bin, grad, hess))
 
-      // keep the partition
+      // group by (nodeId, col), while keeping the partition
     }.groupByKey(partitioner2)
 
       .map { case ((nodeId, col), iter) =>
@@ -358,7 +358,7 @@ private[gbm] object Tree extends Logging {
 
   /**
     * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId on given index iterator
-    * Assume that histogram aggregation (nodeId x col x bin) on each partition is dense
+    * Assume that histogram aggregation (nodeId, col, bin) on each partition is dense
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param getIter     index iterator of indices to be computed

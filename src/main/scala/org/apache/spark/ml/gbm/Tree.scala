@@ -75,7 +75,7 @@ private[gbm] object Tree extends Logging {
         val rightHists = computeHists[H, B](data.zip(nodeIds), lastSplits.toMap, minNodeId, sc.defaultParallelism,
           pairSplits, boostConfig.getHandleSparsity)
 
-        // compute the histogram of root node by subtraction
+        // compute the histogram of both left leaves and right leaves by subtraction
         hists = subtractHists[H](hists, rightHists, boostConfig.getMinNodeHess, sc.defaultParallelism, pairSplits)
       }
       histsCheckpointer.update(hists)
@@ -149,7 +149,6 @@ private[gbm] object Tree extends Logging {
       node.nodeId >= minNodeId && splits.contains(node.nodeId)
     }.toArray
 
-    // update tree
     nodes.foreach { node =>
       node.isLeaf = false
       node.split = splits.get(node.nodeId)
@@ -234,7 +233,7 @@ private[gbm] object Tree extends Logging {
 
       } else {
 
-        // in the following iterations, we can directly compute the sum of histogram of leaves by last splits
+        // in the following iterations, we can directly obtain the sum of histogram of leaves from last splits
         splits.map { case (nodeId, split) =>
           (nodeId * 2 + 1, (toH.fromDouble(split.rightGrad), toH.fromDouble(split.rightHess)))
         }
@@ -260,6 +259,7 @@ private[gbm] object Tree extends Logging {
             i += 2
           }
 
+          // compute the histogram of zero index by subtraction
           hist(0) = numH.minus(gradSum, grad)
           hist(1) = numH.minus(hessSum, hess)
 
@@ -268,7 +268,7 @@ private[gbm] object Tree extends Logging {
 
     } else {
 
-      // compute the histogram of all indices
+      // directly compute the histogram of all indices
       val getIter = (vec: BinVector[B]) => vec.totalIter
       computeHistsDense(data, getIter, minNodeId, parallelism)
     }
@@ -324,6 +324,7 @@ private[gbm] object Tree extends Logging {
       }
 
     }.reduceByKey(
+      // partition (nodeId x col x bin) based on (nodeId x col)
       partitioner = partitioner1,
       func = {
         case ((grad1, hess1), (grad2, hess2)) =>
@@ -332,6 +333,7 @@ private[gbm] object Tree extends Logging {
       }).map { case ((nodeId, col, bin), (grad, hess)) =>
       ((nodeId, col), (bin, grad, hess))
 
+      // keep the partition
     }.groupByKey(partitioner2)
 
       .map { case ((nodeId, col), iter) =>
@@ -477,7 +479,7 @@ private[gbm] object Tree extends Logging {
         i += 2
       }
 
-      // leaves with hess no more than minNodeHess * 2 can not grow
+      // leaves with hess less than minNodeHess * 2 can not grow furthermore
       nnz >= 2 && hessSum >= minNodeHess * 2
     }
   }

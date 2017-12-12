@@ -268,6 +268,9 @@ private[gbm] class KeyHashPartitioner(val partitions: Int,
 
 private[gbm] object Utils extends Logging {
 
+  /**
+    * traverse all the elements of a vector
+    */
   def getTotalIter(vec: Vector): Iterator[(Int, Double)] = {
     vec match {
       case dv: DenseVector =>
@@ -300,6 +303,10 @@ private[gbm] object Utils extends Logging {
     }
   }
 
+
+  /**
+    * traverse only the non-zero elements of a vector
+    */
   def getActiveIter(vec: Vector): Iterator[(Int, Double)] = {
     vec match {
       case dv: DenseVector =>
@@ -315,6 +322,9 @@ private[gbm] object Utils extends Logging {
   }
 
 
+  /**
+    * data sampling, if number of partitions is large, directly sample the partitions is more efficient
+    */
   def sample[T: ClassTag](data: RDD[T],
                           fraction: Double,
                           seed: Long): RDD[T] = {
@@ -364,6 +374,10 @@ private[gbm] object Utils extends Logging {
     }
   }
 
+
+  /**
+    * helper function to obtain a binary search function
+    */
   def makeBinarySearch[K: Ordering : ClassTag]: (Array[K], K) => Int = {
     // For primitive keys, we can use the natural ordering. Otherwise, use the Ordering comparator.
     classTag[K] match {
@@ -387,6 +401,7 @@ private[gbm] object Utils extends Logging {
     }
   }
 
+
   /**
     * helper function to save dataframes
     */
@@ -399,6 +414,7 @@ private[gbm] object Utils extends Logging {
       df.write.parquet(new Path(path, name).toString)
     }
   }
+
 
   /**
     * helper function to load dataframes

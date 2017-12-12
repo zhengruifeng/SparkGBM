@@ -315,7 +315,7 @@ private[gbm] object Tree extends Logging {
     }
 
     data.filter { case (_, nodeId) =>
-      // right leaves
+      // root or right leaves
       nodeId >= minNodeId && nodeId % 2 == 1L
 
     }.flatMap { case ((grad, hess, bins), nodeId) =>
@@ -324,7 +324,7 @@ private[gbm] object Tree extends Logging {
       }
 
     }.reduceByKey(
-      // aggregate (nodeId, col, bin), while only partitioning by (nodeId, col)
+      // aggregate by (nodeId, col, bin), while only partitioning by (nodeId, col)
       partitioner = partitioner1,
       func = {
         case ((grad1, hess1), (grad2, hess2)) =>
@@ -333,7 +333,7 @@ private[gbm] object Tree extends Logging {
       }).map { case ((nodeId, col, bin), (grad, hess)) =>
       ((nodeId, col), (bin, grad, hess))
 
-      // group by (nodeId, col), while keeping the partition
+      // group by (nodeId, col), while keeping the partitioning
     }.groupByKey(partitioner2)
 
       .map { case ((nodeId, col), iter) =>
@@ -377,7 +377,7 @@ private[gbm] object Tree extends Logging {
     val numH = implicitly[Numeric[H]]
 
     data.filter { case (_, nodeId) =>
-      // right leaves
+      // root or right leaves
       nodeId >= minNodeId && nodeId % 2 == 1L
 
     }.flatMap { case ((grad, hess, bins), nodeId) =>

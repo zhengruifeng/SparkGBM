@@ -1,5 +1,7 @@
 package org.apache.spark.ml.gbm
 
+import java.{util => ju}
+
 import scala.collection.mutable
 
 import org.apache.spark.SparkContext
@@ -76,7 +78,7 @@ private[gbm] class SetSplit(val featureId: Int,
     if (bin == 0) {
       missingGoLeft
     } else {
-      java.util.Arrays.binarySearch(leftSet, bin) >= 0
+      ju.Arrays.binarySearch(leftSet, bin) >= 0
     }
   }
 
@@ -86,7 +88,7 @@ private[gbm] class SetSplit(val featureId: Int,
     if (bin == 0) {
       missingGoLeft
     } else {
-      java.util.Arrays.binarySearch(leftSet, bin) >= 0
+      ju.Arrays.binarySearch(leftSet, bin) >= 0
     }
   }
 }

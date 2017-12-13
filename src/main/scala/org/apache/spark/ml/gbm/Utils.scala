@@ -202,8 +202,8 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   * @param splits splitting points
   * @tparam K
   */
-private[gbm] class KeyRangePartitioner[K: Ordering : ClassTag](val splits: Array[K],
-                                                               val getK: Any => K = (a: Any) => a.asInstanceOf[K]) extends Partitioner {
+private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array[K],
+                                                               val by: Any => K = (a: Any) => a.asInstanceOf[K]) extends Partitioner {
 
   {
     require(splits.nonEmpty)
@@ -239,7 +239,7 @@ private[gbm] class KeyRangePartitioner[K: Ordering : ClassTag](val splits: Array
   override def numPartitions: Int = splits.length + 1
 
   override def getPartition(key: Any): Int = {
-    search(splits, getK(key))
+    search(splits, by(key))
   }
 }
 
@@ -247,13 +247,13 @@ private[gbm] class KeyRangePartitioner[K: Ordering : ClassTag](val splits: Array
 /**
   * Partitioner that partitions data according to the given key function
   */
-private[gbm] class KeyHashPartitioner(val partitions: Int,
-                                      val getK: Any => Any = (a: Any) => a) extends Partitioner {
+private[gbm] class GBMHashPartitioner(val partitions: Int,
+                                      val by: Any => Any = (a: Any) => a) extends Partitioner {
   require(partitions > 0)
 
   override def numPartitions: Int = partitions
 
-  override def getPartition(key: Any): Int = getK(key) match {
+  override def getPartition(key: Any): Int = by(key) match {
     case null => 0
     case k =>
       val p = k.hashCode % partitions

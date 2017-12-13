@@ -40,12 +40,12 @@ object HiggsExtend {
       val rng = new Random(index)
       iter.map { case LabeledPoint(label, vec) =>
         val randIndices = mutable.Set[Int]()
-        while (randIndices.size < 1000) {
-          randIndices.add(rng.nextInt(10000) + 28)
+        while (randIndices.size < 100) {
+          randIndices.add(rng.nextInt(1000) + 28)
         }
-        val randValues = Array.fill(1000)(rng.nextDouble)
+        val randValues = Array.fill(100)(rng.nextDouble)
 
-        val newVec = Vectors.sparse(10028, Array.range(0, 28) ++ randIndices.toArray.sorted, vec.toArray ++ randValues)
+        val newVec = Vectors.sparse(1028, Array.range(0, 28) ++ randIndices.toArray.sorted, vec.toArray ++ randValues)
         LabeledPoint(label, newVec)
       }
     }

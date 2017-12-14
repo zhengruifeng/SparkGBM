@@ -134,6 +134,8 @@ class GBMClassifier(override val uid: String)
 
   def setSparsityThreshold(value: Double): this.type = set(sparsityThreshold, value)
 
+  def setParallelism(value: Int): this.type = set(parallelism, value)
+
   override def fit(dataset: Dataset[_]): GBMClassificationModel = {
     fit(dataset, None)
   }
@@ -239,6 +241,7 @@ class GBMClassifier(override val uid: String)
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setSparsityThreshold($(sparsityThreshold))
+      .setParallelism($(parallelism))
       .setInitialModel(initialModel)
 
     val gbmModel = gbm.fit(data, test)

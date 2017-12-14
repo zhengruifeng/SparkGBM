@@ -150,22 +150,19 @@ private[gbm] object Discretizer extends Logging {
     val (count, aggregated) =
       vectors.mapPartitions { iter =>
         var cnt = 0L
-        val nnzs = if (zeroAsMissing) {
-          Array.emptyLongArray
-        } else {
-          Array.ofDim[Long](numCols)
-        }
         val aggs = emptyAggs
+        val nans = mutable.Map[Int, Long]()
 
         // only absorb non-zero values
         iter.foreach { vec =>
           require(vec.size == numCols)
+
           Utils.getActiveIter(vec).foreach { case (i, v) =>
-            if (!zeroAsMissing) {
-              nnzs(i) += 1
-            }
             if (!v.isNaN && !v.isInfinity) {
               aggs(i).update(v)
+            } else if (!zeroAsMissing) {
+              val c = nans.getOrElse(i, 0L)
+              nans.update(i, c + 1)
             }
           }
           cnt += 1
@@ -175,7 +172,8 @@ private[gbm] object Discretizer extends Logging {
         if (!zeroAsMissing) {
           var i = 0
           while (i < numCols) {
-            aggs(i).updateZeros(cnt - nnzs(i))
+            val nz = cnt - aggs(i).count - nans.getOrElse(i, 0L)
+            aggs(i).updateZeros(nz)
             i += 1
           }
         }
@@ -484,7 +482,7 @@ private[gbm] object ColAgg {
 private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
-  var summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001)
+  var summary = QuantileNumColAgg.createSummary
   var count = 0L
 
   override def update(value: Double): QuantileNumColAgg = {
@@ -528,16 +526,22 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
 
 private[gbm] object QuantileNumColAgg {
 
+  val compressThreshold = QuantileSummaries.defaultCompressThreshold
+
+  val relativeError = 0.01
+
+  def createSummary = new QuantileSummaries(compressThreshold, relativeError)
+
   private[this] lazy val nzSummaries = {
-    val array = Array.ofDim[QuantileSummaries](63)
-    array(0) = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001).insert(0.0).compress
+    val summaries = Array.ofDim[QuantileSummaries](63)
+    summaries(0) = createSummary.insert(0.0).compress
     var i = 1
-    while (i < array.length) {
-      val s = array(i - 1).compress
-      array(i) = s.merge(s).compress
+    while (i < summaries.length) {
+      val s = summaries(i - 1).compress
+      summaries(i) = s.merge(s).compress
       i += 1
     }
-    array
+    summaries
   }
 
   /**
@@ -546,7 +550,7 @@ private[gbm] object QuantileNumColAgg {
   def createNZSummary(nz: Long): QuantileSummaries = {
     require(nz >= 0L)
 
-    var summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold, 0.001)
+    var summary = createSummary
 
     val binStr = nz.toBinaryString.reverse
     val char1 = "1".head

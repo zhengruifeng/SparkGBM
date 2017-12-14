@@ -469,5 +469,20 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getSparsityThreshold: Double = $(sparsityThreshold)
 
   setDefault(sparsityThreshold -> 0.9)
+
+
+  /**
+    * Parallelism of histogram computation and leaves splitting. If negative, means times of defaultParallelism of Spark.
+    * (default = -1)
+    *
+    * @group param
+    */
+  final val parallelism: IntParam =
+    new IntParam(this, "parallelism", "Parallelism of histogram computation and leaves splitting. If negative, means times of defaultParallelism of Spark.",
+      (value: Int) => value != 0)
+
+  def getParallelism: Int = $(parallelism)
+
+  setDefault(parallelism -> -1)
 }
 

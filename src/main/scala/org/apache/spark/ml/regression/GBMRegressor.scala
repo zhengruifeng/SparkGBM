@@ -144,6 +144,8 @@ class GBMRegressor(override val uid: String) extends
 
   def setSparsityThreshold(value: Double): this.type = set(sparsityThreshold, value)
 
+  def setParallelism(value: Int): this.type = set(parallelism, value)
+
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)
   }
@@ -253,6 +255,7 @@ class GBMRegressor(override val uid: String) extends
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setSparsityThreshold($(sparsityThreshold))
+      .setParallelism($(parallelism))
       .setInitialModel(initialModel)
 
     val gbmModel = gbm.fit(data, test)

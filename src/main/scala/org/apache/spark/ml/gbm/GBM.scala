@@ -279,6 +279,18 @@ class GBM extends Logging with Serializable {
   def getSeed: Long = seed
 
 
+  /** parallelism of histogram computation and leaves splitting */
+  private var parallelism = -1
+
+  def setParallelism(value: Int): this.type = {
+    require(value != 0)
+    parallelism = value
+    this
+  }
+
+  def getParallelism: Int = parallelism
+
+
   /** boosting type */
   private var boostType: String = GBM.GBTree
 
@@ -482,6 +494,7 @@ class GBM extends Logging with Serializable {
       .setAggregationDepth(aggregationDepth)
       .setMaxBruteBins(maxBruteBins)
       .setFloatType(floatType)
+      .setParallelism(parallelism)
       .setSeed(seed)
 
 

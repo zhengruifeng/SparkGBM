@@ -25,6 +25,7 @@ class BoostConfig extends Logging with Serializable {
   private var minDrop: Int = _
   private var maxDrop: Int = _
   private var aggregationDepth: Int = _
+  private var parallelism: Int = _
   private var seed: Long = _
 
   private var obj: ObjFunc = _
@@ -247,6 +248,30 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def getAggregationDepth: Int = aggregationDepth
+
+
+  /** parallelism of histogram computation and leaves splitting */
+  private[gbm] def setParallelism(value: Int): this.type = {
+    require(value != 0)
+    parallelism = value
+    this
+  }
+
+  def updateParallelism(value: Long): this.type = {
+    logInfo(s"parallelism was changed from $parallelism to $value")
+    setSeed(value)
+  }
+
+  def getParallelism: Int = parallelism
+
+  private[gbm] def getRealParallelism(value: Int): Int = {
+    require(value > 0)
+    if (parallelism > 0) {
+      parallelism
+    } else {
+      parallelism.abs * value
+    }
+  }
 
 
   /** random number seed */

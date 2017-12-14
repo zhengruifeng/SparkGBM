@@ -32,7 +32,7 @@ import org.apache.spark.storage.StorageLevel
   *
   * When update() is called, this does the following:
   *  - Persist new Dataset (if not yet persisted), and put in queue of persisted Datasets.
-  *  - Unpersist Datasets from queue until there are at most 3 persisted Datasets.
+  *  - Unpersist Datasets from queue until there are at most 2 persisted Datasets.
   *  - If using checkpointing and the checkpoint interval has been reached,
   *     - Checkpoint the new Dataset, and put in a queue of checkpointed Datasets.
   *     - Remove older checkpoints.
@@ -73,10 +73,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   def update(newData: RDD[T]): Unit = {
     persist(newData)
     persistedQueue.enqueue(newData)
-    // We try to maintain 2 Datasets in persistedQueue to support the semantics of this class:
-    // Users should call [[update()]] when a new Dataset has been created,
-    // before the Dataset has been materialized.
-    while (persistedQueue.size > 3) {
+    while (persistedQueue.length > 2) {
       val dataToUnpersist = persistedQueue.dequeue()
       unpersist(dataToUnpersist)
     }
@@ -90,7 +87,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
       checkpointQueue.enqueue(newData)
       // Remove checkpoints before the latest one.
       var canDelete = true
-      while (checkpointQueue.size > 1 && canDelete) {
+      while (checkpointQueue.length > 1 && canDelete) {
         // Delete the oldest checkpoint only if the next checkpoint exists.
         if (isCheckpointed(checkpointQueue.head)) {
           removeCheckpointFile()
@@ -155,7 +152,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     * Note that there may not be any checkpoints at all.
     */
   def deleteAllCheckpointsButLast(): Unit = {
-    while (checkpointQueue.size > 1) {
+    while (checkpointQueue.length > 1) {
       removeCheckpointFile()
     }
   }

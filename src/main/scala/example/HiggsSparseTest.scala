@@ -62,6 +62,7 @@ object HiggsSparseTest {
       .setPredictionCol("prediction")
       .setZeroAsMissing(true)
       .setSparsityThreshold(0.8)
+      .setParallelism(-2)
 
     val gbmcModel = gbmc.fit(train)
 

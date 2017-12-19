@@ -316,8 +316,9 @@ private[gbm] class GBMRangePartitioner[K: Ordering : ClassTag](val splits: Array
 
   override def numPartitions: Int = splits.length + 1
 
-  override def getPartition(key: Any): Int = {
-    search(splits, by(key))
+  override def getPartition(key: Any): Int = by(key) match {
+    case null => 0
+    case k => search(splits, k)
   }
 }
 

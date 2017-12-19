@@ -66,11 +66,13 @@ private[gbm] object Tree extends Logging {
 
       if (minNodeId == 1L) {
         // direct compute the histogram of root node
-        hists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols, parallelism)
+        hists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols,
+          parallelism, boostConfig.getHandleSparsity)
 
       } else {
         // compute the histogram of right leaves
-        val rightHists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols, parallelism)
+        val rightHists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols,
+          parallelism, boostConfig.getHandleSparsity)
 
         // pre-compute an even split of (nodeId, col) pairs
         val ranges = computeRanges(lastSplits.keys.toArray, treeConfig.numCols, parallelism)
@@ -197,6 +199,92 @@ private[gbm] object Tree extends Logging {
   /**
     * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
     *
+    * @param data           instances appended with nodeId, containing ((grad, hess, bins), nodeId)
+    * @param minNodeId      minimum nodeId for this level
+    * @param numCols        number of columns
+    * @param parallelism    parallelism
+    * @param handleSparsity whether to compute the histogram in a sparse fashion
+    * @tparam H
+    * @tparam B
+    * @return histogram data containing (nodeId, columnId, histogram)
+    */
+  def computeHistogram[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                      minNodeId: Long,
+                                                                      numCols: Int,
+                                                                      parallelism: Int,
+                                                                      handleSparsity: Boolean) = {
+    if (handleSparsity) {
+      computeHistogramSparse[H, B](data, minNodeId, numCols, parallelism)
+    } else {
+      computeHistogramDense[H, B](data, minNodeId, parallelism)
+    }
+  }
+
+
+  /**
+    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    *
+    * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
+    * @param minNodeId   minimum nodeId for this level
+    * @param parallelism parallelism
+    * @tparam H
+    * @tparam B
+    * @return histogram data containing (nodeId, columnId, histogram)
+    */
+  def computeHistogramDense[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                           minNodeId: Long,
+                                                                           parallelism: Int): RDD[((Long, Int), Array[H])] = {
+    val intB = implicitly[Integral[B]]
+    val numH = implicitly[Numeric[H]]
+
+    data.filter { case (_, nodeId) =>
+      // root or right leaves
+      nodeId >= minNodeId && nodeId % 2 == 1L
+
+    }.flatMap { case ((grad, hess, bins), nodeId) =>
+      bins.totalIter.map { case (col, bin) =>
+        ((nodeId, col), (bin, grad, hess))
+      }
+
+    }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
+      seqOp = {
+        case (hist, (bin, grad, hess)) =>
+          val index = intB.toInt(bin) << 1
+
+          if (hist.length < index + 2) {
+            val newHist = hist ++ Array.fill(index + 2 - hist.length)(numH.zero)
+            newHist(index) = grad
+            newHist(index + 1) = hess
+            newHist
+          } else {
+            hist(index) = numH.plus(hist(index), grad)
+            hist(index + 1) = numH.plus(hist(index + 1), hess)
+            hist
+          }
+
+      }, combOp = {
+        case (hist1, hist2) =>
+          var i = 0
+          if (hist1.length >= hist2.length) {
+            while (i < hist2.length) {
+              hist1(i) = numH.plus(hist1(i), hist2(i))
+              i += 1
+            }
+            hist1
+          } else {
+            while (i < hist1.length) {
+              hist2(i) = numH.plus(hist1(i), hist2(i))
+              i += 1
+            }
+            hist2
+          }
+      })
+  }
+
+
+  /**
+    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param minNodeId   minimum nodeId for this level
     * @param numCols     number of columns
@@ -205,11 +293,10 @@ private[gbm] object Tree extends Logging {
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
-  def computeHistogram[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
-                                                                      minNodeId: Long,
-                                                                      numCols: Int,
-                                                                      parallelism: Int): RDD[((Long, Int), Array[H])] = {
-
+  def computeHistogramSparse[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                            minNodeId: Long,
+                                                                            numCols: Int,
+                                                                            parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
 

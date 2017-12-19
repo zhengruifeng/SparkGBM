@@ -376,27 +376,14 @@ private[gbm] object Tree extends Logging {
         val split = Split.split[H](col, hist, boostConfig, treeConfig)
         split.map((nodeId, _))
 
-    }.mapPartitions { it =>
-      val splits = mutable.Map[Long, Split]()
-      it.foreach { case (nodeId, split) =>
-        val s = splits.get(nodeId)
-        if (s.isEmpty || split.gain > s.get.gain) {
-          splits.update(nodeId, split)
-        }
-      }
-      Iterator.single(splits.toArray)
+    }.reduceByKey(func = {
+      case (split1, split2) =>
+        Seq(split1, split2).maxBy(_.gain)
 
-    }.treeReduce(
-      f = {
-        case (splits1, splits2) =>
-          (splits1 ++ splits2).groupBy(_._1)
-            .map { case (nodeId, splits) =>
-              (nodeId, splits.map(_._2).maxBy(_.gain))
-            }.toArray
-      }, depth = boostConfig.getAggregationDepth)
+    }).collect.toMap
 
-    logInfo(s"${acc.value} trials to find best splits of ${splits.length} nodes")
-    splits.toMap
+    logInfo(s"${acc.value} trials to find best splits of ${splits.size} nodes")
+    splits
   }
 
 

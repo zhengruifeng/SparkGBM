@@ -198,6 +198,9 @@ private[gbm] class PartitionSampledRDDPartition[T](val idx: Int,
                                                    val weight: Double,
                                                    val seed: Long)
   extends Partition with Serializable {
+
+  require(weight >= 0 && weight <= 1)
+
   override val index: Int = idx
 }
 

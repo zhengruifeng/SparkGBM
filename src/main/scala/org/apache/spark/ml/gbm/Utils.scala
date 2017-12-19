@@ -7,16 +7,14 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.reflect.{ClassTag, classTag}
 import scala.util.{Failure, Random, Success}
-
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.Partitioner
-import org.apache.spark.SparkContext
+import org.apache.spark.{Partition, Partitioner, SparkContext, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.random.XORShiftRandom
 
 
 /**
@@ -193,6 +191,89 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
 }
 
 
+private[gbm] class PartitionSampledRDDPartition[T](val idx: Int,
+                                                   val prev: Partition,
+                                                   val weight: Double,
+                                                   val seed: Long)
+  extends Partition with Serializable {
+  override val index: Int = idx
+}
+
+private[gbm] class PartitionSampledRDD[T: ClassTag](@transient val parent: RDD[T],
+                                                    val weights: Map[Int, Double],
+                                                    @transient private val seed: Long = System.nanoTime)
+  extends RDD[T](parent) {
+
+  require(weights.keys.forall(p => p >= 0))
+  require(weights.values.forall(w => w >= 0 && w <= 1))
+
+  override def compute(split: Partition, context: TaskContext): Iterator[T] = {
+    val part = split.asInstanceOf[PartitionSampledRDDPartition[T]]
+
+    if (part.weight == 0) {
+      Iterator.empty
+    } else if (part.weight == 1) {
+      firstParent[T].iterator(part.prev, context)
+    } else {
+      val rng = new XORShiftRandom(part.seed)
+      firstParent[T].iterator(part.prev, context)
+        .filter(_ => rng.nextDouble < part.weight)
+    }
+  }
+
+  override def getPreferredLocations(split: Partition): Seq[String] =
+    firstParent[T].preferredLocations(split.asInstanceOf[PartitionSampledRDDPartition[T]].prev)
+
+  override protected def getPartitions: Array[Partition] = {
+    val rng = new XORShiftRandom(seed)
+    var idx = -1
+
+    firstParent[T].partitions
+      .filter(p => weights.contains(p.index))
+      .map { p =>
+        idx += 1
+        new PartitionSampledRDDPartition(idx, p, weights(p.index), rng.nextLong)
+      }
+  }
+}
+
+private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable {
+
+  def samplePartitions(weights: Map[Int, Double], seed: Long): RDD[T] = {
+    new PartitionSampledRDD[T](self, weights, seed)
+  }
+
+  def samplePartitions(fraction: Double, seed: Long): RDD[T] = {
+    require(fraction >= 0 && fraction <= 1)
+
+    val rng = new Random(seed)
+    val numPartitions = self.getNumPartitions
+    val pids = rng.shuffle(Seq.range(0, numPartitions)).toArray
+
+    val n = numPartitions * fraction
+    val m = n.toInt
+    val r = n - m
+
+    val weights = mutable.Map[Int, Double]()
+
+    pids.take(m).foreach { pid =>
+      weights.update(pid, 1.0)
+    }
+
+    if (r > 0) {
+      weights.update(pids.last, r)
+    }
+
+    samplePartitions(weights.toMap, seed)
+  }
+}
+
+private[gbm] object RDDFunctions {
+
+  implicit def fromRDD[T: ClassTag](rdd: RDD[T]): RDDFunctions[T] = new RDDFunctions[T](rdd)
+}
+
+
 /**
   * Partitioner that partitions data according to the given ranges
   *
@@ -320,7 +401,7 @@ private[gbm] object Utils extends Logging {
 
 
   /**
-    * data sampling, if number of partitions is large, directly sample the partitions is more efficient
+    * data sampling, if number of partitions is large, directly sampling the partitions is more efficient
     */
   def sample[T: ClassTag](data: RDD[T],
                           fraction: Double,
@@ -340,33 +421,8 @@ private[gbm] object Utils extends Logging {
       } else {
 
         logInfo(s"Using partition-based sampling")
-
-        val rng = new Random(seed)
-        val shuffled = rng.shuffle(Seq.range(0, numPartitions)).toArray
-
-        val n = numPartitions * fraction
-        val m = n.toInt
-        val r = n - m
-        val eps = 1e-2
-
-        val (selected, partial) = if (m > 0 && r < eps) {
-          (shuffled.take(m).sorted, -1)
-        } else if (m >= 0 && r > 1 - eps) {
-          (shuffled.take(m + 1).sorted, -1)
-        } else {
-          (shuffled.take(m).sorted, shuffled.last)
-        }
-
-        data.mapPartitionsWithIndex { case (pid, it) =>
-          if (ju.Arrays.binarySearch(selected, pid) >= 0) {
-            it
-          } else if (pid == partial) {
-            val rng = new Random(seed + pid)
-            it.filter(_ => rng.nextDouble() < r)
-          } else {
-            Iterator.empty
-          }
-        }
+        import RDDFunctions._
+        data.samplePartitions(fraction, seed)
       }
     }
   }

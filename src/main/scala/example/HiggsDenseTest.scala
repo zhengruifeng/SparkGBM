@@ -60,6 +60,7 @@ object HiggsDenseTest {
       .setModelCheckpointInterval(10)
       .setModelCheckpointPath(modelCheckpointPath)
       .setPredictionCol("prediction")
+      .setParallelism(-2)
 
     val gbmcModel = gbmc.fit(train)
 

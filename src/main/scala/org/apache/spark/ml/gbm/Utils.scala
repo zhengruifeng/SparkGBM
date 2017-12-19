@@ -415,7 +415,7 @@ private[gbm] object Utils extends Logging {
       val numPartitions = data.getNumPartitions
       val parallelism = data.sparkContext.defaultParallelism
 
-      if (numPartitions * fraction < parallelism * 10) {
+      if (numPartitions * fraction < parallelism * 8) {
         data.sample(false, fraction, seed)
 
       } else {

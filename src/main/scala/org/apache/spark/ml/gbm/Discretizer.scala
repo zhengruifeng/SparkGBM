@@ -47,13 +47,13 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
 
   private[gbm] def getTransformFunc[@spec(Byte, Short, Int) B: Integral : ClassTag](handleSparsity: Boolean): Vector => BinVector[B] = {
 
-    val intB: Integral[B] = implicitly[Integral[B]]
-
     val getIter = if (zeroAsMissing) {
       (vec: Vector) => Utils.getActiveIter(vec)
     } else {
       (vec: Vector) => Utils.getTotalIter(vec)
     }
+
+    val intB: Integral[B] = implicitly[Integral[B]]
 
     if (handleSparsity) {
       (vec: Vector) =>

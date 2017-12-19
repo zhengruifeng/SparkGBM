@@ -7,8 +7,10 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.reflect.{ClassTag, classTag}
 import scala.util.{Failure, Random, Success}
+
 import org.apache.hadoop.fs.Path
-import org.apache.spark.{Partition, Partitioner, SparkContext, TaskContext}
+
+import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD

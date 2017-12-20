@@ -463,11 +463,11 @@ private[gbm] object Tree extends Logging {
         val split = Split.split[H](col, hist, boostConfig, treeConfig)
         split.map((nodeId, _))
 
-    }.reduceByKey(func = {
+    }.reduceByKeyLocally(func = {
       case (split1, split2) =>
         Seq(split1, split2).maxBy(_.gain)
 
-    }).collect.toMap
+    }).toMap
 
     logInfo(s"${acc.value} trials to find best splits of ${splits.size} nodes")
     splits

@@ -125,21 +125,21 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   /** Unpersist the Dataset */
   protected def unpersist(data: RDD[T]): Unit = {
     data.unpersist(blocking = false)
-    clearShuffleDependencies(data.dependencies)
+    clearShuffleDependencies(data)
   }
 
   /** Clean the shuffles & all of its parents. */
-  protected def clearShuffleDependencies(deps: Seq[Dependency[_]]): Unit = {
-    sc.cleaner.foreach { cleaner =>
-      deps.foreach { dep =>
-        dep match {
-          case shuffle: ShuffleDependency[_, _, _] =>
-            cleaner.doCleanupShuffle(shuffle.shuffleId, blocking = false)
-          case _ =>
-        }
-        val rdd = dep.rdd
-        if (rdd.getStorageLevel == StorageLevel.NONE && rdd.dependencies != null) {
-          clearShuffleDependencies(rdd.dependencies)
+  protected def clearShuffleDependencies(data: RDD[_]): Unit = {
+    if (data.getStorageLevel == StorageLevel.NONE &&
+      data.dependencies != null) {
+      sc.cleaner.foreach { cleaner =>
+        data.dependencies.foreach { dep =>
+          dep match {
+            case shuffle: ShuffleDependency[_, _, _] =>
+              cleaner.doCleanupShuffle(shuffle.shuffleId, blocking = false)
+            case _ =>
+          }
+          clearShuffleDependencies(dep.rdd)
         }
       }
     }

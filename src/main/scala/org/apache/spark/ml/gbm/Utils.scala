@@ -51,8 +51,13 @@ import org.apache.spark.util.random.XORShiftRandom
   */
 private[gbm] class Checkpointer[T](val sc: SparkContext,
                                    val checkpointInterval: Int,
-                                   val storageLevel: StorageLevel) extends Logging {
+                                   val storageLevel: StorageLevel,
+                                   val maxPersisted: Int) extends Logging {
+  def this(sc: SparkContext, checkpointInterval: Int, storageLevel: StorageLevel) =
+    this(sc, checkpointInterval, storageLevel, 2)
+
   require(storageLevel != StorageLevel.NONE)
+  require(maxPersisted > 1)
 
   /** FIFO queue of past checkpointed Datasets */
   private val checkpointQueue = mutable.Queue[RDD[T]]()
@@ -68,14 +73,13 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     * Since this handles persistence and checkpointing, this should be called before the Dataset
     * has been materialized.
     *
-    * @param newData New Dataset created from previous Datasets in the lineage.
+    * @param data New Dataset created from previous Datasets in the lineage.
     */
-  def update(newData: RDD[T]): Unit = {
-    persist(newData)
-    persistedQueue.enqueue(newData)
-    while (persistedQueue.length > 2) {
-      val dataToUnpersist = persistedQueue.dequeue()
-      unpersist(dataToUnpersist)
+  def update(data: RDD[T]): Unit = {
+    persist(data)
+    persistedQueue.enqueue(data)
+    while (persistedQueue.length > maxPersisted) {
+      unpersist(persistedQueue.dequeue)
     }
     updateCount += 1
 
@@ -83,14 +87,14 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     if (checkpointInterval != -1 && (updateCount % checkpointInterval) == 0
       && sc.getCheckpointDir.nonEmpty) {
       // Add new checkpoint before removing old checkpoints.
-      checkpoint(newData)
-      checkpointQueue.enqueue(newData)
+      checkpoint(data)
+      checkpointQueue.enqueue(data)
       // Remove checkpoints before the latest one.
       var canDelete = true
       while (checkpointQueue.length > 1 && canDelete) {
         // Delete the oldest checkpoint only if the next checkpoint exists.
         if (isCheckpointed(checkpointQueue.head)) {
-          removeCheckpointFile()
+          removeCheckpointFile(checkpointQueue.dequeue)
         } else {
           canDelete = false
         }
@@ -121,59 +125,47 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   /** Unpersist the Dataset */
   protected def unpersist(data: RDD[T]): Unit = {
     data.unpersist(blocking = false)
+    clearShuffleDependencies(data.dependencies)
   }
 
-  /** Get list of checkpoint files for this given Dataset */
-  protected def getCheckpointFiles(data: RDD[T]): Iterable[String] = {
-    data.getCheckpointFile.map(x => x)
+  /** Clean the shuffles & all of its parents. */
+  protected def clearShuffleDependencies(deps: Seq[Dependency[_]]): Unit = {
+    sc.cleaner.foreach { cleaner =>
+      deps.foreach { dep =>
+        dep match {
+          case shuffle: ShuffleDependency[_, _, _] =>
+            cleaner.doCleanupShuffle(shuffle.shuffleId, blocking = false)
+          case _ =>
+        }
+        val rdd = dep.rdd
+        if (rdd.getStorageLevel == StorageLevel.NONE && rdd.dependencies != null) {
+          clearShuffleDependencies(rdd.dependencies)
+        }
+      }
+    }
   }
 
-  /**
-    * Call this to unpersist the Dataset.
-    */
+  /** Call this to unpersist the Dataset. */
   def unpersistDataSet(): Unit = {
     while (persistedQueue.nonEmpty) {
-      val dataToUnpersist = persistedQueue.dequeue()
-      unpersist(dataToUnpersist)
+      unpersist(persistedQueue.dequeue)
     }
   }
 
-  /**
-    * Call this at the end to delete any remaining checkpoint files.
-    */
+  /** Call this at the end to delete any remaining checkpoint files. */
   def deleteAllCheckpoints(): Unit = {
     while (checkpointQueue.nonEmpty) {
-      removeCheckpointFile()
+      removeCheckpointFile(checkpointQueue.dequeue)
     }
-  }
-
-  /**
-    * Call this at the end to delete any remaining checkpoint files, except for the last checkpoint.
-    * Note that there may not be any checkpoints at all.
-    */
-  def deleteAllCheckpointsButLast(): Unit = {
-    while (checkpointQueue.length > 1) {
-      removeCheckpointFile()
-    }
-  }
-
-  /**
-    * Get all current checkpoint files.
-    * This is useful in combination with [[deleteAllCheckpointsButLast()]].
-    */
-  def getAllCheckpointFiles: Array[String] = {
-    checkpointQueue.flatMap(getCheckpointFiles).toArray
   }
 
   /**
     * Dequeue the oldest checkpointed Dataset, and remove its checkpoint files.
     * This prints a warning but does not fail if the files cannot be removed.
     */
-  private def removeCheckpointFile(): Unit = {
-    val old = checkpointQueue.dequeue()
-
+  private def removeCheckpointFile(data: RDD[T]): Unit = {
     // Since the old checkpoint is not deleted by Spark, we manually delete it
-    getCheckpointFiles(old).foreach { file =>
+    data.getCheckpointFile.foreach { file =>
       Future {
         val start = System.nanoTime
         val path = new Path(file)
@@ -271,11 +263,6 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
 
     samplePartitions(weights.toMap, seed)
   }
-}
-
-private[gbm] object RDDFunctions {
-
-  implicit def fromRDD[T: ClassTag](rdd: RDD[T]): RDDFunctions[T] = new RDDFunctions[T](rdd)
 }
 
 
@@ -427,7 +414,6 @@ private[gbm] object Utils extends Logging {
       } else {
 
         logInfo(s"Using partition-based sampling")
-        import RDDFunctions._
         data.samplePartitions(fraction, seed)
       }
     }
@@ -485,6 +471,9 @@ private[gbm] object Utils extends Logging {
       spark.read.parquet(new Path(path, name).toString)
     }
   }
+
+  implicit def fromRDD[T: ClassTag](rdd: RDD[T]): RDDFunctions[T] = new RDDFunctions[T](rdd)
+
 }
 
 

@@ -266,6 +266,13 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
 }
 
 
+private[gbm] object RDDFunctions {
+
+  /** Implicit conversion from an RDD to RDDFunctions. */
+  implicit def fromRDD[T: ClassTag](rdd: RDD[T]): RDDFunctions[T] = new RDDFunctions[T](rdd)
+}
+
+
 /**
   * Partitioner that partitions data according to the given ranges
   *
@@ -414,7 +421,9 @@ private[gbm] object Utils extends Logging {
       } else {
 
         logInfo(s"Using partition-based sampling")
-        new RDDFunctions[T](data).samplePartitions(fraction, seed)
+
+        import RDDFunctions._
+        data.samplePartitions(fraction, seed)
       }
     }
   }

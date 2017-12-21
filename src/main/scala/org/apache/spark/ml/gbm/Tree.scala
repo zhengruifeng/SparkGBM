@@ -225,7 +225,7 @@ private[gbm] object Tree extends Logging {
         val toH = implicitly[FromDouble[H]]
         val histSums = mutable.Map.empty[Long, (H, H)]
         splits.foreach { case (nodeId, split) =>
-          val rightNodeId = (nodeId >> 1) + 1
+          val rightNodeId = (nodeId << 1) + 1
           val rightGradSum = toH.fromDouble(split.rightGrad)
           val rightHessSum = toH.fromDouble(split.rightHess)
           histSums.update(rightNodeId, (rightGradSum, rightHessSum))

@@ -1,7 +1,6 @@
 package org.apache.spark.ml.gbm
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 import scala.util.Random
 
@@ -629,8 +628,8 @@ private[gbm] object GBM extends Logging {
       logInfo(s"${test.count} instances in test data")
     }
 
-    val weights = ArrayBuffer[Double]()
-    val trees = ArrayBuffer[TreeModel]()
+    val weights = mutable.ArrayBuffer.empty[Double]
+    val trees = mutable.ArrayBuffer.empty[TreeModel]
 
     if (initialModel.isDefined) {
       weights.appendAll(initialModel.get.weights)
@@ -653,12 +652,12 @@ private[gbm] object GBM extends Logging {
     }
 
     // metrics history recoder
-    val trainMetricsHistory = ArrayBuffer[Map[String, Double]]()
-    val testMetricsHistory = ArrayBuffer[Map[String, Double]]()
+    val trainMetricsHistory = mutable.ArrayBuffer.empty[Map[String, Double]]
+    val testMetricsHistory = mutable.ArrayBuffer.empty[Map[String, Double]]
 
     // random number generator for drop out
     val dartRng = new Random(boostConfig.getSeed)
-    val dropped = mutable.Set[Int]()
+    val dropped = mutable.Set.empty[Int]
 
     // random number generator for column sampling
     val colSampleRng = new Random(boostConfig.getSeed)
@@ -776,8 +775,8 @@ private[gbm] object GBM extends Logging {
     * @param dropped     indices of dropped trees
     * @param boostConfig boosting configuration
     */
-  def updateTreeBuffer(weights: ArrayBuffer[Double],
-                       trees: ArrayBuffer[TreeModel],
+  def updateTreeBuffer(weights: mutable.ArrayBuffer[Double],
+                       trees: mutable.ArrayBuffer[TreeModel],
                        tree: TreeModel,
                        dropped: Set[Int],
                        boostConfig: BoostConfig): Unit = {
@@ -1036,7 +1035,7 @@ private[gbm] object GBM extends Logging {
         (weight, label, numH.toDouble(pred.head))
     }
 
-    val result = mutable.Map[String, Double]()
+    val result = mutable.Map.empty[String, Double]
 
     // persist if there are batch evaluators
     if (boostConfig.getBatchEvaluateFunc.nonEmpty) {

@@ -1,6 +1,6 @@
 package org.apache.spark.ml.gbm
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.{Failure, Success}
@@ -84,8 +84,8 @@ class EarlyStop(val iters: Int) extends CallbackFunc {
   */
 class MetricRecoder extends CallbackFunc {
 
-  val trainMetricsRecoder = ArrayBuffer[Map[String, Double]]()
-  val testMetricsRecoder = ArrayBuffer[Map[String, Double]]()
+  val trainMetricsRecoder = mutable.ArrayBuffer.empty[Map[String, Double]]
+  val testMetricsRecoder = mutable.ArrayBuffer.empty[Map[String, Double]]
 
   override def compute(spark: SparkSession,
                        boostConfig: BoostConfig,

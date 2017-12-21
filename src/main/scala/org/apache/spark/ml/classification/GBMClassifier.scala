@@ -1,6 +1,6 @@
 package org.apache.spark.ml.classification
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable
 
 import org.apache.hadoop.fs.Path
 
@@ -188,7 +188,7 @@ class GBMClassifier(override val uid: String)
           new ErrorEval($(threshold))
       }
 
-    val callBackFunc = ArrayBuffer[CallbackFunc]()
+    val callBackFunc = mutable.ArrayBuffer.empty[CallbackFunc]
     if ($(earlyStopIters) >= 1) {
       callBackFunc.append(new EarlyStop($(earlyStopIters)))
     }

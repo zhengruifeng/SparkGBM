@@ -39,7 +39,7 @@ object HiggsExtend {
     val data3 = data.mapPartitionsWithIndex { case (index, iter) =>
       val rng = new Random(index)
       iter.map { case LabeledPoint(label, vec) =>
-        val randIndices = mutable.Set[Int]()
+        val randIndices = mutable.Set.empty[Int]
         while (randIndices.size < 100) {
           randIndices.add(rng.nextInt(1000) + 28)
         }

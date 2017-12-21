@@ -60,10 +60,10 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   require(maxPersisted > 1)
 
   /** FIFO queue of past checkpointed Datasets */
-  private val checkpointQueue = mutable.Queue[RDD[T]]()
+  private val checkpointQueue = mutable.Queue.empty[RDD[T]]
 
   /** FIFO queue of past persisted Datasets */
-  private val persistedQueue = mutable.Queue[RDD[T]]()
+  private val persistedQueue = mutable.Queue.empty[RDD[T]]
 
   /** Number of times [[update()]] has been called */
   private var updateCount = 0
@@ -251,7 +251,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
     val m = n.toInt
     val r = n - m
 
-    val weights = mutable.Map[Int, Double]()
+    val weights = mutable.Map.empty[Int, Double]
 
     pids.take(m).foreach { pid =>
       weights.update(pid, 1.0)

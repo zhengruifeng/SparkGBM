@@ -291,8 +291,8 @@ private[gbm] object Split {
 
     val len = nzIndices.length
 
-    val bestSet1 = mutable.Set[Int]()
-    val set1 = mutable.Set[Int]()
+    val bestSet1 = mutable.Set.empty[Int]
+    val set1 = mutable.Set.empty[Int]
     var bestScore = Double.MinValue
 
     var grad1 = 0.0
@@ -503,14 +503,14 @@ private[gbm] object Split {
     require(stats.length == 6)
 
     // ignore zero hist
-    val set1 = mutable.Set[Int]()
+    val set1 = mutable.Set.empty[Int]
     indices1.foreach { i =>
       if (gradSeq(i) != 0 || hessSeq(i) != 0) {
         set1.add(i)
       }
     }
 
-    val set2 = mutable.Set[Int]()
+    val set2 = mutable.Set.empty[Int]
     gradSeq.indices.foreach { i =>
       if ((gradSeq(i) != 0 || hessSeq(i) != 0) && !set1.contains(i)) {
         set2.add(i)

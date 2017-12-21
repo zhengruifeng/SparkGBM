@@ -57,8 +57,8 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
 
     if (handleSparsity) {
       (vec: Vector) =>
-        val indexBuff = mutable.ArrayBuffer[Int]()
-        val valueBuff = mutable.ArrayBuffer[B]()
+        val indexBuff = mutable.ArrayBuffer.empty[Int]
+        val valueBuff = mutable.ArrayBuffer.empty[B]
         getIter(vec).foreach { case (i, v) =>
           val bin = discretizeWithIndex(v, i)
           if (bin != 0) {
@@ -151,7 +151,7 @@ private[gbm] object Discretizer extends Logging {
       vectors.mapPartitions { iter =>
         var cnt = 0L
         val aggs = emptyAggs
-        val nans = mutable.Map[Int, Long]()
+        val nans = mutable.Map.empty[Int, Long]
 
         // only absorb non-zero values
         iter.foreach { vec =>
@@ -625,7 +625,7 @@ private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
 private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
-  val counter = mutable.Map[Int, Long]()
+  val counter = mutable.Map.empty[Int, Long]
 
   override def update(value: Double): CatColAgg = {
     require(value.toInt == value)
@@ -670,7 +670,7 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
 private[gbm] class RankColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
-  val set = mutable.Set[Int]()
+  val set = mutable.Set.empty[Int]
   var count = 0L
 
   override def update(value: Double): RankColAgg = {

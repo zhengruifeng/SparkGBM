@@ -96,8 +96,8 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
 
   override def slice(sorted: Array[Int]) = {
     val intK = implicitly[Integral[K]]
-    val indexBuff = mutable.ArrayBuffer[Int]()
-    val valueBuff = mutable.ArrayBuffer[V]()
+    val indexBuff = mutable.ArrayBuffer.empty[Int]
+    val valueBuff = mutable.ArrayBuffer.empty[V]
     var i = 0
     var j = 0
     while (i < sorted.length && j < indices.length) {

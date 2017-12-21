@@ -1,6 +1,6 @@
 package org.apache.spark.ml.regression
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable
 
 import org.apache.hadoop.fs.Path
 
@@ -202,7 +202,7 @@ class GBMRegressor(override val uid: String) extends
           new R2Eval
       }.map(_.asInstanceOf[EvalFunc])
 
-    val callBackFunc = ArrayBuffer[CallbackFunc]()
+    val callBackFunc = mutable.ArrayBuffer.empty[CallbackFunc]
     if ($(earlyStopIters) >= 1) {
       callBackFunc.append(new EarlyStop($(earlyStopIters)))
     }

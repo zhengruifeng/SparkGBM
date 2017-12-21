@@ -418,20 +418,20 @@ class GBM extends Logging with Serializable {
   def getSparsityThreshold: Double = sparsityThreshold
 
 
-  /** training */
+  /** training, dataset contains (weight, label, vec) */
   def fit(data: RDD[(Double, Double, Vector)]): GBMModel = {
     fit(data, None)
   }
 
 
-  /** training with validation */
+  /** training with validation, dataset contains (weight, label, vec) */
   def fit(data: RDD[(Double, Double, Vector)],
           test: RDD[(Double, Double, Vector)]): GBMModel = {
     fit(data, Some(test))
   }
 
 
-  /** training with validation if any */
+  /** training with validation if any, dataset contains (weight, label, vec) */
   private[ml] def fit(data: RDD[(Double, Double, Vector)],
                       test: Option[RDD[(Double, Double, Vector)]]): GBMModel = {
     if (boostType == GBM.Dart) {
@@ -539,7 +539,7 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * train a GBM model
+    * train a GBM model, dataset contains (weight, label, vec)
     */
   def boost(data: RDD[(Double, Double, Vector)],
             test: RDD[(Double, Double, Vector)],
@@ -566,7 +566,7 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * train a GBM model, with the given type of bin
+    * train a GBM model, with the given type of bin, dataset contains (weight, label, vec)
     */
   def boostWithBinType[B: Integral : ClassTag](data: RDD[(Double, Double, Vector)],
                                                test: RDD[(Double, Double, Vector)],

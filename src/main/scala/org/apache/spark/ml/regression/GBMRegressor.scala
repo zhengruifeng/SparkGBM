@@ -267,7 +267,6 @@ class GBMRegressor(override val uid: String) extends
 
   override protected def train(dataset: Dataset[_]): GBMRegressionModel = {
     throw new NotImplementedError(s"train is not implemented for ${this.getClass}.")
-    null
   }
 
   override def copy(extra: ParamMap): GBMRegressor = defaultCopy(extra)

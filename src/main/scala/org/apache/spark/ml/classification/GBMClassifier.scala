@@ -255,7 +255,6 @@ class GBMClassifier(override val uid: String)
 
   override protected def train(dataset: Dataset[_]): GBMClassificationModel = {
     throw new NotImplementedError(s"train is not implemented for ${this.getClass}.")
-    null
   }
 }
 

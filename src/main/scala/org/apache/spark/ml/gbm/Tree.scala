@@ -40,10 +40,9 @@ private[gbm] object Tree extends Logging {
     val logPrefix = s"Iter ${treeConfig.iteration}: Tree ${treeConfig.treeIndex}:"
     logInfo(s"$logPrefix tree building start")
 
-
     val root = LearningNode.create(1L)
 
-    val lastSplits = mutable.Map.empty[Long, Split]
+    val prevSplits = mutable.Map.empty[Long, Split]
 
     var minNodeId = 1L
     var numLeaves = 1L
@@ -60,22 +59,22 @@ private[gbm] object Tree extends Logging {
       if (minNodeId == 1L) {
         nodeIds = data.map(_ => 1L)
       } else {
-        nodeIds = updateNodeIds[H, B](data, nodeIds, lastSplits.toMap)
+        nodeIds = updateNodeIds[H, B](data, nodeIds, prevSplits.toMap)
       }
       nodesCheckpointer.update(nodeIds)
 
       if (minNodeId == 1L) {
         // direct compute the histogram of root node
-        hists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols, lastSplits.toMap,
+        hists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols, prevSplits.toMap,
           parallelism, boostConfig.getHandleSparsity)
 
       } else {
         // compute the histogram of right leaves
-        val rightHists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols, lastSplits.toMap,
+        val rightHists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols, prevSplits.toMap,
           parallelism, boostConfig.getHandleSparsity)
 
         // pre-compute an even split of (nodeId, col) pairs
-        val ranges = computeRanges(lastSplits.keys.toArray, treeConfig.numCols, parallelism)
+        val ranges = computeRanges(prevSplits.keys.toArray, treeConfig.numCols, parallelism)
 
         // compute the histogram of both left leaves and right leaves by subtraction
         hists = subtractHistogram[H](hists, rightHists, boostConfig.getMinNodeHess, ranges, parallelism)
@@ -104,9 +103,9 @@ private[gbm] object Tree extends Logging {
         updateTree(root, minNodeId, splits)
 
         // update last splits
-        lastSplits.clear()
+        prevSplits.clear()
         splits.foreach { case (nodeId, split) =>
-          lastSplits.update(nodeId, split)
+          prevSplits.update(nodeId, split)
         }
       }
 
@@ -361,7 +360,7 @@ private[gbm] object Tree extends Logging {
 
       .map { case ((nodeId, col), it) =>
         val seq = it.toSeq
-        val len = (intB.toInt(seq.map(_._1).max) + 1) << 1
+        val len = (seq.map(t => intB.toInt(t._1)).max + 1) << 1
 
         val hist = Array.fill(len)(numH.zero)
         var i = 0
@@ -395,7 +394,7 @@ private[gbm] object Tree extends Logging {
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param minNodeId   minimum nodeId for this level
     * @param numCols     number of columns
-    * @param histSums    pre-computed sum of hist of right leaves, this can be obtained from the stats of splits in the last round
+    * @param histSums    pre-computed sum of hist of right leaves, obtained from the stats of splits in the last round
     * @param parallelism parallelism
     * @tparam H
     * @tparam B
@@ -446,7 +445,7 @@ private[gbm] object Tree extends Logging {
         val (gradSum, hessSum) = histSums(nodeId)
 
         val seq = it.toSeq
-        val len = (intB.toInt(seq.map(_._1).max) + 1) << 1
+        val len = (seq.map(t => intB.toInt(t._1)).max + 1) << 1
 
         val hist = Array.fill(len)(numH.zero)
         hist(0) = gradSum
@@ -495,8 +494,9 @@ private[gbm] object Tree extends Logging {
       new GBMRangePartitioner[(Long, Int)](ranges)
     }
 
-    rightHists.map { case ((rightNode, col), hist) =>
-      ((rightNode >> 1, col), hist)
+    rightHists.map { case ((rightNodeId, col), hist) =>
+      val parentNodeId = rightNodeId >> 1
+      ((parentNodeId, col), hist)
 
     }.join(nodeHists, partitioner)
 

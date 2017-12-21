@@ -66,7 +66,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
             valueBuff.append(intB.fromInt(bin))
           }
         }
-        BinVector.sparse[B](numCols, indexBuff.toArray, valueBuff.toArray)
+        BinVector.sparse[B](numCols, indexBuff.toArray, valueBuff.toArray).compress
 
     } else {
       (vec: Vector) =>
@@ -77,7 +77,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
             bins(i) = intB.fromInt(bin)
           }
         }
-        BinVector.dense[B](bins)
+        BinVector.dense[B](bins).compress
     }
   }
 
@@ -482,8 +482,8 @@ private[gbm] object ColAgg {
 private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
-  var summary = QuantileNumColAgg.createSummary
   var count = 0L
+  var summary = QuantileNumColAgg.createSummary
 
   override def update(value: Double): QuantileNumColAgg = {
     summary = summary.insert(value)
@@ -576,9 +576,9 @@ private[gbm] object QuantileNumColAgg {
 private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
+  var count = 0L
   var max = Double.MinValue
   var min = Double.MaxValue
-  var count = 0L
 
   override def update(value: Double): IntervalNumColAgg = {
     max = math.max(max, value)
@@ -626,6 +626,7 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
   val counter = mutable.Map.empty[Int, Long]
+  counter.sizeHint(maxBins)
 
   override def update(value: Double): CatColAgg = {
     require(value.toInt == value)
@@ -670,8 +671,9 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
 private[gbm] class RankColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
-  val set = mutable.Set.empty[Int]
   var count = 0L
+  val set = mutable.Set.empty[Int]
+  set.sizeHint(maxBins)
 
   override def update(value: Double): RankColAgg = {
     require(value.toInt == value)

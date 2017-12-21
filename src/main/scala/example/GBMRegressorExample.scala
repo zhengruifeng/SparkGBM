@@ -5,7 +5,7 @@ import org.apache.spark.ml.regression._
 import org.apache.spark.ml.evaluation.RegressionEvaluator
 
 /**
-  * spark-submit --class example.GBMRegressorExample target/SparkGBM-0.0.1.jar
+  * spark-submit --class example.GBMRegressorExample target/SparkGBM-0.0.1.jar 2>log
   */
 object GBMRegressorExample {
 

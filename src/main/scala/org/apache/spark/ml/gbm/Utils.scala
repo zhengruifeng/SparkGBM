@@ -414,7 +414,7 @@ private[gbm] object Utils extends Logging {
       } else {
 
         logInfo(s"Using partition-based sampling")
-        data.samplePartitions(fraction, seed)
+        new RDDFunctions[T](data).samplePartitions(fraction, seed)
       }
     }
   }
@@ -471,9 +471,6 @@ private[gbm] object Utils extends Logging {
       spark.read.parquet(new Path(path, name).toString)
     }
   }
-
-  implicit def fromRDD[T: ClassTag](rdd: RDD[T]): RDDFunctions[T] = new RDDFunctions[T](rdd)
-
 }
 
 

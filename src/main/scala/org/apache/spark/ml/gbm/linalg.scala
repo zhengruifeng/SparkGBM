@@ -1,7 +1,7 @@
 package org.apache.spark.ml.gbm
 
 import scala.collection.mutable
-import scala.reflect.ClassTag
+import scala.reflect.{ClassTag, classTag}
 import scala.{specialized => spec}
 
 import org.apache.spark.SparkContext
@@ -15,27 +15,56 @@ private[gbm] trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
 
   def slice(sorted: Array[Int]): BinVector[V]
 
+  def toArray: Array[V]
+
   def totalIter: Iterator[(Int, V)]
 
   def activeIter: Iterator[(Int, V)]
+
+  def computeDenseSize: Int
+
+  def computeSparseSize: Int
+
+  def toDense: BinVector[V]
+
+  def toSparse: BinVector[V]
+
+  def compress: BinVector[V] = {
+    if (computeDenseSize <= computeSparseSize) {
+      toDense
+    } else {
+      toSparse
+    }
+  }
 }
 
 private[gbm] object BinVector {
 
-  def dense[V: Integral : ClassTag](values: Array[V]): BinVector[V] = {
+  def dense[@spec(Byte, Short, Int) V: Integral : ClassTag](values: Array[V]): BinVector[V] = {
     new DenseBinVector[V](values)
   }
 
-  def sparse[V: Integral : ClassTag](size: Int,
-                                     indices: Array[Int],
-                                     values: Array[V]): BinVector[V] = {
-    val lastIndex = indices.lastOption.getOrElse(0)
+  def sparse[@spec(Byte, Short, Int) V: Integral : ClassTag](size: Int,
+                                                             indices: Array[Int],
+                                                             values: Array[V]): BinVector[V] = {
+    val lastIndex = indices.lastOption.getOrElse(-1)
     if (lastIndex <= Byte.MaxValue) {
       new SparseBinVector[Byte, V](size, indices.map(_.toByte), values)
     } else if (lastIndex <= Short.MaxValue) {
       new SparseBinVector[Short, V](size, indices.map(_.toShort), values)
     } else {
       new SparseBinVector[Int, V](size, indices, values)
+    }
+  }
+
+  def getTypeSize[T: ClassTag]: Int = {
+    classTag[T] match {
+      case ClassTag.Byte => 1
+      case ClassTag.Short => 2
+      case ClassTag.Int => 4
+      case ClassTag.Long => 8
+      case ClassTag.Float => 4
+      case ClassTag.Double => 8
     }
   }
 
@@ -64,12 +93,52 @@ private class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val
   override def slice(sorted: Array[Int]) =
     BinVector.dense(sorted.map(values))
 
+  override def toArray: Array[V] =
+    totalIter.map(_._2).toArray
+
   override def totalIter =
     Iterator.range(0, values.length).map(i => (i, values(i)))
 
   override def activeIter = {
     val intV = implicitly[Integral[V]]
     totalIter.filter(t => !intV.equiv(t._2, intV.zero))
+  }
+
+  override def toDense: BinVector[V] = this
+
+  override def toSparse: BinVector[V] = {
+    val indexBuff = mutable.ArrayBuffer.empty[Int]
+    val valueBuff = mutable.ArrayBuffer.empty[V]
+    activeIter.foreach { case (i, v) =>
+      indexBuff.append(i)
+      valueBuff.append(v)
+    }
+    BinVector.sparse[V](len, indexBuff.toArray, valueBuff.toArray)
+  }
+
+  override def computeDenseSize: Int = {
+    BinVector.getTypeSize[V] * len + 8
+  }
+
+  override def computeSparseSize: Int = {
+    var nnz = 0
+    var lastIndex = -1
+    activeIter.foreach { case (i, v) =>
+      nnz += 1
+      lastIndex = i
+    }
+
+    val kSize = if (lastIndex <= Byte.MaxValue) {
+      1
+    } else if (lastIndex <= Short.MaxValue) {
+      2
+    } else {
+      4
+    }
+
+    val vSize = BinVector.getTypeSize[V]
+
+    (kSize + vSize) * nnz + 20
   }
 }
 
@@ -117,6 +186,9 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
     BinVector.sparse[V](sorted.length, indexBuff.toArray, valueBuff.toArray)
   }
 
+  override def toArray: Array[V] =
+    totalIter.map(_._2).toArray
+
   override def totalIter = new Iterator[(Int, V)]() {
     private val intK = implicitly[Integral[K]]
     private val intV = implicitly[Integral[V]]
@@ -149,6 +221,22 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
     Iterator.range(0, indices.length)
       .map(i => (intK.toInt(indices(i)), values(i)))
       .filter(t => !intV.equiv(t._2, intV.zero))
+  }
+
+  override def toDense: BinVector[V] = {
+    BinVector.dense[V](toArray)
+  }
+
+  override def toSparse: BinVector[V] = this
+
+  override def computeDenseSize: Int = {
+    BinVector.getTypeSize[V] * len + 8
+  }
+
+  override def computeSparseSize: Int = {
+    val kSize = BinVector.getTypeSize[K]
+    val vSize = BinVector.getTypeSize[V]
+    (kSize + vSize) * indices.length + 20
   }
 }
 

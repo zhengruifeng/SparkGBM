@@ -3,6 +3,7 @@ package org.apache.spark.ml.gbm
 import java.{util => ju}
 
 import scala.collection.mutable
+import scala.{specialized => spec}
 
 import org.apache.spark.SparkContext
 
@@ -13,9 +14,9 @@ private[gbm] abstract class Split extends Serializable {
 
   def missingGoLeft: Boolean
 
-  def goLeft[B: Integral](bins: Array[B]): Boolean
+  def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean
 
-  def goLeft[B: Integral](bins: BinVector[B]): Boolean
+  def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean
 
   def gain: Double
 
@@ -42,7 +43,7 @@ private[gbm] class SeqSplit(val featureId: Int,
                             val stats: Array[Double]) extends Split {
   require(stats.length == 6)
 
-  override def goLeft[B: Integral](bins: Array[B]): Boolean = {
+  override def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean = {
     val intB = implicitly[Integral[B]]
     val bin = intB.toInt(bins(featureId))
     if (bin == 0) {
@@ -53,7 +54,7 @@ private[gbm] class SeqSplit(val featureId: Int,
   }
 
 
-  override def goLeft[B: Integral](bins: BinVector[B]): Boolean = {
+  override def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
     val intB = implicitly[Integral[B]]
     val bin = intB.toInt(bins(featureId))
     if (bin == 0) {
@@ -72,7 +73,7 @@ private[gbm] class SetSplit(val featureId: Int,
                             val stats: Array[Double]) extends Split {
   require(stats.length == 6)
 
-  override def goLeft[B: Integral](bins: Array[B]): Boolean = {
+  override def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean = {
     val intB = implicitly[Integral[B]]
     val bin = intB.toInt(bins(featureId))
     if (bin == 0) {
@@ -82,7 +83,7 @@ private[gbm] class SetSplit(val featureId: Int,
     }
   }
 
-  override def goLeft[B: Integral](bins: BinVector[B]): Boolean = {
+  override def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
     val intB = implicitly[Integral[B]]
     val bin = intB.toInt(bins(featureId))
     if (bin == 0) {
@@ -106,10 +107,10 @@ private[gbm] object Split {
     * @tparam H
     * @return best split if any
     */
-  def split[H: Numeric](featureId: Int,
-                        hist: Array[H],
-                        boostConfig: BoostConfig,
-                        treeConfig: TreeConfig): Option[Split] = {
+  def split[@spec(Float, Double) H: Numeric](featureId: Int,
+                                             hist: Array[H],
+                                             boostConfig: BoostConfig,
+                                             treeConfig: TreeConfig): Option[Split] = {
     require(hist.length % 2 == 0)
 
     if (hist.length <= 2) {

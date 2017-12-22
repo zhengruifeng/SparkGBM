@@ -28,7 +28,6 @@ object HiggsDenseTest {
     val train = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-DENSEEXT-Train", 1028)
       .map(l => (l.label, l.features.asML))
       .toDF("label", "features")
-      .repartition(256)
 
     val test = MLUtils.loadLibSVMFile(sc, "/tmp/zrf/HIGGS-DENSEEXT-Test", 1028)
       .map(l => (l.label, l.features.asML))

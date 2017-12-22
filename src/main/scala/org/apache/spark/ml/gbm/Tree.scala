@@ -240,7 +240,7 @@ private[gbm] object Tree extends Logging {
 
 
   /**
-    * Compute the histogram of nodes
+    * Compute the histogram of nodes. Directly aggregate by (grad, hess).
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param numCols     number of columns
@@ -326,7 +326,7 @@ private[gbm] object Tree extends Logging {
 
 
   /**
-    * Compute the histogram of nodes, given sum of hist
+    * Compute the histogram of nodes, given sum of hist.
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param numCols     number of columns
@@ -411,7 +411,7 @@ private[gbm] object Tree extends Logging {
 
 
   /**
-    * Compute the histogram of nodes in a step-wise fashion.
+    * Compute the histogram of nodes in a step-wise fashion. First aggregate by (grad, hess, bin), then by (grad, hess).
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param numCols     number of columns
@@ -433,12 +433,22 @@ private[gbm] object Tree extends Logging {
 
     val partitioner2 = new GBMHashPartitioner(partitions = parallelism)
 
-    data.flatMap { case ((grad, hess, bins), nodeId) =>
-      // sum of hist of each node, set col=-1
-      Iterator.single((nodeId, -1, intB.zero), (grad, hess)) ++
+    data.mapPartitions { it =>
+
+      val histSums = new OpenHashMap[Long, (H, H)]()
+
+      it.flatMap { case ((grad, hess, bins), nodeId) =>
+        histSums.changeValue(nodeId, (grad, hess),
+          h => (numH.plus(h._1, grad), numH.plus(h._2, hess)))
+
         // ignore zero-index bins
         bins.activeIter.map { case (col, bin) =>
           ((nodeId, col, bin), (grad, hess))
+        }
+      } ++
+        histSums.iterator.map { case (nodeId, (gradSum, hessSum)) =>
+          // sum of hist of each node, set col=-1
+          ((nodeId, -1, intB.zero), (gradSum, hessSum))
         }
 
     }.reduceByKey(
@@ -493,7 +503,7 @@ private[gbm] object Tree extends Logging {
 
 
   /**
-    * Compute the histogram of nodes in a step-wise fashion, given sum of hist
+    * Compute the histogram of nodes in a step-wise fashion, given sum of hist.
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param numCols     number of columns

@@ -9,6 +9,7 @@ import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.collection.BitSet
 
 
 /**
@@ -464,6 +465,12 @@ class GBM extends Logging with Serializable {
     }
     logInfo(s"Average number of bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
 
+    val catSet = new BitSet(numCols)
+    catCols.foreach(catSet.set)
+
+    val rankSet = new BitSet(numCols)
+    rankCols.foreach(rankSet.set)
+
 
     val boostConfig = new BoostConfig
     boostConfig.setMaxIter(maxIter)
@@ -478,8 +485,8 @@ class GBM extends Logging with Serializable {
       .setObjectiveFunc(objectiveFunc)
       .setEvaluateFunc(evaluateFunc)
       .setCallbackFunc(callbackFunc)
-      .setCatCols(catCols)
-      .setRankCols(rankCols)
+      .setCatCols(catSet)
+      .setRankCols(rankSet)
       .setSubSample(subSample)
       .setColSampleByTree(colSampleByTree)
       .setColSampleByLevel(colSampleByLevel)
@@ -898,10 +905,11 @@ private[gbm] object GBM extends Logging {
     }
 
     // indices of categorical columns in the selected column subset
-    val catCols = cols.zipWithIndex
+    val catSet = new BitSet(cols.length)
+    cols.zipWithIndex
       .filter { case (col, _) =>
-        boostConfig.getCatCols.contains(col)
-      }.map(_._2).toSet
+        boostConfig.getCatCols.get(col)
+      }.map(_._2).foreach(catSet.set)
 
 
     val colSampled = boostConfig.getBoostType match {
@@ -935,7 +943,7 @@ private[gbm] object GBM extends Logging {
     }
 
 
-    val treeConfig = new TreeConfig(iteration, numTrees, catCols, cols)
+    val treeConfig = new TreeConfig(iteration, numTrees, catSet, cols)
 
     if (handlePersistence) {
       colSampled.persist(boostConfig.getStorageLevel)

@@ -2,6 +2,8 @@ package org.apache.spark.ml.gbm
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.collection.BitSet
+
 
 class BoostConfig extends Logging with Serializable {
 
@@ -36,8 +38,8 @@ class BoostConfig extends Logging with Serializable {
   private var numCols: Int = _
   private var floatType: String = _
   private var baseScore: Double = _
-  private var catCols: Set[Int] = _
-  private var rankCols: Set[Int] = _
+  private var catCols: BitSet = _
+  private var rankCols: BitSet = _
   private var handleSparsity: Boolean = _
 
   /** maximum number of iterations */
@@ -469,21 +471,21 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** indices of categorical columns */
-  private[gbm] def setCatCols(value: Set[Int]): this.type = {
+  private[gbm] def setCatCols(value: BitSet): this.type = {
     catCols = value
     this
   }
 
-  def getCatCols: Set[Int] = catCols
+  def getCatCols: BitSet = catCols
 
 
   /** indices of ranking columns */
-  private[gbm] def setRankCols(value: Set[Int]): this.type = {
+  private[gbm] def setRankCols(value: BitSet): this.type = {
     rankCols = value
     this
   }
 
-  def getRankCols: Set[Int] = rankCols
+  def getRankCols: BitSet = rankCols
 
 
   /** whether to store the bins in a sparse fashion */
@@ -497,18 +499,18 @@ class BoostConfig extends Logging with Serializable {
 
   private[gbm] def isNum(colIndex: Int): Boolean = !isCat(colIndex) && !isRank(colIndex)
 
-  private[gbm] def isCat(colIndex: Int): Boolean = catCols.contains(colIndex)
+  private[gbm] def isCat(colIndex: Int): Boolean = catCols.get(colIndex)
 
-  private[gbm] def isRank(colIndex: Int): Boolean = rankCols.contains(colIndex)
+  private[gbm] def isRank(colIndex: Int): Boolean = rankCols.get(colIndex)
 }
 
 
 private[gbm] class TreeConfig(val iteration: Int,
                               val treeIndex: Int,
-                              val catCols: Set[Int],
+                              val catCols: BitSet,
                               val columns: Array[Int]) extends Serializable {
 
-  def isSeq(colIndex: Int): Boolean = !catCols.contains(colIndex)
+  def isSeq(colIndex: Int): Boolean = !catCols.get(colIndex)
 
   def numCols: Int = columns.length
 }

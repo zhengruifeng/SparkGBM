@@ -12,6 +12,7 @@ import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.util.QuantileSummaries
+import org.apache.spark.util.collection.OpenHashMap
 
 
 /**
@@ -148,21 +149,21 @@ private[gbm] object Discretizer extends Logging {
     }
 
     val (count, aggregated) =
-      vectors.mapPartitions { iter =>
+      vectors.mapPartitions { it =>
         var cnt = 0L
         val aggs = emptyAggs
-        val nans = mutable.Map.empty[Int, Long]
+        val nans = new OpenHashMap[Int, Long]()
+
 
         // only absorb non-zero values
-        iter.foreach { vec =>
+        it.foreach { vec =>
           require(vec.size == numCols)
 
           Utils.getActiveIter(vec).foreach { case (i, v) =>
             if (!v.isNaN && !v.isInfinity) {
               aggs(i).update(v)
             } else if (!zeroAsMissing) {
-              val c = nans.getOrElse(i, 0L)
-              nans.update(i, c + 1)
+              nans.changeValue(i, 1L, _ + 1L)
             }
           }
           cnt += 1
@@ -172,7 +173,8 @@ private[gbm] object Discretizer extends Logging {
         if (!zeroAsMissing) {
           var i = 0
           while (i < numCols) {
-            val nz = cnt - aggs(i).count - nans.getOrElse(i, 0L)
+            nans.toMap
+            val nz = cnt - aggs(i).count - nans(i)
             aggs(i).updateZeros(nz)
             i += 1
           }
@@ -625,21 +627,18 @@ private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
 private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
-  val counter = mutable.Map.empty[Int, Long]
-  counter.sizeHint(maxBins)
+  val counter = new OpenHashMap[Int, Long](maxBins >> 1)
 
   override def update(value: Double): CatColAgg = {
     require(value.toInt == value)
-    val cnt = counter.getOrElse(value.toInt, 0L)
-    counter.update(value.toInt, cnt + 1)
+    counter.changeValue(value.toInt, 1L, _ + 1L)
     require(counter.size <= maxBins)
     this
   }
 
   override def updateZeros(nz: Long): CatColAgg = {
     if (nz > 0) {
-      val cnt = counter.getOrElse(0, 0L)
-      counter.update(0, cnt + nz)
+      counter.changeValue(0, nz, _ + nz)
       require(counter.size <= maxBins)
     }
     this
@@ -648,8 +647,7 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   override def merge(other: ColAgg): CatColAgg = {
     other.asInstanceOf[CatColAgg].counter
       .foreach { case (v, c) =>
-        val cnt = counter.getOrElse(v, 0L)
-        counter.update(v, cnt + c)
+        counter.changeValue(v, c, _ + c)
         require(counter.size <= maxBins)
       }
     this
@@ -661,7 +659,7 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
     new CatColDiscretizer(map)
   }
 
-  override def count: Long = counter.values.sum
+  override def count: Long = counter.iterator.map(_._2).sum
 }
 
 
@@ -673,7 +671,7 @@ private[gbm] class RankColAgg(val maxBins: Int) extends ColAgg {
 
   var count = 0L
   val set = mutable.Set.empty[Int]
-  set.sizeHint(maxBins)
+  set.sizeHint(maxBins >> 1)
 
   override def update(value: Double): RankColAgg = {
     require(value.toInt == value)

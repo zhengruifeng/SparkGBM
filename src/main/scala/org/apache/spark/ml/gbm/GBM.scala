@@ -856,13 +856,35 @@ private[gbm] object GBM extends Logging {
     val numH = implicitly[Numeric[H]]
     val toH = implicitly[FromDouble[H]]
 
-    val rowSampled = Utils.sample(instances.zip(preds),
-      boostConfig.getSubSample, boostConfig.getSeed + numTrees)
+    val sc = instances.sparkContext
+
+    var handlePersistence = false
+
+    val zipped = instances.zip(preds)
+
+    val rowSampled = if (boostConfig.getSubSample == 1) {
+      zipped
+
+    } else if (zipped.getNumPartitions * boostConfig.getSubSample >= sc.defaultParallelism * 8) {
+      // if number of partitions is large, directly sampling the partitions is more efficient
+      import RDDFunctions._
+      logInfo(s"Using partition-based sampling")
+      zipped.samplePartitions(boostConfig.getSubSample, boostConfig.getSeed + numTrees)
+
+    } else {
+
+      handlePersistence = true
+      zipped.sample(false, boostConfig.getSubSample, boostConfig.getSeed + numTrees)
+    }
+
 
     // selected columns
     val cols = if (boostConfig.getColSampleByTree == 1) {
       Array.range(0, boostConfig.getNumCols)
+
     } else {
+
+      handlePersistence = true
       val numCols = (boostConfig.getNumCols * boostConfig.getColSampleByTree).ceil.toInt
       colSampleRng.shuffle(Seq.range(0, boostConfig.getNumCols))
         .take(numCols).toArray.sorted
@@ -912,8 +934,20 @@ private[gbm] object GBM extends Logging {
         }
     }
 
+
     val treeConfig = new TreeConfig(iteration, numTrees, catCols, cols)
-    Tree.train[H, B](colSampled, boostConfig, treeConfig)
+
+    if (handlePersistence) {
+      colSampled.persist(boostConfig.getStorageLevel)
+    }
+
+    val tree = Tree.train[H, B](colSampled, boostConfig, treeConfig)
+
+    if (handlePersistence) {
+      colSampled.unpersist(blocking = false)
+    }
+
+    tree
   }
 
 

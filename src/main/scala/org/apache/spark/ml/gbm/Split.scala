@@ -4,8 +4,8 @@ import java.{util => ju}
 
 import scala.collection.mutable
 import scala.{specialized => spec}
-
 import org.apache.spark.SparkContext
+import org.apache.spark.internal.Logging
 
 
 private[gbm] abstract class Split extends Serializable {
@@ -95,7 +95,7 @@ private[gbm] class SetSplit(val featureId: Int,
 }
 
 
-private[gbm] object Split {
+private[gbm] object Split extends Logging {
 
   /**
     * find the best split
@@ -122,13 +122,30 @@ private[gbm] object Split {
     val gradSeq = Array.range(0, hist.length, 2).map(i => numH.toDouble(hist(i)))
     val hessSeq = Array.range(1, hist.length, 2).map(i => numH.toDouble(hist(i)))
 
+    var gradAbsSum = 0.0
+    var hessAbsSum = 0.0
     var nnz = 0
+
     var i = 0
     while (i < gradSeq.length) {
       if (gradSeq(i) != 0 || hessSeq(i) != 0) {
+        gradAbsSum += gradSeq(i).abs
+        hessAbsSum += hessSeq(i).abs
         nnz += 1
       }
       i += 1
+    }
+
+
+    // hists of zero-bin are always computed by minus
+    // for numerical stability, we ignore small values
+    if ((gradSeq.head != 0 || hessSeq.head != 0) &&
+      gradSeq.head.abs < gradAbsSum * 1e-6 &&
+      hessSeq.head.abs < hessAbsSum * 1e-6) {
+
+      gradSeq(0) = 0.0
+      hessSeq(0) = 0.0
+      nnz -= 1
     }
 
     if (nnz <= 1) {
@@ -189,17 +206,9 @@ private[gbm] object Split {
       None
     } else {
 
-      val gradAbsSum = gradSeq.map(_.abs).sum
-      val hessAbsSum = hessSeq.map(_.abs).sum
-      if (gradSeq.head.abs < gradAbsSum * 1e-3 && hessSeq.head.abs < hessAbsSum * 1e-3) {
-        // hist of missing value is insignificant
-        None
-      } else {
-
-        // missing go right
-        // find best split on indices of [i1, i2, i3, i4, i0]
-        seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConfig)
-      }
+      // missing go right
+      // find best split on indices of [i1, i2, i3, i4, i0]
+      seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConfig)
     }
 
     (search1, search2) match {

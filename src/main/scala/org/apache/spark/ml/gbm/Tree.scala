@@ -7,6 +7,7 @@ import scala.{specialized => spec}
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.util.collection.OpenHashMap
 
 
 private[gbm] object Tree extends Logging {
@@ -26,8 +27,6 @@ private[gbm] object Tree extends Logging {
                                                                         treeConfig: TreeConfig): Option[TreeModel] = {
     val sc = data.sparkContext
     Split.registerKryoClasses(sc)
-
-    data.persist(boostConfig.getStorageLevel)
 
     var nodeIds = sc.emptyRDD[Long]
     val nodesCheckpointer = new Checkpointer[Long](sc,
@@ -63,15 +62,16 @@ private[gbm] object Tree extends Logging {
       }
       nodesCheckpointer.update(nodeIds)
 
+
       if (minNodeId == 1L) {
         // direct compute the histogram of root node
-        hists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols, prevSplits.toMap,
-          parallelism, boostConfig.getHandleSparsity)
+        hists = computeHistogram[H, B](data.zip(nodeIds), (n: Long) => true,
+          treeConfig.numCols, prevSplits.toMap, parallelism)
 
       } else {
         // compute the histogram of right leaves
-        val rightHists = computeHistogram[H, B](data.zip(nodeIds), minNodeId, treeConfig.numCols, prevSplits.toMap,
-          parallelism, boostConfig.getHandleSparsity)
+        val rightHists = computeHistogram[H, B](data.zip(nodeIds), (n: Long) => n >= minNodeId && n % 2 == 1L,
+          treeConfig.numCols, prevSplits.toMap, parallelism)
 
         // pre-compute an even split of (nodeId, col) pairs
         val ranges = computeRanges(prevSplits.keys.toArray, treeConfig.numCols, parallelism)
@@ -122,7 +122,6 @@ private[gbm] object Tree extends Logging {
     }
     logInfo(s"$logPrefix tree building finished")
 
-    data.unpersist(blocking = false)
     nodesCheckpointer.deleteAllCheckpoints()
     nodesCheckpointer.unpersistDataSet()
     histsCheckpointer.deleteAllCheckpoints()
@@ -198,73 +197,85 @@ private[gbm] object Tree extends Logging {
   /**
     * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
     *
-    * @param data           instances appended with nodeId, containing ((grad, hess, bins), nodeId)
-    * @param minNodeId      minimum nodeId for this level
-    * @param numCols        number of columns
-    * @param splits         splits found in the last round, if any
-    * @param parallelism    parallelism
-    * @param handleSparsity whether to compute the histogram in a sparse fashion
-    * @tparam H
-    * @tparam B
-    * @return histogram data containing (nodeId, columnId, histogram)
-    */
-  def computeHistogram[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
-                                                                                   minNodeId: Long,
-                                                                                   numCols: Int,
-                                                                                   splits: Map[Long, Split],
-                                                                                   parallelism: Int,
-                                                                                   handleSparsity: Boolean): RDD[((Long, Int), Array[H])] = {
-    if (handleSparsity) {
-
-      if (splits.isEmpty) {
-
-        computeHistogramSparse[H, B](data, minNodeId, numCols, parallelism)
-
-      } else {
-
-        val toH = implicitly[FromDouble[H]]
-        val histSums = mutable.Map.empty[Long, (H, H)]
-        splits.foreach { case (nodeId, split) =>
-          val rightNodeId = (nodeId << 1) + 1
-          val rightGradSum = toH.fromDouble(split.rightGrad)
-          val rightHessSum = toH.fromDouble(split.rightHess)
-          histSums.update(rightNodeId, (rightGradSum, rightHessSum))
-        }
-
-        computeHistogramSparse[H, B](data, minNodeId, numCols, histSums.toMap, parallelism)
-      }
-
-    } else {
-
-      computeHistogramDense[H, B](data, minNodeId, parallelism)
-    }
-  }
-
-
-  /**
-    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
-    *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
-    * @param minNodeId   minimum nodeId for this level
+    * @param f           function to filter nodeIds
+    * @param numCols     number of columns
+    * @param splits      splits found in the last round, if any
     * @param parallelism parallelism
     * @tparam H
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
-  def computeHistogramDense[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
-                                                                           minNodeId: Long,
-                                                                           parallelism: Int): RDD[((Long, Int), Array[H])] = {
+  def computeHistogram[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                                   f: (Long => Boolean),
+                                                                                   numCols: Int,
+                                                                                   splits: Map[Long, Split],
+                                                                                   parallelism: Int): RDD[((Long, Int), Array[H])] = {
+    val filtered = data.filter(t => f(t._2))
+
+    if (splits.isEmpty) {
+
+      computeHistogramImpl[H, B](filtered, numCols, parallelism)
+
+    } else {
+
+      val toH = implicitly[FromDouble[H]]
+
+      val histSums = splits.flatMap { case (nodeId, split) =>
+        val leftNodeId = nodeId << 1
+        val leftGrad = toH.fromDouble(split.leftGrad)
+        val leftHess = toH.fromDouble(split.leftHess)
+
+        val rightNodeId = leftNodeId + 1
+        val rightGrad = toH.fromDouble(split.rightGrad)
+        val rightHess = toH.fromDouble(split.rightHess)
+
+        Seq((leftNodeId, (leftGrad, leftHess)),
+          (rightNodeId, (rightGrad, rightHess)))
+      }.filter(t => f(t._1))
+
+      computeHistogramImpl[H, B](filtered, numCols, histSums, parallelism)
+    }
+  }
+
+
+  /**
+    * Compute the histogram of nodes
+    *
+    * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
+    * @param numCols     number of columns
+    * @param parallelism parallelism
+    * @tparam H
+    * @tparam B
+    * @return histogram data containing (nodeId, columnId, histogram)
+    */
+  def computeHistogramImpl[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                          numCols: Int,
+                                                                          parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
 
-    data.filter { case (_, nodeId) =>
-      // root or right leaves
-      nodeId >= minNodeId && nodeId % 2 == 1L
 
-    }.flatMap { case ((grad, hess, bins), nodeId) =>
-      bins.totalIter.map { case (col, bin) =>
-        ((nodeId, col), (bin, grad, hess))
-      }
+    data.mapPartitions { it =>
+
+      val histSums = new OpenHashMap[Long, (H, H)]()
+
+      it.flatMap { case ((grad, hess, bins), nodeId) =>
+        histSums.changeValue(nodeId, (grad, hess),
+          h => (numH.plus(h._1, grad), numH.plus(h._2, hess)))
+
+        // ignore zero-index bins
+        bins.activeIter.map { case (col, bin) =>
+          ((nodeId, col), (bin, grad, hess))
+        }
+      } ++
+        histSums.iterator.flatMap { case (nodeId, (gradSum, hessSum)) =>
+          // make sure all (nodeId, col) pairs are taken into account
+          // by the way, store sum of hist in zero-index bin
+          Iterator.range(0, numCols).map { c =>
+            ((nodeId, c), (intB.zero, gradSum, hessSum))
+          }
+        }
 
     }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
       seqOp = {
@@ -298,25 +309,120 @@ private[gbm] object Tree extends Logging {
             }
             hist2
           }
-      })
+      }
+
+    ).map { case ((nodeId, col), hist) =>
+      var i = 2
+      while (i < hist.length) {
+        // zero-index bin stores the sum of hist
+        hist(0) = numH.minus(hist(0), hist(i))
+        hist(1) = numH.minus(hist(1), hist(i + 1))
+        i += 2
+      }
+
+      ((nodeId, col), hist)
+    }
   }
 
 
   /**
-    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    * Compute the histogram of nodes, given sum of hist
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
-    * @param minNodeId   minimum nodeId for this level
+    * @param numCols     number of columns
+    * @param histSums    pre-computed sum of hist of right leaves, obtained from the stats of splits in the last round
+    * @param parallelism parallelism
+    * @tparam H
+    * @tparam B
+    * @return histogram data containing (nodeId, columnId, histogram)
+    */
+  def computeHistogramImpl[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                          numCols: Int,
+                                                                          histSums: Map[Long, (H, H)],
+                                                                          parallelism: Int): RDD[((Long, Int), Array[H])] = {
+    val intB = implicitly[Integral[B]]
+    val numH = implicitly[Numeric[H]]
+
+    val sc = data.sparkContext
+
+    // make sure all (nodeId, col) pairs are taken into account
+    // by the way, store sum of hist in zero-index bin
+    val rdd0 = sc.range(0, numCols)
+      .flatMap { col =>
+        histSums.iterator.map { case (nodeId, (gradSum, hessSum)) =>
+          ((nodeId, col.toInt), (intB.zero, gradSum, hessSum))
+        }
+      }
+
+    val rdd1 = data.flatMap { case ((grad, hess, bins), nodeId) =>
+      // ignore zero-index bins
+      bins.activeIter.map { case (col, bin) =>
+        ((nodeId, col), (bin, grad, hess))
+      }
+    }
+
+    sc.union(rdd0, rdd1)
+      .aggregateByKey[Array[H]](Array.empty[H], parallelism)(
+      seqOp = {
+        case (hist, (bin, grad, hess)) =>
+          val index = intB.toInt(bin) << 1
+
+          if (hist.length < index + 2) {
+            val newHist = hist ++ Array.fill(index + 2 - hist.length)(numH.zero)
+            newHist(index) = grad
+            newHist(index + 1) = hess
+            newHist
+          } else {
+            hist(index) = numH.plus(hist(index), grad)
+            hist(index + 1) = numH.plus(hist(index + 1), hess)
+            hist
+          }
+
+      }, combOp = {
+        case (hist1, hist2) =>
+          var i = 0
+          if (hist1.length >= hist2.length) {
+            while (i < hist2.length) {
+              hist1(i) = numH.plus(hist1(i), hist2(i))
+              i += 1
+            }
+            hist1
+          } else {
+            while (i < hist1.length) {
+              hist2(i) = numH.plus(hist1(i), hist2(i))
+              i += 1
+            }
+            hist2
+          }
+      }
+
+    ).map { case ((nodeId, col), hist) =>
+      var i = 2
+      while (i < hist.length) {
+        // zero-index bin stores the sum of hist
+        hist(0) = numH.minus(hist(0), hist(i))
+        hist(1) = numH.minus(hist(1), hist(i + 1))
+        i += 2
+      }
+
+      ((nodeId, col), hist)
+    }
+  }
+
+
+  /**
+    * Compute the histogram of nodes in a step-wise fashion.
+    *
+    * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
     * @param numCols     number of columns
     * @param parallelism parallelism
     * @tparam H
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
-  def computeHistogramSparse[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
-                                                                            minNodeId: Long,
-                                                                            numCols: Int,
-                                                                            parallelism: Int): RDD[((Long, Int), Array[H])] = {
+  def computeHistogramStepWiseImpl[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                                  numCols: Int,
+                                                                                  parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
 
@@ -327,11 +433,7 @@ private[gbm] object Tree extends Logging {
 
     val partitioner2 = new GBMHashPartitioner(partitions = parallelism)
 
-    data.filter { case (_, nodeId) =>
-      // root or right leaves
-      nodeId >= minNodeId && nodeId % 2 == 1L
-
-    }.flatMap { case ((grad, hess, bins), nodeId) =>
+    data.flatMap { case ((grad, hess, bins), nodeId) =>
       // sum of hist of each node, set col=-1
       Iterator.single((nodeId, -1, intB.zero), (grad, hess)) ++
         // ignore zero-index bins
@@ -345,12 +447,14 @@ private[gbm] object Tree extends Logging {
       func = {
         case ((grad1, hess1), (grad2, hess2)) =>
           (numH.plus(grad1, grad2), numH.plus(hess1, hess2))
+      }
 
-      }).flatMap { case ((nodeId, col, bin), (grad, hess)) =>
+    ).flatMap { case ((nodeId, col, bin), (grad, hess)) =>
       if (col != -1) {
         require(intB.gt(bin, intB.zero))
         Iterator.single(((nodeId, col), (bin, grad, hess)))
       } else {
+        // store sum of hist in zero-index bin
         require(intB.equiv(bin, intB.zero))
         Iterator.range(0, numCols).map(c => ((nodeId, c), (bin, grad, hess)))
       }
@@ -389,10 +493,9 @@ private[gbm] object Tree extends Logging {
 
 
   /**
-    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    * Compute the histogram of nodes in a step-wise fashion, given sum of hist
     *
     * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
-    * @param minNodeId   minimum nodeId for this level
     * @param numCols     number of columns
     * @param histSums    pre-computed sum of hist of right leaves, obtained from the stats of splits in the last round
     * @param parallelism parallelism
@@ -400,11 +503,10 @@ private[gbm] object Tree extends Logging {
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
-  def computeHistogramSparse[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
-                                                                            minNodeId: Long,
-                                                                            numCols: Int,
-                                                                            histSums: Map[Long, (H, H)],
-                                                                            parallelism: Int): RDD[((Long, Int), Array[H])] = {
+  def computeHistogramStepWiseImpl[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
+                                                                                  numCols: Int,
+                                                                                  histSums: Map[Long, (H, H)],
+                                                                                  parallelism: Int): RDD[((Long, Int), Array[H])] = {
 
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
@@ -416,25 +518,34 @@ private[gbm] object Tree extends Logging {
 
     val partitioner2 = new GBMHashPartitioner(partitions = parallelism)
 
-    data.filter { case (_, nodeId) =>
-      // root or right leaves
-      nodeId >= minNodeId && nodeId % 2 == 1L
+    val sc = data.sparkContext
 
-    }.flatMap { case ((grad, hess, bins), nodeId) =>
+    // make sure all (nodeId, col) pairs are taken into account
+    // by the way, store sum of hist in zero-index bin
+    val rdd0 = sc.range(0, numCols)
+      .flatMap { col =>
+        histSums.iterator.map { case (nodeId, (gradSum, hessSum)) =>
+          ((nodeId, col.toInt, intB.zero), (gradSum, hessSum))
+        }
+      }
+
+    val rdd1 = data.flatMap { case ((grad, hess, bins), nodeId) =>
       // ignore zero-index bins
       bins.activeIter.map { case (col, bin) =>
         ((nodeId, col, bin), (grad, hess))
       }
+    }
 
-    }.reduceByKey(
-      // aggregate by (nodeId, col, bin), and partition by (nodeId, col)
-      partitioner = partitioner1,
-      func = {
-        case ((grad1, hess1), (grad2, hess2)) =>
-          (numH.plus(grad1, grad2), numH.plus(hess1, hess2))
+    sc.union(rdd0, rdd1)
+      .reduceByKey(
+        // aggregate by (nodeId, col, bin), and partition by (nodeId, col)
+        partitioner = partitioner1,
+        func = {
+          case ((grad1, hess1), (grad2, hess2)) =>
+            (numH.plus(grad1, grad2), numH.plus(hess1, hess2))
+        }
 
-      }).map { case ((nodeId, col, bin), (grad, hess)) =>
-      require(intB.gt(bin, intB.zero))
+      ).map { case ((nodeId, col, bin), (grad, hess)) =>
       ((nodeId, col), (bin, grad, hess))
 
       // group by (nodeId, col), while keeping the partitioning
@@ -442,25 +553,26 @@ private[gbm] object Tree extends Logging {
 
       .map { case ((nodeId, col), it) =>
 
-        val (gradSum, hessSum) = histSums(nodeId)
-
         val seq = it.toSeq
         val len = (seq.map(t => intB.toInt(t._1)).max + 1) << 1
 
         val hist = Array.fill(len)(numH.zero)
-        hist(0) = gradSum
-        hist(1) = hessSum
-
         var i = 0
         while (i < seq.length) {
           val (bin, grad, hess) = seq(i)
 
           val index = intB.toInt(bin) << 1
 
-          hist(index) = grad
-          hist(index + 1) = hess
-          hist(0) = numH.minus(hist(0), grad)
-          hist(1) = numH.minus(hist(1), hess)
+          // zero-index bin stores the sum of hist
+          if (index == 0) {
+            hist(0) = numH.plus(hist(0), grad)
+            hist(1) = numH.plus(hist(1), hess)
+          } else {
+            hist(index) = grad
+            hist(index + 1) = hess
+            hist(0) = numH.minus(hist(0), grad)
+            hist(1) = numH.minus(hist(1), hess)
+          }
 
           i += 1
         }
@@ -550,7 +662,8 @@ private[gbm] object Tree extends Logging {
                                         treeConfig: TreeConfig,
                                         seed: Long): Map[Long, Split] = {
     val sc = nodeHists.sparkContext
-    val acc = sc.longAccumulator("NumTrials")
+    val accTrials = sc.longAccumulator("NumTrials")
+    val accSplits = sc.longAccumulator("NumSplits")
 
     // column sampling by level
     val sampled = if (boostConfig.getColSampleByLevel == 1) {
@@ -561,9 +674,14 @@ private[gbm] object Tree extends Logging {
 
     val splits = sampled.flatMap {
       case ((nodeId, col), hist) =>
-        acc.add(1L)
+        accTrials.add(1L)
         val split = Split.split[H](col, hist, boostConfig, treeConfig)
-        split.map((nodeId, _))
+        if (split.nonEmpty) {
+          accSplits.add(1L)
+          Iterator.single((nodeId, split.get))
+        } else {
+          Iterator.empty
+        }
 
     }.reduceByKeyLocally(func = {
       case (split1, split2) =>
@@ -571,7 +689,7 @@ private[gbm] object Tree extends Logging {
 
     }).toMap
 
-    logInfo(s"${acc.value} trials to find best splits of ${splits.size} nodes")
+    logInfo(s"${accTrials.value} trials -> ${accSplits.value} splits -> ${splits.size} best splits")
     splits
   }
 
@@ -580,21 +698,15 @@ private[gbm] object Tree extends Logging {
     * Since the (nodeId, columnId) candidate pairs to search optimum split are known before computation
     * we can partition them in a partial sorted way to reduce the communication overhead in following aggregation
     *
-    * @param nodeIds     splitted nodeIds in the last level
+    * @param leaves      leaves in current level
     * @param numCols     number of columns
     * @param parallelism parallelism
     * @return even splits of pairs
     */
-  def computeRanges(nodeIds: Array[Long],
+  def computeRanges(leaves: Array[Long],
                     numCols: Int,
                     parallelism: Int): Array[(Long, Int)] = {
     require(parallelism > 0)
-
-    // leaves in current level
-    val leaves = nodeIds.flatMap { nodeId =>
-      val leftNodeId = nodeId << 1
-      Seq(leftNodeId, leftNodeId + 1)
-    }.sorted
 
     val numLeaves = leaves.length
 
@@ -635,11 +747,10 @@ class TreeModel(val root: Node) extends Serializable {
   def index(vec: Vector, discretizer: Discretizer): Long = root.index(vec, discretizer)
 
   def computeImportance: Map[Int, Double] = {
-    val gains = mutable.Map.empty[Int, Double]
+    val gains = new OpenHashMap[Int, Double]()
     root.nodeIterator.foreach {
       case n: InternalNode =>
-        val gain = gains.getOrElse(n.featureId, 0.0)
-        gains.update(n.featureId, gain + n.gain)
+        gains.changeValue(n.featureId, n.gain, _ + n.gain)
 
       case _ =>
     }

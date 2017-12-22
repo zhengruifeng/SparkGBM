@@ -401,35 +401,6 @@ private[gbm] object Utils extends Logging {
 
 
   /**
-    * data sampling, if number of partitions is large, directly sampling the partitions is more efficient
-    */
-  def sample[T: ClassTag](data: RDD[T],
-                          fraction: Double,
-                          seed: Long): RDD[T] = {
-
-    if (fraction == 1.0) {
-      data
-
-    } else {
-
-      val numPartitions = data.getNumPartitions
-      val parallelism = data.sparkContext.defaultParallelism
-
-      if (numPartitions * fraction < parallelism * 8) {
-        data.sample(false, fraction, seed)
-
-      } else {
-
-        logInfo(s"Using partition-based sampling")
-
-        import RDDFunctions._
-        data.samplePartitions(fraction, seed)
-      }
-    }
-  }
-
-
-  /**
     * helper function to obtain a binary search function
     */
   def makeBinarySearch[K: Ordering : ClassTag]: (Array[K], K) => Int = {

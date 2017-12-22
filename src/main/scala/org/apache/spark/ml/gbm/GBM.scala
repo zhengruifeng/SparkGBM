@@ -541,8 +541,8 @@ private[gbm] object GBM extends Logging {
   val Width = "width"
   val Depth = "depth"
 
-  val Float = "float"
-  val Double = "double"
+  val SinglePrecision = "float"
+  val DoublePrecision = "double"
 
 
   /**
@@ -594,11 +594,11 @@ private[gbm] object GBM extends Logging {
     }
 
     boostConfig.getFloatType match {
-      case Float =>
+      case SinglePrecision =>
         logInfo("Data representation of gradient: Float")
         boostImpl[Float, B](binData, binTest, boostConfig, validation, discretizer, initialModel)
 
-      case Double =>
+      case DoublePrecision =>
         logInfo("Data representation of gradient: Double")
         boostImpl[Double, B](binData, binTest, boostConfig, validation, discretizer, initialModel)
     }

@@ -11,23 +11,23 @@ private[gbm] class LearningNode(val nodeId: Long,
                                 var leftNode: Option[LearningNode],
                                 var rightNode: Option[LearningNode]) extends Serializable {
 
-  def index[B: Integral](bins: Array[B]): Long = {
+  def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Long = {
     if (isLeaf) {
       nodeId
     } else if (split.get.goLeft(bins)) {
-      leftNode.get.index(bins)
+      leftNode.get.index[B](bins)
     } else {
-      rightNode.get.index(bins)
+      rightNode.get.index[B](bins)
     }
   }
 
-  def predict[B: Integral](bins: Array[B]): Double = {
+  def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double = {
     if (isLeaf) {
       prediction
     } else if (split.get.goLeft(bins)) {
-      leftNode.get.predict(bins)
+      leftNode.get.predict[B](bins)
     } else {
-      rightNode.get.predict(bins)
+      rightNode.get.predict[B](bins)
     }
   }
 

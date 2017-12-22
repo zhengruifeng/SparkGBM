@@ -280,36 +280,8 @@ private[gbm] object Tree extends Logging {
     }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
       seqOp = {
         case (hist, (bin, grad, hess)) =>
-          val index = intB.toInt(bin) << 1
-
-          if (hist.length < index + 2) {
-            val newHist = hist ++ Array.fill(index + 2 - hist.length)(numH.zero)
-            newHist(index) = grad
-            newHist(index + 1) = hess
-            newHist
-          } else {
-            hist(index) = numH.plus(hist(index), grad)
-            hist(index + 1) = numH.plus(hist(index + 1), hess)
-            hist
-          }
-
-      }, combOp = {
-        case (hist1, hist2) =>
-          var i = 0
-          if (hist1.length >= hist2.length) {
-            while (i < hist2.length) {
-              hist1(i) = numH.plus(hist1(i), hist2(i))
-              i += 1
-            }
-            hist1
-          } else {
-            while (i < hist1.length) {
-              hist2(i) = numH.plus(hist1(i), hist2(i))
-              i += 1
-            }
-            hist2
-          }
-      }
+          updateHistArray[H, B](hist, bin, grad, hess)
+      }, combOp = mergeHistArray[H]
 
     ).map { case ((nodeId, col), hist) =>
       var i = 2
@@ -365,36 +337,8 @@ private[gbm] object Tree extends Logging {
       .aggregateByKey[Array[H]](Array.empty[H], parallelism)(
       seqOp = {
         case (hist, (bin, grad, hess)) =>
-          val index = intB.toInt(bin) << 1
-
-          if (hist.length < index + 2) {
-            val newHist = hist ++ Array.fill(index + 2 - hist.length)(numH.zero)
-            newHist(index) = grad
-            newHist(index + 1) = hess
-            newHist
-          } else {
-            hist(index) = numH.plus(hist(index), grad)
-            hist(index + 1) = numH.plus(hist(index + 1), hess)
-            hist
-          }
-
-      }, combOp = {
-        case (hist1, hist2) =>
-          var i = 0
-          if (hist1.length >= hist2.length) {
-            while (i < hist2.length) {
-              hist1(i) = numH.plus(hist1(i), hist2(i))
-              i += 1
-            }
-            hist1
-          } else {
-            while (i < hist1.length) {
-              hist2(i) = numH.plus(hist1(i), hist2(i))
-              i += 1
-            }
-            hist2
-          }
-      }
+          updateHistArray[H, B](hist, bin, grad, hess)
+      }, combOp = mergeHistArray[H]
 
     ).map { case ((nodeId, col), hist) =>
       var i = 2
@@ -735,6 +679,48 @@ private[gbm] object Tree extends Logging {
         val c = (b * numCols).round.toInt
         (leaves(n), c)
       }.distinct.sorted
+    }
+  }
+
+
+  def updateHistArray[H: Numeric : ClassTag, B: Integral : ClassTag](hist: Array[H],
+                                                                     bin: B,
+                                                                     grad: H,
+                                                                     hess: H): Array[H] = {
+    val intB = implicitly[Integral[B]]
+    val numH = implicitly[Numeric[H]]
+
+    val index = intB.toInt(bin) << 1
+
+    if (hist.length < index + 2) {
+      val newHist = hist ++ Array.fill(index + 2 - hist.length)(numH.zero)
+      newHist(index) = grad
+      newHist(index + 1) = hess
+      newHist
+    } else {
+      hist(index) = numH.plus(hist(index), grad)
+      hist(index + 1) = numH.plus(hist(index + 1), hess)
+      hist
+    }
+  }
+
+  def mergeHistArray[H: Numeric : ClassTag](hist1: Array[H],
+                                            hist2: Array[H]): Array[H] = {
+    val numH = implicitly[Numeric[H]]
+
+    var i = 0
+    if (hist1.length >= hist2.length) {
+      while (i < hist2.length) {
+        hist1(i) = numH.plus(hist1(i), hist2(i))
+        i += 1
+      }
+      hist1
+    } else {
+      while (i < hist1.length) {
+        hist2(i) = numH.plus(hist1(i), hist2(i))
+        i += 1
+      }
+      hist2
     }
   }
 }

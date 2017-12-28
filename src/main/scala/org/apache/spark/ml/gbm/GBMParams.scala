@@ -156,7 +156,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val catCols: IntArrayParam =
-    new IntArrayParam(this, "catCols", "Indices of categorical features")
+    new IntArrayParam(this, "catCols", "Indices of categorical features",
+      (cols: Array[Int]) => cols.forall(_ >= 0) && cols.length == cols.distinct.length)
 
   def getCatCols: Array[Int] = $(catCols)
 
@@ -169,7 +170,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val rankCols: IntArrayParam =
-    new IntArrayParam(this, "rankCols", "Indices of ranking features")
+    new IntArrayParam(this, "rankCols", "Indices of ranking features",
+      (cols: Array[Int]) => cols.forall(_ >= 0) && cols.length == cols.distinct.length)
 
   def getRankCols: Array[Int] = $(rankCols)
 

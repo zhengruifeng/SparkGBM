@@ -457,21 +457,6 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Sparsity threshold to build trees in a sparse fashion.
-    * (default = 0.9)
-    *
-    * @group param
-    */
-  final val sparsityThreshold: DoubleParam =
-    new DoubleParam(this, "sparsityThreshold", "Sparsity threshold to build trees in a sparse fashion.",
-      ParamValidators.inRange(0.0, 1.0))
-
-  def getSparsityThreshold: Double = $(sparsityThreshold)
-
-  setDefault(sparsityThreshold -> 0.9)
-
-
-  /**
     * Parallelism of histogram computation and leaves splitting. If negative, means times of defaultParallelism of Spark.
     * (default = -1)
     *

@@ -62,9 +62,6 @@ private[gbm] object BinVector {
       case ClassTag.Byte => 1
       case ClassTag.Short => 2
       case ClassTag.Int => 4
-      case ClassTag.Long => 8
-      case ClassTag.Float => 4
-      case ClassTag.Double => 8
     }
   }
 

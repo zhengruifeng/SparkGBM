@@ -40,7 +40,6 @@ class BoostConfig extends Logging with Serializable {
   private var baseScore: Double = _
   private var catCols: BitSet = _
   private var rankCols: BitSet = _
-  private var handleSparsity: Boolean = _
 
   /** maximum number of iterations */
   private[gbm] def setMaxIter(value: Int): this.type = {
@@ -487,14 +486,6 @@ class BoostConfig extends Logging with Serializable {
 
   def getRankCols: BitSet = rankCols
 
-
-  /** whether to store the bins in a sparse fashion */
-  private[gbm] def setHandleSparsity(value: Boolean): this.type = {
-    handleSparsity = value
-    this
-  }
-
-  def getHandleSparsity: Boolean = handleSparsity
 
 
   private[gbm] def isNum(colIndex: Int): Boolean = !isCat(colIndex) && !isRank(colIndex)

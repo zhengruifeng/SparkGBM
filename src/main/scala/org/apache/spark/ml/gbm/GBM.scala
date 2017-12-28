@@ -175,25 +175,29 @@ class GBM extends Logging with Serializable {
 
 
   /** indices of categorical columns */
-  private var catCols: Set[Int] = Set.empty
+  private var catCols: BitSet = new BitSet(1)
 
   def setCatCols(value: Set[Int]): this.type = {
-    catCols = value
+    require(value.forall(_ >= 0))
+    catCols = new BitSet(value.max + 1)
+    value.foreach(catCols.set)
     this
   }
 
-  def getCatCols: Set[Int] = catCols
+  def getCatCols: BitSet = catCols
 
 
   /** indices of ranking columns */
-  private var rankCols: Set[Int] = Set.empty
+  private var rankCols: BitSet = new BitSet(1)
 
   def setRankCols(value: Set[Int]): this.type = {
-    rankCols = value
+    require(value.forall(_ >= 0))
+    rankCols = new BitSet(value.max + 1)
+    value.foreach(rankCols.set)
     this
   }
 
-  def getRankCols: Set[Int] = rankCols
+  def getRankCols: BitSet = rankCols
 
 
   /** subsample ratio of the training instance */
@@ -407,18 +411,6 @@ class GBM extends Logging with Serializable {
   def getZeroAsMissing: Boolean = zeroAsMissing
 
 
-  /** sparsity threshold to build trees in a sparse fashion */
-  private var sparsityThreshold: Double = 0.9
-
-  def setSparsityThreshold(value: Double): this.type = {
-    require(value >= 0 && value <= 1)
-    sparsityThreshold = value
-    this
-  }
-
-  def getSparsityThreshold: Double = sparsityThreshold
-
-
   /** training, dataset contains (weight, label, vec) */
   def fit(data: RDD[(Double, Double, Vector)]): GBMModel = {
     fit(data, None)
@@ -453,24 +445,16 @@ class GBM extends Logging with Serializable {
       initialModel.get.discretizer
 
     } else {
-      if (catCols.nonEmpty) {
-        require(catCols.min >= 0 && catCols.max < numCols)
-      }
-      if (rankCols.nonEmpty) {
-        require(rankCols.min >= 0 && rankCols.max < numCols)
-      }
-      require(catCols.intersect(rankCols).isEmpty)
+      catCols.iterator.forall(v => v >= 0 && v < numCols)
+      rankCols.iterator.forall(v => v >= 0 && v < numCols)
 
-      Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins, numericalBinType, zeroAsMissing, aggregationDepth)
+      require(catCols.iterator.toSet.intersect(rankCols.iterator.toSet).isEmpty)
+
+      Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins,
+        numericalBinType, zeroAsMissing, aggregationDepth)
     }
     logInfo(s"Average number of bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
-
-    val catSet = new BitSet(numCols)
-    catCols.foreach(catSet.set)
-
-    val rankSet = new BitSet(numCols)
-    rankCols.foreach(rankSet.set)
-
+    logInfo(s"Sparsity of train data: ${discretizer.sparsity}")
 
     val boostConfig = new BoostConfig
     boostConfig.setMaxIter(maxIter)
@@ -485,8 +469,8 @@ class GBM extends Logging with Serializable {
       .setObjectiveFunc(objectiveFunc)
       .setEvaluateFunc(evaluateFunc)
       .setCallbackFunc(callbackFunc)
-      .setCatCols(catSet)
-      .setRankCols(rankSet)
+      .setCatCols(catCols)
+      .setRankCols(rankCols)
       .setSubSample(subSample)
       .setColSampleByTree(colSampleByTree)
       .setColSampleByLevel(colSampleByLevel)
@@ -507,25 +491,12 @@ class GBM extends Logging with Serializable {
     if (initialModel.isEmpty) {
       boostConfig.setBaseScore(baseScore)
 
-      logInfo(s"Sparsity of train data: ${discretizer.sparsity}")
-      boostConfig.setHandleSparsity(discretizer.sparsity >= sparsityThreshold)
-
     } else {
 
       if (initialModel.get.baseScore != baseScore) {
         logWarning(s"baseScore is already provided by the initial model, related param (baseScore) will be ignored")
       }
       boostConfig.setBaseScore(initialModel.get.baseScore)
-
-      val sparse = Discretizer.computeSparsity(data.map(_._3), numCols, zeroAsMissing, aggregationDepth)
-      logInfo(s"Sparsity of train data: $sparse")
-      boostConfig.setHandleSparsity(sparse >= sparsityThreshold)
-    }
-
-    if (boostConfig.getHandleSparsity) {
-      logInfo(s"Using sparse bin vectors")
-    } else {
-      logInfo(s"Using dense bin vectors")
     }
 
     GBM.boost(data, test.getOrElse(sc.emptyRDD), boostConfig, validation, discretizer, initialModel)
@@ -584,14 +555,8 @@ private[gbm] object GBM extends Logging {
     Discretizer.registerKryoClasses(data.sparkContext)
     BinVector.registerKryoClasses(data.sparkContext)
 
-    val transformFunc = discretizer.getTransformFunc[B](boostConfig.getHandleSparsity)
-
-    val binData = data.map { case (weight, label, vec) =>
-      (weight, label, transformFunc(vec))
-    }
-    val binTest = test.map { case (weight, label, vec) =>
-      (weight, label, transformFunc(vec))
-    }
+    val binData = discretizer.transform(data)
+    val binTest = discretizer.transform(test)
 
     boostConfig.getFloatType match {
       case SinglePrecision =>

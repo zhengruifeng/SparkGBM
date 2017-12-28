@@ -142,8 +142,6 @@ class GBMRegressor(override val uid: String) extends
 
   def setZeroAsMissing(value: Boolean): this.type = set(zeroAsMissing, value)
 
-  def setSparsityThreshold(value: Double): this.type = set(sparsityThreshold, value)
-
   def setParallelism(value: Int): this.type = set(parallelism, value)
 
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
@@ -254,7 +252,6 @@ class GBMRegressor(override val uid: String) extends
       .setMaxBruteBins($(maxBruteBins))
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
-      .setSparsityThreshold($(sparsityThreshold))
       .setParallelism($(parallelism))
       .setInitialModel(initialModel)
 

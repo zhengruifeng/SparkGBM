@@ -12,7 +12,7 @@ import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.util.QuantileSummaries
-import org.apache.spark.util.collection.OpenHashMap
+import org.apache.spark.util.collection.{BitSet, OpenHashMap}
 
 
 /**
@@ -46,7 +46,8 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   }
 
 
-  private[gbm] def getTransformFunc[@spec(Byte, Short, Int) B: Integral : ClassTag](handleSparsity: Boolean): Vector => BinVector[B] = {
+  private[gbm] def transform[@spec(Byte, Short, Int) B: Integral : ClassTag](data: RDD[(Double, Double, Vector)]): RDD[(Double, Double, BinVector[B])] = {
+    val intB: Integral[B] = implicitly[Integral[B]]
 
     val getIter = if (zeroAsMissing) {
       (vec: Vector) => Utils.getActiveIter(vec)
@@ -54,12 +55,15 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
       (vec: Vector) => Utils.getTotalIter(vec)
     }
 
-    val intB: Integral[B] = implicitly[Integral[B]]
+    data.mapPartitions { it =>
 
-    if (handleSparsity) {
-      (vec: Vector) =>
-        val indexBuff = mutable.ArrayBuffer.empty[Int]
-        val valueBuff = mutable.ArrayBuffer.empty[B]
+      val indexBuff = mutable.ArrayBuffer.empty[Int]
+      val valueBuff = mutable.ArrayBuffer.empty[B]
+
+      it.map { case (weight, label, vec) =>
+        indexBuff.clear
+        valueBuff.clear
+
         getIter(vec).foreach { case (i, v) =>
           val bin = discretizeWithIndex(v, i)
           if (bin != 0) {
@@ -67,18 +71,10 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
             valueBuff.append(intB.fromInt(bin))
           }
         }
-        BinVector.sparse[B](numCols, indexBuff.toArray, valueBuff.toArray).compress
 
-    } else {
-      (vec: Vector) =>
-        val bins = Array.fill(numCols)(intB.zero)
-        getIter(vec).foreach { case (i, v) =>
-          val bin = discretizeWithIndex(v, i)
-          if (bin != 0) {
-            bins(i) = intB.fromInt(bin)
-          }
-        }
-        BinVector.dense[B](bins).compress
+        val bins = BinVector.sparse[B](numCols, indexBuff.toArray, valueBuff.toArray).compress
+        (weight, label, bins)
+      }
     }
   }
 
@@ -121,8 +117,8 @@ private[gbm] object Discretizer extends Logging {
     */
   def fit(vectors: RDD[Vector],
           numCols: Int,
-          catCols: Set[Int],
-          rankCols: Set[Int],
+          catCols: BitSet,
+          rankCols: BitSet,
           maxBins: Int,
           numericalBinType: String,
           zeroAsMissing: Boolean,
@@ -137,9 +133,9 @@ private[gbm] object Discretizer extends Logging {
 
     // zero bin index is always reserved for missing value
     val emptyAggs = Array.range(0, numCols).map { col =>
-      if (catCols.contains(col)) {
+      if (catCols.get(col)) {
         new CatColAgg(maxBins - 1)
-      } else if (rankCols.contains(col)) {
+      } else if (rankCols.get(col)) {
         new RankColAgg(maxBins - 1)
       } else if (numericalBinType == GBM.Depth) {
         new QuantileNumColAgg(maxBins - 1)

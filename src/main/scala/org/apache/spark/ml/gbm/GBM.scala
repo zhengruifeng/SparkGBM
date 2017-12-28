@@ -888,7 +888,7 @@ private[gbm] object GBM extends Logging {
     val catSet = new BitSet(cols.length)
     cols.zipWithIndex
       .filter { case (col, _) =>
-        boostConfig.getCatCols.get(col)
+        boostConfig.isCat(col)
       }.map(_._2).foreach(catSet.set)
 
 

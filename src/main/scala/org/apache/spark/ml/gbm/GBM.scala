@@ -178,9 +178,17 @@ class GBM extends Logging with Serializable {
   private var catCols: BitSet = new BitSet(1)
 
   def setCatCols(value: Set[Int]): this.type = {
-    require(value.forall(_ >= 0))
-    catCols = new BitSet(value.max + 1)
+    var max = 0
+    value.foreach { v =>
+      require(v >= 0)
+      if (v > max) {
+        max = v
+      }
+    }
+
+    catCols = new BitSet(max + 1)
     value.foreach(catCols.set)
+
     this
   }
 
@@ -191,8 +199,15 @@ class GBM extends Logging with Serializable {
   private var rankCols: BitSet = new BitSet(1)
 
   def setRankCols(value: Set[Int]): this.type = {
-    require(value.forall(_ >= 0))
-    rankCols = new BitSet(value.max + 1)
+    var max = 0
+    value.foreach { v =>
+      require(v >= 0)
+      if (v > max) {
+        max = v
+      }
+    }
+
+    rankCols = new BitSet(max + 1)
     value.foreach(rankCols.set)
     this
   }

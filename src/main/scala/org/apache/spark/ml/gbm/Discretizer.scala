@@ -133,9 +133,9 @@ private[gbm] object Discretizer extends Logging {
 
     // zero bin index is always reserved for missing value
     val emptyAggs = Array.range(0, numCols).map { col =>
-      if (catCols.get(col)) {
+      if (col < catCols.capacity && catCols.get(col)) {
         new CatColAgg(maxBins - 1)
-      } else if (rankCols.get(col)) {
+      } else if (col < rankCols.capacity && rankCols.get(col)) {
         new RankColAgg(maxBins - 1)
       } else if (numericalBinType == GBM.Depth) {
         new QuantileNumColAgg(maxBins - 1)

@@ -192,7 +192,7 @@ class GBM extends Logging with Serializable {
     this
   }
 
-  def getCatCols: BitSet = catCols
+  def getCatCols: Set[Int] = catCols.iterator.toSet
 
 
   /** indices of ranking columns */
@@ -212,7 +212,7 @@ class GBM extends Logging with Serializable {
     this
   }
 
-  def getRankCols: BitSet = rankCols
+  def getRankCols: Set[Int] = rankCols.iterator.toSet
 
 
   /** subsample ratio of the training instance */
@@ -463,7 +463,7 @@ class GBM extends Logging with Serializable {
       catCols.iterator.forall(v => v >= 0 && v < numCols)
       rankCols.iterator.forall(v => v >= 0 && v < numCols)
 
-      require(catCols.iterator.toSet.intersect(rankCols.iterator.toSet).isEmpty)
+      require((catCols & rankCols).iterator.isEmpty)
 
       Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins,
         numericalBinType, zeroAsMissing, aggregationDepth)

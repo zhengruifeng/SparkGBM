@@ -278,21 +278,11 @@ private[gbm] object Tree extends Logging {
         }
 
     }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
-      seqOp = {
-        case (hist, (bin, grad, hess)) =>
-          updateHistArray[H, B](hist, bin, grad, hess)
-      }, combOp = mergeHistArray[H]
+      seqOp = updateHistArray[H, B],
+      combOp = mergeHistArray[H]
 
     ).map { case ((nodeId, col), hist) =>
-      var i = 2
-      while (i < hist.length) {
-        // zero-index bin stores the sum of hist
-        hist(0) = numH.minus(hist(0), hist(i))
-        hist(1) = numH.minus(hist(1), hist(i + 1))
-        i += 2
-      }
-
-      ((nodeId, col), hist)
+      ((nodeId, col), adjustHistArray[H](hist))
     }
   }
 
@@ -335,21 +325,11 @@ private[gbm] object Tree extends Logging {
 
     sc.union(rdd0, rdd1)
       .aggregateByKey[Array[H]](Array.empty[H], parallelism)(
-      seqOp = {
-        case (hist, (bin, grad, hess)) =>
-          updateHistArray[H, B](hist, bin, grad, hess)
-      }, combOp = mergeHistArray[H]
+      seqOp = updateHistArray[H, B],
+      combOp = mergeHistArray[H]
 
     ).map { case ((nodeId, col), hist) =>
-      var i = 2
-      while (i < hist.length) {
-        // zero-index bin stores the sum of hist
-        hist(0) = numH.minus(hist(0), hist(i))
-        hist(1) = numH.minus(hist(1), hist(i + 1))
-        i += 2
-      }
-
-      ((nodeId, col), hist)
+      ((nodeId, col), adjustHistArray[H](hist))
     }
   }
 
@@ -684,11 +664,11 @@ private[gbm] object Tree extends Logging {
 
 
   def updateHistArray[H: Numeric : ClassTag, B: Integral : ClassTag](hist: Array[H],
-                                                                     bin: B,
-                                                                     grad: H,
-                                                                     hess: H): Array[H] = {
+                                                                     point: (B, H, H)): Array[H] = {
     val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
+
+    val (bin, grad, hess) = point
 
     val index = intB.toInt(bin) << 1
 
@@ -703,6 +683,7 @@ private[gbm] object Tree extends Logging {
       hist
     }
   }
+
 
   def mergeHistArray[H: Numeric : ClassTag](hist1: Array[H],
                                             hist2: Array[H]): Array[H] = {
@@ -722,6 +703,21 @@ private[gbm] object Tree extends Logging {
       }
       hist2
     }
+  }
+
+
+  def adjustHistArray[H: Numeric : ClassTag](hist: Array[H]): Array[H] = {
+    val numH = implicitly[Numeric[H]]
+
+    var i = 2
+    while (i < hist.length) {
+      // zero-index bin stores the sum of hist
+      hist(0) = numH.minus(hist(0), hist(i))
+      hist(1) = numH.minus(hist(1), hist(i + 1))
+      i += 2
+    }
+
+    hist
   }
 }
 

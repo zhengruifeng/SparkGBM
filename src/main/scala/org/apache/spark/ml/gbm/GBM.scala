@@ -179,7 +179,7 @@ class GBM extends Logging with Serializable {
 
   def setCatCols(value: Set[Int]): this.type = {
     require(value.forall(_ >= 0))
-    catCols = new BitSet(value.fold(0)(math.max) + 1)
+    catCols = new BitSet(value.fold(1)(math.max))
     value.foreach(catCols.set)
     this
   }
@@ -192,7 +192,7 @@ class GBM extends Logging with Serializable {
 
   def setRankCols(value: Set[Int]): this.type = {
     require(value.forall(_ >= 0))
-    rankCols = new BitSet(value.fold(0)(math.max) + 1)
+    rankCols = new BitSet(value.fold(1)(math.max))
     value.foreach(rankCols.set)
     this
   }
@@ -552,8 +552,9 @@ private[gbm] object GBM extends Logging {
                                                validation: Boolean,
                                                discretizer: Discretizer,
                                                initialModel: Option[GBMModel]): GBMModel = {
-    Discretizer.registerKryoClasses(data.sparkContext)
-    BinVector.registerKryoClasses(data.sparkContext)
+    val sc = data.sparkContext
+    Discretizer.registerKryoClasses(sc)
+    BinVector.registerKryoClasses(sc)
 
     val binData = discretizer.transform(data)
     val binTest = discretizer.transform(test)
@@ -837,7 +838,7 @@ private[gbm] object GBM extends Logging {
     val rowSampled = if (boostConfig.getSubSample == 1) {
       zipped
 
-    } else if (zipped.getNumPartitions * boostConfig.getSubSample >= sc.defaultParallelism * 8) {
+    } else if (zipped.getNumPartitions * boostConfig.getSubSample >= sc.defaultParallelism * 2) {
       // if number of partitions is large, directly sampling the partitions is more efficient
       import RDDFunctions._
       logInfo(s"Using partition-based sampling")
@@ -870,11 +871,11 @@ private[gbm] object GBM extends Logging {
     }
 
     // indices of categorical columns in the selected column subset
-    val catSet = new BitSet(cols.length)
-    cols.zipWithIndex
-      .filter { case (col, _) =>
-        boostConfig.isCat(col)
-      }.map(_._2).foreach(catSet.set)
+    val catCols = cols.zipWithIndex.filter { case (col, _) =>
+      boostConfig.isCat(col)
+    }.map(_._2)
+    val catSet = new BitSet(catCols.fold(1)(math.max))
+    catCols.foreach(catSet.set)
 
 
     val colSampled = boostConfig.getBoostType match {
@@ -908,12 +909,11 @@ private[gbm] object GBM extends Logging {
     }
 
 
-    val treeConfig = new TreeConfig(iteration, numTrees, catSet, cols)
-
     if (handlePersistence) {
       colSampled.persist(boostConfig.getStorageLevel)
     }
 
+    val treeConfig = new TreeConfig(iteration, numTrees, catSet, cols)
     val tree = Tree.train[H, B](colSampled, boostConfig, treeConfig)
 
     if (handlePersistence) {

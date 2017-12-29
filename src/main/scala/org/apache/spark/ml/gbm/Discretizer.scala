@@ -61,8 +61,8 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
       val valueBuff = mutable.ArrayBuffer.empty[B]
 
       it.map { case (weight, label, vec) =>
-        indexBuff.clear
-        valueBuff.clear
+        indexBuff.clear()
+        valueBuff.clear()
 
         getIter(vec).foreach { case (i, v) =>
           val bin = discretizeWithIndex(v, i)

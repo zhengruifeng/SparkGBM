@@ -125,24 +125,6 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   /** Unpersist the Dataset */
   protected def unpersist(data: RDD[T]): Unit = {
     data.unpersist(blocking = false)
-    clearShuffleDependencies(data)
-  }
-
-  /** Clean the shuffles & all of its parents. */
-  protected def clearShuffleDependencies(data: RDD[_]): Unit = {
-    if (data.getStorageLevel == StorageLevel.NONE &&
-      data.dependencies != null) {
-      sc.cleaner.foreach { cleaner =>
-        data.dependencies.foreach { dep =>
-          dep match {
-            case shuffle: ShuffleDependency[_, _, _] =>
-              cleaner.doCleanupShuffle(shuffle.shuffleId, blocking = false)
-            case _ =>
-          }
-          clearShuffleDependencies(dep.rdd)
-        }
-      }
-    }
   }
 
   /** Call this to unpersist the Dataset. */
@@ -244,21 +226,60 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
     require(fraction >= 0 && fraction <= 1)
 
     val rng = new Random(seed)
+
+    val numGroups = self.sparkContext.defaultParallelism
     val numPartitions = self.getNumPartitions
-    val pids = rng.shuffle(Seq.range(0, numPartitions)).toArray
+    val groupSize = numPartitions / numGroups
 
     val n = numPartitions * fraction
     val m = n.toInt
     val r = n - m
 
-    val weights = mutable.Map.empty[Int, Double]
+    val start = rng.nextInt(numPartitions)
+    val pids = Array.range(start, numPartitions) ++ Array.range(0, start)
 
-    pids.take(m).foreach { pid =>
-      weights.update(pid, 1.0)
+    val weights = mutable.Map.empty[Int, Double]
+    val remains = mutable.Set.empty[Int]
+
+    pids.grouped(groupSize).foreach { group =>
+      val s = (group.length * fraction).floor.toInt
+      rng.shuffle(group.toSeq).take(s)
+        .foreach(weights.update(_, 1.0))
+    }
+
+    if (weights.size < m) {
+      val gids = rng.shuffle(Seq.range(0, numGroups))
+        .take(m - weights.size).toSet
+
+      pids.grouped(groupSize).zipWithIndex
+        .foreach { case (group, gid) =>
+          if (gids.contains(gid)) {
+            remains.clear()
+            group.filter(p => !weights.contains(p))
+              .foreach(remains.add)
+
+            rng.shuffle(remains.toSeq).headOption
+              .foreach(weights.update(_, 1.0))
+          }
+        }
+    }
+
+    if (weights.size < m) {
+      remains.clear()
+      pids.filter(p => !weights.contains(p))
+        .foreach(remains.add)
+
+      rng.shuffle(remains.toSeq).take(m - weights.size)
+        .foreach(weights.update(_, 1.0))
     }
 
     if (r > 0) {
-      weights.update(pids.last, r)
+      remains.clear()
+      pids.filter(p => !weights.contains(p))
+        .foreach(remains.add)
+
+      rng.shuffle(remains.toSeq).headOption
+        .foreach(weights.update(_, r))
     }
 
     samplePartitions(weights.toMap, seed)

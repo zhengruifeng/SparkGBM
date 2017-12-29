@@ -178,17 +178,9 @@ class GBM extends Logging with Serializable {
   private var catCols: BitSet = new BitSet(1)
 
   def setCatCols(value: Set[Int]): this.type = {
-    var max = 0
-    value.foreach { v =>
-      require(v >= 0)
-      if (v > max) {
-        max = v
-      }
-    }
-
-    catCols = new BitSet(max + 1)
+    require(value.forall(_ >= 0))
+    catCols = new BitSet(value.fold(0)(math.max) + 1)
     value.foreach(catCols.set)
-
     this
   }
 
@@ -199,15 +191,8 @@ class GBM extends Logging with Serializable {
   private var rankCols: BitSet = new BitSet(1)
 
   def setRankCols(value: Set[Int]): this.type = {
-    var max = 0
-    value.foreach { v =>
-      require(v >= 0)
-      if (v > max) {
-        max = v
-      }
-    }
-
-    rankCols = new BitSet(max + 1)
+    require(value.forall(_ >= 0))
+    rankCols = new BitSet(value.fold(0)(math.max) + 1)
     value.foreach(rankCols.set)
     this
   }
@@ -392,7 +377,7 @@ class GBM extends Logging with Serializable {
   def getMaxBruteBins: Int = maxBruteBins
 
   /** method to discretize numerical columns */
-  private var numericalBinType: String = "width"
+  private var numericalBinType: String = GBM.Width
 
   def setNumericalBinType(value: String): this.type = {
     require(value == GBM.Width || value == GBM.Depth)
@@ -404,10 +389,10 @@ class GBM extends Logging with Serializable {
 
 
   /** float precision to represent internal gradient, hessian and prediction */
-  private var floatType: String = "float"
+  private var floatType: String = GBM.SinglePrecision
 
   def setFloatType(value: String): this.type = {
-    require(value == "float" || value == "double")
+    require(value == GBM.SinglePrecision || value == GBM.DoublePrecision)
     floatType = value
     this
   }

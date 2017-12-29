@@ -99,8 +99,6 @@ private[gbm] object Tree extends Logging {
 
         // update tree only by best splits
         updateTree(root, minNodeId, bestSplits)
-
-        logInfo(s"$logPrefix Depth $depth: maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
         finished = true
 
       } else {

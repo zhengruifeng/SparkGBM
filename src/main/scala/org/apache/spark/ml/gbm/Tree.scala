@@ -90,13 +90,17 @@ private[gbm] object Tree extends Logging {
         finished = true
 
       } else if (numLeaves + splits.size > boostConfig.getMaxLeaves) {
+        // choose splits with highest gain score
+        val r = (boostConfig.getMaxLeaves - numLeaves).toInt
+        val bestSplits = splits.toArray.sortBy(_._2.gain).takeRight(r).toMap
+
+        logInfo(s"$logPrefix Depth $depth: splitting finished, ${bestSplits.size}/$numLeaves leaves split, " +
+          s"gain=${bestSplits.values.map(_.gain).sum}, duration ${(System.nanoTime - start) / 1e9} seconds")
+
+        // update tree only by best splits
+        updateTree(root, minNodeId, bestSplits)
+
         logInfo(s"$logPrefix Depth $depth: maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
-
-        // update tree by splits with highest gain score
-        val s = (boostConfig.getMaxLeaves - numLeaves).toInt
-        val best = splits.toArray.sortBy(_._2.gain).takeRight(s).toMap
-        updateTree(root, minNodeId, best)
-
         finished = true
 
       } else {

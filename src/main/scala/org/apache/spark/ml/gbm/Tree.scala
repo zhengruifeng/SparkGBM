@@ -40,7 +40,7 @@ private[gbm] object Tree extends Logging {
 
     val root = LearningNode.create(1L)
 
-    val prevSplits = mutable.Map.empty[Long, Split]
+    val prevSplits = mutable.OpenHashMap.empty[Long, Split]
 
     var minNodeId = 1L
     var numLeaves = 1L

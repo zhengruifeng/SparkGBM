@@ -1048,7 +1048,7 @@ private[gbm] object GBM extends Logging {
         (weight, label, numH.toDouble(pred.head))
     }
 
-    val result = mutable.Map.empty[String, Double]
+    val result = mutable.OpenHashMap.empty[String, Double]
 
     // persist if there are batch evaluators
     if (boostConfig.getBatchEvaluateFunc.nonEmpty) {

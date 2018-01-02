@@ -238,7 +238,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
     val start = rng.nextInt(numPartitions)
     val pids = Array.range(start, numPartitions) ++ Array.range(0, start)
 
-    val weights = mutable.Map.empty[Int, Double]
+    val weights = mutable.OpenHashMap.empty[Int, Double]
     val remains = mutable.Set.empty[Int]
 
     pids.grouped(groupSize).foreach { group =>

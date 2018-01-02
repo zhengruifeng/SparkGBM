@@ -15,13 +15,13 @@ private[gbm] trait Split extends Serializable {
 
   def left: Boolean
 
-  protected def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean
+  protected def goByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean
 
   protected def goLeftByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     if (left) {
-      go[B](bin)
+      goByBin[B](bin)
     } else {
-      !go[B](bin)
+      !goByBin[B](bin)
     }
   }
 
@@ -61,7 +61,7 @@ private[gbm] case class SeqSplit(featureId: Int,
                                  stats: Array[Double]) extends Split {
   require(stats.length == 6)
 
-  override def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+  override def goByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     val intB = implicitly[Integral[B]]
     val b = intB.toInt(bin)
     if (b == 0) {
@@ -86,7 +86,7 @@ private[gbm] case class SetSplit(featureId: Int,
                                  stats: Array[Double]) extends Split {
   require(stats.length == 6)
 
-  override def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+  override def goByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     val intB = implicitly[Integral[B]]
     val b = intB.toInt(bin)
     if (b == 0) {

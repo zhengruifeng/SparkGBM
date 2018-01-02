@@ -769,7 +769,8 @@ private[gbm] object TreeModel {
   def createModel(root: LearningNode,
                   boostMeta: BoostConfig,
                   treeMeta: TreeConfig): TreeModel = {
-    val leafIds = root.nodeIterator.filter(_.isLeaf).map(_.nodeId).toArray.sorted
+    val leafIds = root.nodeIterator.filter(_.isLeaf)
+      .map(_.nodeId).toArray.sorted
     val node = TreeModel.createNode(root, treeMeta.columns, leafIds)
     new TreeModel(node)
   }

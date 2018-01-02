@@ -127,20 +127,27 @@ private[gbm] object Split extends Logging {
 
     val numH = implicitly[Numeric[H]]
 
-    val gradSeq = Array.range(0, hist.length, 2).map(i => numH.toDouble(hist(i)))
-    val hessSeq = Array.range(1, hist.length, 2).map(i => numH.toDouble(hist(i)))
+    val len = hist.length >> 1
+
+    val gradSeq = Array.ofDim[Double](len)
+    val hessSeq = Array.ofDim[Double](len)
 
     var gradAbsSum = 0.0
     var hessAbsSum = 0.0
     var nnz = 0
 
     var i = 0
-    while (i < gradSeq.length) {
+    while (i < len) {
+      val idx = i << 1
+      gradSeq(i) = numH.toDouble(hist(idx))
+      hessSeq(i) = numH.toDouble(hist(idx + 1))
+
       if (gradSeq(i) != 0 || hessSeq(i) != 0) {
         gradAbsSum += gradSeq(i).abs
         hessAbsSum += hessSeq(i).abs
         nnz += 1
       }
+
       i += 1
     }
 
@@ -148,8 +155,8 @@ private[gbm] object Split extends Logging {
     // hists of zero-bin are always computed by minus
     // for numerical stability, we ignore small values
     if ((gradSeq.head != 0 || hessSeq.head != 0) &&
-      gradSeq.head.abs < gradAbsSum * 1e-6 &&
-      hessSeq.head.abs < hessAbsSum * 1e-6) {
+      gradSeq.head.abs < gradAbsSum * 1e-4 &&
+      hessSeq.head.abs < hessAbsSum * 1e-4) {
 
       gradSeq(0) = 0.0
       hessSeq(0) = 0.0
@@ -168,7 +175,8 @@ private[gbm] object Split extends Logging {
       splitSetHeuristic(featureId, gradSeq, hessSeq, boostConfig)
     }
 
-    if (split.isEmpty || !validate(split.get.stats :+ split.get.gain)) {
+    if (split.isEmpty ||
+      !validate(split.get.stats :+ split.get.gain)) {
       return None
     }
 

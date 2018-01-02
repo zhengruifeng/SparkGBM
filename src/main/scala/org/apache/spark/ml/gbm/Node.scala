@@ -102,7 +102,7 @@ class InternalNode(val featureId: Int,
     require(data.length == 1)
   }
 
-  private def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+  private def goByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     val intB = implicitly[Integral[B]]
     val b = intB.toInt(bin)
     if (b == 0) {
@@ -114,16 +114,16 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private def goLeft[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+  private def goLeftByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     if (left) {
-      go[B](bin)
+      goByBin[B](bin)
     } else {
-      !go[B](bin)
+      !goByBin[B](bin)
     }
   }
 
   private[gbm] def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
-    goLeft[B](bins(featureId))
+    goLeftByBin[B](bins(featureId))
   }
 
   private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long = {
@@ -138,7 +138,7 @@ class InternalNode(val featureId: Int,
                                   discretizer: Discretizer): Long = {
     val v = vec(featureId)
     val b = discretizer.discretizeWithIndex(v, featureId)
-    if (goLeft[Int](b)) {
+    if (goLeftByBin[Int](b)) {
       leftNode.index(vec, discretizer)
     } else {
       rightNode.index(vec, discretizer)
@@ -157,7 +157,7 @@ class InternalNode(val featureId: Int,
                                     discretizer: Discretizer): Double = {
     val v = vec(featureId)
     val b = discretizer.discretizeWithIndex(v, featureId)
-    if (goLeft[Int](b)) {
+    if (goLeftByBin[Int](b)) {
       leftNode.predict(vec, discretizer)
     } else {
       rightNode.predict(vec, discretizer)

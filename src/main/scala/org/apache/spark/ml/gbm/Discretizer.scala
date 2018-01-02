@@ -2,7 +2,7 @@ package org.apache.spark.ml.gbm
 
 import java.{util => ju}
 
-import scala.collection.mutable
+import scala.collection.{BitSet, mutable}
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
@@ -12,7 +12,6 @@ import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.util.QuantileSummaries
-import org.apache.spark.util.collection.{BitSet, OpenHashMap}
 
 
 /**
@@ -133,9 +132,9 @@ private[gbm] object Discretizer extends Logging {
 
     // zero bin index is always reserved for missing value
     val emptyAggs = Array.range(0, numCols).map { col =>
-      if (col < catCols.capacity && catCols.get(col)) {
+      if (catCols.contains(col)) {
         new CatColAgg(maxBins - 1)
-      } else if (col < rankCols.capacity && rankCols.get(col)) {
+      } else if (rankCols.contains(col)) {
         new RankColAgg(maxBins - 1)
       } else if (numericalBinType == GBM.Depth) {
         new QuantileNumColAgg(maxBins - 1)
@@ -148,8 +147,7 @@ private[gbm] object Discretizer extends Logging {
       vectors.mapPartitions { it =>
         var cnt = 0L
         val aggs = emptyAggs
-        val nans = new OpenHashMap[Int, Long]()
-
+        val nans = mutable.OpenHashMap.empty[Int, Long]
 
         // only absorb non-zero values
         it.foreach { vec =>
@@ -159,7 +157,8 @@ private[gbm] object Discretizer extends Logging {
             if (!v.isNaN && !v.isInfinity) {
               aggs(i).update(v)
             } else if (!zeroAsMissing) {
-              nans.changeValue(i, 1L, _ + 1L)
+              val cnt = nans.getOrElse(i, 0L)
+              nans.update(i, cnt + 1)
             }
           }
           cnt += 1
@@ -169,8 +168,7 @@ private[gbm] object Discretizer extends Logging {
         if (!zeroAsMissing) {
           var i = 0
           while (i < numCols) {
-            nans.toMap
-            val nz = cnt - aggs(i).count - nans(i)
+            val nz = cnt - aggs(i).count - nans.getOrElse(i, 0L)
             aggs(i).updateZeros(nz)
             i += 1
           }
@@ -623,18 +621,21 @@ private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
 private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
-  val counter = new OpenHashMap[Int, Long](maxBins >> 1)
+  val counter = mutable.OpenHashMap.empty[Int, Long]
+  counter.sizeHint(maxBins >> 1)
 
   override def update(value: Double): CatColAgg = {
     require(value.toInt == value)
-    counter.changeValue(value.toInt, 1L, _ + 1L)
+    val cnt = counter.getOrElse(value.toInt, 0L)
+    counter.update(value.toInt, cnt + 1)
     require(counter.size <= maxBins)
     this
   }
 
   override def updateZeros(nz: Long): CatColAgg = {
     if (nz > 0) {
-      counter.changeValue(0, nz, _ + nz)
+      val cnt = counter.getOrElse(0, 0L)
+      counter.update(0, cnt + nz)
       require(counter.size <= maxBins)
     }
     this
@@ -643,7 +644,8 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   override def merge(other: ColAgg): CatColAgg = {
     other.asInstanceOf[CatColAgg].counter
       .foreach { case (v, c) =>
-        counter.changeValue(v, c, _ + c)
+        val cnt = counter.getOrElse(v, 0L)
+        counter.update(v, cnt + c)
         require(counter.size <= maxBins)
       }
     this

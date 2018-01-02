@@ -1,8 +1,9 @@
 package org.apache.spark.ml.gbm
 
+import scala.collection.BitSet
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.collection.BitSet
 
 
 class BoostConfig extends Logging with Serializable {
@@ -489,9 +490,9 @@ class BoostConfig extends Logging with Serializable {
 
   private[gbm] def isNum(colIndex: Int): Boolean = !isCat(colIndex) && !isRank(colIndex)
 
-  private[gbm] def isCat(colIndex: Int): Boolean = colIndex < catCols.capacity && catCols.get(colIndex)
+  private[gbm] def isCat(colIndex: Int): Boolean = catCols.contains(colIndex)
 
-  private[gbm] def isRank(colIndex: Int): Boolean = colIndex < rankCols.capacity && rankCols.get(colIndex)
+  private[gbm] def isRank(colIndex: Int): Boolean = rankCols.contains(colIndex)
 }
 
 
@@ -500,7 +501,7 @@ private[gbm] class TreeConfig(val iteration: Int,
                               val catCols: BitSet,
                               val columns: Array[Int]) extends Serializable {
 
-  def isSeq(colIndex: Int): Boolean = !(colIndex < catCols.capacity && catCols.get(colIndex))
+  def isSeq(colIndex: Int): Boolean = !catCols.contains(colIndex)
 
   def numCols: Int = columns.length
 }

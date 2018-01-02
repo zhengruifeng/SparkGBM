@@ -1,15 +1,13 @@
 package org.apache.spark.ml.gbm
 
-import scala.collection.mutable
+import scala.collection.{BitSet, mutable}
 import scala.reflect.ClassTag
 import scala.util.Random
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.collection.BitSet
 
 
 /**
@@ -175,12 +173,13 @@ class GBM extends Logging with Serializable {
 
 
   /** indices of categorical columns */
-  private var catCols: BitSet = new BitSet(1)
+  private var catCols: BitSet = BitSet.empty
 
   def setCatCols(value: Set[Int]): this.type = {
     require(value.forall(_ >= 0))
-    catCols = new BitSet(value.fold(1)(math.max))
-    value.foreach(catCols.set)
+    val builder = BitSet.newBuilder
+    builder ++= value
+    catCols = builder.result()
     this
   }
 
@@ -188,12 +187,13 @@ class GBM extends Logging with Serializable {
 
 
   /** indices of ranking columns */
-  private var rankCols: BitSet = new BitSet(1)
+  private var rankCols: BitSet = BitSet.empty
 
   def setRankCols(value: Set[Int]): this.type = {
     require(value.forall(_ >= 0))
-    rankCols = new BitSet(value.fold(1)(math.max))
-    value.foreach(rankCols.set)
+    val builder = BitSet.newBuilder
+    builder ++= value
+    rankCols = builder.result()
     this
   }
 
@@ -871,11 +871,17 @@ private[gbm] object GBM extends Logging {
     }
 
     // indices of categorical columns in the selected column subset
-    val catCols = cols.zipWithIndex.filter { case (col, _) =>
-      boostConfig.isCat(col)
-    }.map(_._2)
-    val catSet = new BitSet(catCols.fold(1)(math.max))
-    catCols.foreach(catSet.set)
+    val catCols = {
+      val builder = BitSet.newBuilder
+      var i = 0
+      while (i < cols.length) {
+        if (boostConfig.isCat(cols(i))) {
+          builder += i
+        }
+        i += 1
+      }
+      builder.result()
+    }
 
 
     val colSampled = boostConfig.getBoostType match {
@@ -913,7 +919,7 @@ private[gbm] object GBM extends Logging {
       colSampled.persist(boostConfig.getStorageLevel)
     }
 
-    val treeConfig = new TreeConfig(iteration, numTrees, catSet, cols)
+    val treeConfig = new TreeConfig(iteration, numTrees, catCols, cols)
     val tree = Tree.train[H, B](colSampled, boostConfig, treeConfig)
 
     if (handlePersistence) {

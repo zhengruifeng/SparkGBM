@@ -7,7 +7,6 @@ import scala.{specialized => spec}
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
-import org.apache.spark.util.collection.OpenHashMap
 
 
 private[gbm] object Tree extends Logging {
@@ -266,11 +265,12 @@ private[gbm] object Tree extends Logging {
 
     data.mapPartitions { it =>
 
-      val histSums = new OpenHashMap[Long, (H, H)]()
+      val histSums = mutable.OpenHashMap.empty[Long, (H, H)]
 
       it.flatMap { case ((grad, hess, bins), nodeId) =>
-        histSums.changeValue(nodeId, (grad, hess),
-          h => (numH.plus(h._1, grad), numH.plus(h._2, hess)))
+
+        val (g, h) = histSums.getOrElse(nodeId, (numH.zero, numH.zero))
+        histSums.update(nodeId, (numH.plus(g, grad), numH.plus(h, hess)))
 
         // ignore zero-index bins
         bins.activeIter.map { case (col, bin) =>
@@ -367,11 +367,12 @@ private[gbm] object Tree extends Logging {
 
     data.mapPartitions { it =>
 
-      val histSums = new OpenHashMap[Long, (H, H)]()
+      val histSums = mutable.OpenHashMap.empty[Long, (H, H)]
 
       it.flatMap { case ((grad, hess, bins), nodeId) =>
-        histSums.changeValue(nodeId, (grad, hess),
-          h => (numH.plus(h._1, grad), numH.plus(h._2, hess)))
+
+        val (g, h) = histSums.getOrElse(nodeId, (numH.zero, numH.zero))
+        histSums.update(nodeId, (numH.plus(g, grad), numH.plus(h, hess)))
 
         // ignore zero-index bins
         bins.activeIter.map { case (col, bin) =>
@@ -747,10 +748,12 @@ class TreeModel(val root: Node) extends Serializable {
   def index(vec: Vector, discretizer: Discretizer): Long = root.index(vec, discretizer)
 
   def computeImportance: Map[Int, Double] = {
-    val gains = new OpenHashMap[Int, Double]()
+    val gains = mutable.OpenHashMap.empty[Int, Double]
+
     root.nodeIterator.foreach {
       case n: InternalNode =>
-        gains.changeValue(n.featureId, n.gain, _ + n.gain)
+        val g = gains.getOrElse(n.featureId, 0.0)
+        gains.update(n.featureId, g + n.gain)
 
       case _ =>
     }

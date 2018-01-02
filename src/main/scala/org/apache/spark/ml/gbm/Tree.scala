@@ -311,7 +311,6 @@ private[gbm] object Tree extends Logging {
                                                                           histSums: Map[Long, (H, H)],
                                                                           parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val intB = implicitly[Integral[B]]
-    val numH = implicitly[Numeric[H]]
 
     val sc = data.sparkContext
 
@@ -607,6 +606,9 @@ private[gbm] object Tree extends Logging {
     val sc = nodeHists.sparkContext
     val accTrials = sc.longAccumulator("NumTrials")
     val accSplits = sc.longAccumulator("NumSplits")
+    val accSparsity = sc.doubleAccumulator("HistSparsity")
+
+    val numH = implicitly[Numeric[H]]
 
     // column sampling by level
     val sampled = if (boostConfig.getColSampleByLevel == 1) {
@@ -618,6 +620,10 @@ private[gbm] object Tree extends Logging {
     val splits = sampled.flatMap {
       case ((nodeId, col), hist) =>
         accTrials.add(1L)
+
+        val nnz = hist.count(!numH.equiv(_, numH.zero))
+        accSparsity.add(nnz.toDouble / hist.length)
+
         val split = Split.split[H](col, hist, boostConfig, treeConfig)
         if (split.nonEmpty) {
           accSplits.add(1L)
@@ -633,6 +639,7 @@ private[gbm] object Tree extends Logging {
     }).toMap
 
     logInfo(s"${accTrials.value} trials -> ${accSplits.value} splits -> ${splits.size} best splits")
+    logInfo(s"histogram sparsity: ${accSparsity.avg}")
     splits
   }
 

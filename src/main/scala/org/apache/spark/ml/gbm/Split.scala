@@ -15,9 +15,9 @@ private[gbm] trait Split extends Serializable {
 
   def left: Boolean
 
-  def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean
+  protected def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean
 
-  def goLeft[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+  protected def goLeftByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     if (left) {
       go[B](bin)
     } else {
@@ -26,11 +26,11 @@ private[gbm] trait Split extends Serializable {
   }
 
   def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean = {
-    goLeft[B](bins(featureId))
+    goLeftByBin[B](bins(featureId))
   }
 
   def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
-    goLeft[B](bins(featureId))
+    goLeftByBin[B](bins(featureId))
   }
 
   def gain: Double

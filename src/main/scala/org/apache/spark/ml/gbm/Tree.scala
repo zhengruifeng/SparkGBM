@@ -237,9 +237,10 @@ private[gbm] object Tree extends Logging {
         val rightGrad = toH.fromDouble(split.rightGrad)
         val rightHess = toH.fromDouble(split.rightHess)
 
-        Seq((leftNodeId, (leftGrad, leftHess)),
+        Iterator((leftNodeId, (leftGrad, leftHess)),
           (rightNodeId, (rightGrad, rightHess)))
-      }.filter(t => f(t._1))
+          .filter(t => f(t._1))
+      }
 
       computeHistogramImpl[H, B](filtered, numCols, histSums, parallelism)
     }

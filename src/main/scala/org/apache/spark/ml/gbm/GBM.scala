@@ -89,7 +89,7 @@ class GBM extends Logging with Serializable {
 
 
   /** minimum sum of hess for each node */
-  private var minNodeHess: Double = 0.0
+  private var minNodeHess: Double = 1.0
 
   def setMinNodeHess(value: Double): this.type = {
     require(value >= 0 && !value.isNaN && !value.isInfinity)
@@ -991,13 +991,10 @@ private[gbm] object GBM extends Logging {
     if (keepWeights) {
       instances.zip(preds).map { case ((_, _, bins), pred) =>
         val p = toH.fromDouble(tree.predict[B](bins))
-
         val newPred = pred :+ p
-
         require(newPred.length == weights.length + 1)
 
         newPred(0) = numH.plus(newPred(0), numH.times(p, toH.fromDouble(weights.last)))
-
         newPred
       }
 
@@ -1005,11 +1002,8 @@ private[gbm] object GBM extends Logging {
 
       instances.zip(preds).map { case ((_, _, bins), pred) =>
         val p = toH.fromDouble(tree.predict[B](bins))
-
         val newPred = pred :+ p
-
         require(newPred.length == weights.length + 1)
-
         newPred(0) = toH.fromDouble(baseScore)
 
         var i = 0

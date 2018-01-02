@@ -242,7 +242,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
     val remains = mutable.BitSet.empty
 
     pids.grouped(groupSize).foreach { group =>
-      val shuffled = rng.shuffle(group.toSeq)
+      val shuffled = rng.shuffle(group.toSeq).toArray
 
       val s = (group.length * fraction).floor.toInt
 

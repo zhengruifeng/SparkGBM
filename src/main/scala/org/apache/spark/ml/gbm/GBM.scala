@@ -3,6 +3,7 @@ package org.apache.spark.ml.gbm
 import scala.collection.{BitSet, mutable}
 import scala.reflect.ClassTag
 import scala.util.Random
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
@@ -838,7 +839,7 @@ private[gbm] object GBM extends Logging {
     val rowSampled = if (boostConfig.getSubSample == 1) {
       zipped
 
-    } else if (zipped.getNumPartitions * boostConfig.getSubSample >= sc.defaultParallelism * 2) {
+    } else if (zipped.getNumPartitions * boostConfig.getSubSample >= sc.defaultParallelism * 8) {
       // if number of partitions is large, directly sampling the partitions is more efficient
       import RDDFunctions._
       logInfo(s"Using partition-based sampling")

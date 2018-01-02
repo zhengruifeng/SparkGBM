@@ -88,6 +88,7 @@ object GBMExample {
     gbm.setMaxIter(15)
       .setMaxDepth(5)
       .setStepSize(0.2)
+      .setMinNodeHess(1e-2)
       .setNumericalBinType("depth")
       .setObjectiveFunc(obj)
       .setEvaluateFunc(Array(r2Eval, maeEval, new R2Eval))

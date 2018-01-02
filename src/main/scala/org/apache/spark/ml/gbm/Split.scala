@@ -4,19 +4,34 @@ import java.{util => ju}
 
 import scala.collection.mutable
 import scala.{specialized => spec}
+
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 
 
-private[gbm] abstract class Split extends Serializable {
+private[gbm] trait Split extends Serializable {
 
   def featureId: Int
 
-  def missingGoLeft: Boolean
+  def left: Boolean
 
-  def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean
+  def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean
 
-  def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean
+  def goLeft[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+    if (left) {
+      go[B](bin)
+    } else {
+      !go[B](bin)
+    }
+  }
+
+  def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean = {
+    goLeft[B](bins(featureId))
+  }
+
+  def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
+    goLeft[B](bins(featureId))
+  }
 
   def gain: Double
 
@@ -33,64 +48,57 @@ private[gbm] abstract class Split extends Serializable {
   def rightGrad: Double = stats(4)
 
   def rightHess: Double = stats(5)
+
+  def reverse: Split
 }
 
 
-private[gbm] class SeqSplit(val featureId: Int,
-                            val missingGoLeft: Boolean,
-                            val gain: Double,
-                            val threshold: Int,
-                            val stats: Array[Double]) extends Split {
+private[gbm] case class SeqSplit(featureId: Int,
+                                 missingGo: Boolean,
+                                 threshold: Int,
+                                 left: Boolean,
+                                 gain: Double,
+                                 stats: Array[Double]) extends Split {
   require(stats.length == 6)
 
-  override def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean = {
+  override def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     val intB = implicitly[Integral[B]]
-    val bin = intB.toInt(bins(featureId))
-    if (bin == 0) {
-      missingGoLeft
+    val b = intB.toInt(bin)
+    if (b == 0) {
+      missingGo
     } else {
-      bin <= threshold
+      b <= threshold
     }
   }
 
-
-  override def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
-    val intB = implicitly[Integral[B]]
-    val bin = intB.toInt(bins(featureId))
-    if (bin == 0) {
-      missingGoLeft
-    } else {
-      bin <= threshold
-    }
+  override def reverse: Split = {
+    val newStats = stats.takeRight(3) ++ stats.take(3)
+    SeqSplit(featureId, missingGo, threshold, !left, gain, newStats)
   }
 }
 
 
-private[gbm] class SetSplit(val featureId: Int,
-                            val missingGoLeft: Boolean,
-                            val gain: Double,
-                            val leftSet: Array[Int],
-                            val stats: Array[Double]) extends Split {
+private[gbm] case class SetSplit(featureId: Int,
+                                 missingGo: Boolean,
+                                 set: Array[Int],
+                                 left: Boolean,
+                                 gain: Double,
+                                 stats: Array[Double]) extends Split {
   require(stats.length == 6)
 
-  override def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean = {
+  override def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     val intB = implicitly[Integral[B]]
-    val bin = intB.toInt(bins(featureId))
-    if (bin == 0) {
-      missingGoLeft
+    val b = intB.toInt(bin)
+    if (b == 0) {
+      missingGo
     } else {
-      ju.Arrays.binarySearch(leftSet, bin) >= 0
+      ju.Arrays.binarySearch(set, b) >= 0
     }
   }
 
-  override def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
-    val intB = implicitly[Integral[B]]
-    val bin = intB.toInt(bins(featureId))
-    if (bin == 0) {
-      missingGoLeft
-    } else {
-      ju.Arrays.binarySearch(leftSet, bin) >= 0
-    }
+  override def reverse: Split = {
+    val newStats = stats.takeRight(3) ++ stats.take(3)
+    SetSplit(featureId, missingGo, set, !left, gain, newStats)
   }
 }
 
@@ -160,14 +168,17 @@ private[gbm] object Split extends Logging {
       splitSetHeuristic(featureId, gradSeq, hessSeq, boostConfig)
     }
 
-    if (split.isEmpty) {
+    if (split.isEmpty || !validate(split.get.stats :+ split.get.gain)) {
       return None
     }
 
-    if (validate(split.get.stats :+ split.get.gain)) {
-      split
+    val s = split.get
+    // make sure that right leaves have smaller hess
+    // to reduce the histogram computation in the next iteration
+    if (s.leftHess < s.rightHess) {
+      Some(s.reverse)
     } else {
-      None
+      Some(s)
     }
   }
 
@@ -214,18 +225,18 @@ private[gbm] object Split extends Logging {
     (search1, search2) match {
       case (Some((cut1, gain1, stats1)), Some((cut2, gain2, stats2))) =>
         if (gain1 >= gain2) {
-          Some(new SeqSplit(featureId, true, gain1, cut1, stats1))
+          Some(SeqSplit(featureId, true, cut1, true, gain1, stats1))
         } else {
           // adjust the cut of split2
           // cut = 2, [i1, i2, i3 | i4, i0] -> cut = 3
-          Some(new SeqSplit(featureId, false, gain2, cut2 + 1, stats2))
+          Some(SeqSplit(featureId, false, cut2 + 1, true, gain2, stats2))
         }
 
       case (Some((cut, gain, stats)), None) =>
-        Some(new SeqSplit(featureId, true, gain, cut, stats))
+        Some(SeqSplit(featureId, true, cut, true, gain, stats))
 
       case (None, Some((cut, gain, stats))) =>
-        Some(new SeqSplit(featureId, false, gain, cut + 1, stats))
+        Some(SeqSplit(featureId, false, cut + 1, true, gain, stats))
 
       case _ => None
     }
@@ -538,9 +549,10 @@ private[gbm] object Split extends Logging {
 
     // choose the smaller set
     if (set1.size <= set2.size) {
-      new SetSplit(featureId, missingInSet1, gain, set1.toArray.sorted, stats)
+      SetSplit(featureId, missingInSet1, set1.toArray.sorted, true, gain, stats)
     } else {
-      new SetSplit(featureId, missingInSet2, gain, set2.toArray.sorted, stats.takeRight(3) ++ stats.take(3))
+      val newStats = stats.takeRight(3) ++ stats.take(3)
+      SetSplit(featureId, missingInSet2, set2.toArray.sorted, true, gain, newStats)
     }
   }
 

@@ -92,8 +92,9 @@ trait Node extends Serializable {
 
 class InternalNode(val featureId: Int,
                    val isSeq: Boolean,
-                   val missingGoLeft: Boolean,
+                   val missingGo: Boolean,
                    val data: Array[Int],
+                   val left: Boolean,
                    val gain: Double,
                    val leftNode: Node,
                    val rightNode: Node) extends Node {
@@ -101,15 +102,23 @@ class InternalNode(val featureId: Int,
     require(data.length == 1)
   }
 
-  private def goLeft[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+  private def go[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
     val intB = implicitly[Integral[B]]
     val b = intB.toInt(bin)
     if (b == 0) {
-      missingGoLeft
+      missingGo
     } else if (isSeq) {
       b <= data.head
     } else {
       java.util.Arrays.binarySearch(data, b) >= 0
+    }
+  }
+
+  private def goLeft[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+    if (left) {
+      go[B](bin)
+    } else {
+      !go[B](bin)
     }
   }
 
@@ -188,8 +197,9 @@ class LeafNode(val weight: Double,
 private[gbm] case class NodeData(id: Int,
                                  featureId: Int,
                                  isSeq: Boolean,
-                                 missingGoLeft: Boolean,
+                                 missingGo: Boolean,
                                  data: Array[Int],
+                                 left: Boolean,
                                  gain: Double,
                                  leftNode: Int,
                                  rightNode: Int,
@@ -204,12 +214,13 @@ private[gbm] object NodeData {
       case n: InternalNode =>
         val (leftNodeData, leftIdx) = createData(n.leftNode, id + 1)
         val (rightNodeData, rightIdx) = createData(n.rightNode, leftIdx + 1)
-        val thisNodeData = NodeData(id, n.featureId, n.isSeq, n.missingGoLeft, n.data, n.gain,
-          leftNodeData.head.id, rightNodeData.head.id, Double.NaN, -1)
+        val thisNodeData = NodeData(id, n.featureId, n.isSeq, n.missingGo,
+          n.data, n.left, n.gain, leftNodeData.head.id, rightNodeData.head.id,
+          Double.NaN, -1)
         (thisNodeData +: (leftNodeData ++ rightNodeData), rightIdx)
 
       case n: LeafNode =>
-        (Seq(NodeData(id, -1, false, false, Array.emptyIntArray,
+        (Seq(NodeData(id, -1, false, false, Array.emptyIntArray, false,
           Double.NaN, -1, -1, n.weight, n.leafId)), id)
     }
   }
@@ -235,7 +246,7 @@ private[gbm] object NodeData {
       val node = if (n.leftNode != -1) {
         val leftChild = finalNodes(n.leftNode)
         val rightChild = finalNodes(n.rightNode)
-        new InternalNode(n.featureId, n.isSeq, n.missingGoLeft, n.data, n.gain, leftChild, rightChild)
+        new InternalNode(n.featureId, n.isSeq, n.missingGo, n.data, n.left, n.gain, leftChild, rightChild)
       } else {
         new LeafNode(n.weight, n.leafId)
       }

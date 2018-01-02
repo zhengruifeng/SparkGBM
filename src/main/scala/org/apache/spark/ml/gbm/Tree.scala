@@ -793,15 +793,16 @@ private[gbm] object TreeModel {
       val reindex = columns(node.split.get.featureId)
 
       node.split.get match {
-        case s: SeqSplit =>
-          new InternalNode(reindex, true, s.missingGoLeft,
-            Array(s.threshold), s.gain,
+        case SeqSplit(_, missingGo, threshold, left, gain, _) =>
+          new InternalNode(reindex, true, missingGo,
+            Array(threshold), left, gain,
             createNode(node.leftNode.get, columns, leafIds),
             createNode(node.rightNode.get, columns, leafIds))
 
-        case s: SetSplit =>
-          new InternalNode(reindex, false, s.missingGoLeft,
-            s.leftSet, s.gain,
+
+        case SetSplit(_, missingGo, set, left, gain, _) =>
+          new InternalNode(reindex, false, missingGo,
+            set, left, gain,
             createNode(node.leftNode.get, columns, leafIds),
             createNode(node.rightNode.get, columns, leafIds))
       }

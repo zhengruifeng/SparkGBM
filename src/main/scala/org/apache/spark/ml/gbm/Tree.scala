@@ -606,7 +606,6 @@ private[gbm] object Tree extends Logging {
     val sc = nodeHists.sparkContext
     val accTrials = sc.longAccumulator("NumTrials")
     val accSplits = sc.longAccumulator("NumSplits")
-    val accSparsity = sc.doubleAccumulator("HistSparsity")
 
     val numH = implicitly[Numeric[H]]
 
@@ -620,9 +619,6 @@ private[gbm] object Tree extends Logging {
     val splits = sampled.flatMap {
       case ((nodeId, col), hist) =>
         accTrials.add(1L)
-
-        val nnz = hist.count(!numH.equiv(_, numH.zero))
-        accSparsity.add(nnz.toDouble / hist.length)
 
         val split = Split.split[H](col, hist, boostConfig, treeConfig)
         if (split.nonEmpty) {
@@ -639,7 +635,6 @@ private[gbm] object Tree extends Logging {
     }).toMap
 
     logInfo(s"${accTrials.value} trials -> ${accSplits.value} splits -> ${splits.size} best splits")
-    logInfo(s"histogram sparsity: ${accSparsity.avg}")
     splits
   }
 

@@ -607,8 +607,6 @@ private[gbm] object Tree extends Logging {
     val accTrials = sc.longAccumulator("NumTrials")
     val accSplits = sc.longAccumulator("NumSplits")
 
-    val numH = implicitly[Numeric[H]]
-
     // column sampling by level
     val sampled = if (boostConfig.getColSampleByLevel == 1) {
       nodeHists

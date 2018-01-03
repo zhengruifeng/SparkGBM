@@ -317,7 +317,7 @@ private[gbm] object Tree extends Logging {
 
     // make sure all (nodeId, col) pairs are taken into account
     // by the way, store sum of hist in zero-index bin
-    val rdd0 = sc.range(0, numCols)
+    val rdd0 = sc.range(0, numCols, 1, 1)
       .flatMap { col =>
         histSums.iterator.map { case (nodeId, (gradSum, hessSum)) =>
           ((nodeId, col.toInt), (intB.zero, gradSum, hessSum))
@@ -465,7 +465,7 @@ private[gbm] object Tree extends Logging {
 
     // make sure all (nodeId, col) pairs are taken into account
     // by the way, store sum of hist in zero-index bin
-    val rdd0 = sc.range(0, numCols)
+    val rdd0 = sc.range(0, numCols, 1, 1)
       .flatMap { col =>
         histSums.iterator.map { case (nodeId, (gradSum, hessSum)) =>
           ((nodeId, col.toInt, intB.zero), (gradSum, hessSum))

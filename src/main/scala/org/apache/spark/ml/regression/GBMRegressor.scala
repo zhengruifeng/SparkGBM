@@ -50,11 +50,11 @@ trait GBMRegressionParams extends GBMParams {
     */
   final val huberDelta: DoubleParam =
     new DoubleParam(this, "huberDelta", "Delta in huber loss for robust regression",
-      ParamValidators.gt(0.0))
+      ParamValidators.gt(1.0))
 
   def getHuberDelta: Double = $(huberDelta)
 
-  setDefault(huberDelta -> 1.0)
+  setDefault(huberDelta -> 1.35)
 }
 
 

@@ -621,7 +621,7 @@ private[gbm] class IntervalNumColAgg(val maxBins: Int) extends ColAgg {
 private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   require(maxBins >= 2)
 
-  val counter = mutable.OpenHashMap.empty[Int, Long]
+  val counter = mutable.Map.empty[Int, Long]
   counter.sizeHint(maxBins >> 1)
 
   override def update(value: Double): CatColAgg = {

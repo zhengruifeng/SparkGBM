@@ -36,9 +36,9 @@ class SquareObj extends ObjFunc {
   * @param delta the param of Huber loss
   */
 class HuberObj(val delta: Double) extends ObjFunc {
-  require(delta > 0)
+  require(delta > 1)
 
-  def this() = this(1.0)
+  def this() = this(1.35)
 
   override def compute(label: Double, score: Double): (Double, Double) = {
     val a = score - label

@@ -46,7 +46,7 @@ trait GBMRegressionParams extends GBMParams {
 
   /**
     * Delta in huber loss for robust regression
-    * (default = 1.0)
+    * (default = 1.35)
     */
   final val huberDelta: DoubleParam =
     new DoubleParam(this, "huberDelta", "Delta in huber loss for robust regression",

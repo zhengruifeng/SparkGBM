@@ -55,22 +55,22 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
 
     data.mapPartitions { it =>
 
-      val indexBuff = mutable.ArrayBuffer.empty[Int]
-      val valueBuff = mutable.ArrayBuffer.empty[B]
+      val indexBuilder = mutable.ArrayBuilder.make[Int]
+      val valueBuilder = mutable.ArrayBuilder.make[B]
 
       it.map { case (weight, label, vec) =>
-        indexBuff.clear()
-        valueBuff.clear()
+        indexBuilder.clear()
+        valueBuilder.clear()
 
         getIter(vec).foreach { case (i, v) =>
           val bin = discretizeWithIndex(v, i)
           if (bin != 0) {
-            indexBuff.append(i)
-            valueBuff.append(intB.fromInt(bin))
+            indexBuilder += i
+            valueBuilder += intB.fromInt(bin)
           }
         }
 
-        val bins = BinVector.sparse[B](numCols, indexBuff.toArray, valueBuff.toArray).compress
+        val bins = BinVector.sparse[B](numCols, indexBuilder.result(), valueBuilder.result()).compress
         (weight, label, bins)
       }
     }

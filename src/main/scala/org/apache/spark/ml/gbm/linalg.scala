@@ -87,13 +87,14 @@ private class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val
   override def toDense: BinVector[V] = this
 
   override def toSparse: BinVector[V] = {
-    val indexBuff = mutable.ArrayBuffer.empty[Int]
-    val valueBuff = mutable.ArrayBuffer.empty[V]
+    val indexBuilder = mutable.ArrayBuilder.make[Int]
+    val valueBuilder = mutable.ArrayBuilder.make[V]
+
     activeIter.foreach { case (i, v) =>
-      indexBuff.append(i)
-      valueBuff.append(v)
+      indexBuilder += i
+      valueBuilder += v
     }
-    BinVector.sparse[V](len, indexBuff.toArray, valueBuff.toArray)
+    BinVector.sparse[V](len, indexBuilder.result(), valueBuilder.result())
   }
 
   override def computeDenseSize: Int = {
@@ -145,15 +146,17 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
 
   override def slice(sorted: Array[Int]) = {
     val intK = implicitly[Integral[K]]
-    val indexBuff = mutable.ArrayBuffer.empty[Int]
-    val valueBuff = mutable.ArrayBuffer.empty[V]
+
+    val indexBuilder = mutable.ArrayBuilder.make[Int]
+    val valueBuilder = mutable.ArrayBuilder.make[V]
+
     var i = 0
     var j = 0
     while (i < sorted.length && j < indices.length) {
       val k = intK.toInt(indices(j))
       if (sorted(i) == k) {
-        indexBuff.append(i)
-        valueBuff.append(values(j))
+        indexBuilder += i
+        valueBuilder += values(j)
         i += 1
         j += 1
       } else if (sorted(i) > k) {
@@ -163,7 +166,7 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
       }
     }
 
-    BinVector.sparse[V](sorted.length, indexBuff.toArray, valueBuff.toArray)
+    BinVector.sparse[V](sorted.length, indexBuilder.result(), valueBuilder.result())
   }
 
   override def toArray: Array[V] =

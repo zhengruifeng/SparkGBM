@@ -563,18 +563,5 @@ private[gbm] object Split extends Logging {
       SetSplit(featureId, missingInSet2, set2.toArray.sorted, true, gain, newStats)
     }
   }
-
-  private[this] var kryoRegistered: Boolean = false
-
-  def registerKryoClasses(sc: SparkContext): Unit = {
-    if (!kryoRegistered) {
-      sc.getConf.registerKryoClasses(
-        Array(classOf[Split],
-          classOf[SeqSplit],
-          classOf[SetSplit])
-      )
-      kryoRegistered = true
-    }
-  }
 }
 

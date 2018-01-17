@@ -25,7 +25,6 @@ private[gbm] object Tree extends Logging {
                                                                         boostConfig: BoostConfig,
                                                                         treeConfig: TreeConfig): Option[TreeModel] = {
     val sc = data.sparkContext
-    Split.registerKryoClasses(sc)
 
     var nodeIds = sc.emptyRDD[Long]
     val nodesCheckpointer = new Checkpointer[Long](sc,
@@ -277,6 +276,7 @@ private[gbm] object Tree extends Logging {
         bins.activeIter.map { case (col, bin) =>
           ((nodeId, col), (bin, grad, hess))
         }
+
       } ++
         histSums.iterator.flatMap { case (nodeId, (gradSum, hessSum)) =>
           // make sure all (nodeId, col) pairs are taken into account
@@ -627,11 +627,12 @@ private[gbm] object Tree extends Logging {
           Iterator.empty
         }
 
-    }.reduceByKeyLocally(func = {
-      case (split1, split2) =>
-        Seq(split1, split2).maxBy(_.gain)
+    }.reduceByKeyLocally(
+      func = {
+        case (split1, split2) =>
+          Seq(split1, split2).maxBy(_.gain)
 
-    }).toMap
+      }).toMap
 
     logInfo(s"${accTrials.value} trials -> ${accSplits.value} splits -> ${splits.size} best splits")
     splits

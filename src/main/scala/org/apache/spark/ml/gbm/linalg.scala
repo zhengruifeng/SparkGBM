@@ -64,20 +64,6 @@ private[gbm] object BinVector {
       case ClassTag.Int => 4
     }
   }
-
-  private[this] var kryoRegistered: Boolean = false
-
-  def registerKryoClasses(sc: SparkContext): Unit = {
-    if (!kryoRegistered) {
-      sc.getConf.registerKryoClasses(
-        Array(classOf[BinVector[Object]],
-          classOf[(Object, Object, BinVector[Object])],
-          classOf[DenseBinVector[Object]],
-          classOf[SparseBinVector[Object, Object]])
-      )
-      kryoRegistered = true
-    }
-  }
 }
 
 

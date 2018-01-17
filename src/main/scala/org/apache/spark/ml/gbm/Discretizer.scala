@@ -125,8 +125,6 @@ private[gbm] object Discretizer extends Logging {
     require(maxBins >= 4)
     require(numCols >= 1)
 
-    ColAgg.registerKryoClasses(vectors.sparkContext)
-
     val start = System.nanoTime
     logInfo(s"Discretizer building start")
 
@@ -173,18 +171,20 @@ private[gbm] object Discretizer extends Logging {
             i += 1
           }
         }
+        nans.clear()
 
         Iterator.single((cnt, aggs))
 
-      }.treeReduce(f = {
-        case ((cnt1, aggs1), (cnt2, aggs2)) =>
-          var i = 0
-          while (i < numCols) {
-            aggs1(i).merge(aggs2(i))
-            i += 1
-          }
-          (cnt1 + cnt2, aggs1)
-      }, depth = depth)
+      }.treeReduce(
+        f = {
+          case ((cnt1, aggs1), (cnt2, aggs2)) =>
+            var i = 0
+            while (i < numCols) {
+              aggs1(i).merge(aggs2(i))
+              i += 1
+            }
+            (cnt1 + cnt2, aggs1)
+        }, depth = depth)
 
 
     // number of non-missing
@@ -312,22 +312,6 @@ private[gbm] object Discretizer extends Logging {
 
     new Discretizer(colDiscretizers, zeroAsMissing, sparsity)
   }
-
-  private[this] var kryoRegistered: Boolean = false
-
-  def registerKryoClasses(sc: SparkContext): Unit = {
-    if (!kryoRegistered) {
-      sc.getConf.registerKryoClasses(
-        Array(classOf[ColDiscretizer],
-          classOf[Array[ColDiscretizer]],
-          classOf[QuantileNumColDiscretizer],
-          classOf[IntervalNumColDiscretizer],
-          classOf[CatColDiscretizer],
-          classOf[RankColDiscretizer])
-      )
-      kryoRegistered = true
-    }
-  }
 }
 
 
@@ -451,27 +435,6 @@ private[gbm] trait ColAgg extends Serializable {
 }
 
 
-private[gbm] object ColAgg {
-
-  private[this] var kryoRegistered: Boolean = false
-
-  def registerKryoClasses(sc: SparkContext): Unit = {
-    if (!kryoRegistered) {
-      sc.getConf.registerKryoClasses(
-        Array(classOf[ColAgg],
-          classOf[Array[ColAgg]],
-          classOf[(Long, Array[ColAgg])],
-          classOf[QuantileNumColAgg],
-          classOf[IntervalNumColAgg],
-          classOf[CatColAgg],
-          classOf[RankColAgg])
-      )
-      kryoRegistered = true
-    }
-  }
-}
-
-
 /**
   * aggregrator for numerical column, find splits of same depth
   */
@@ -524,7 +487,7 @@ private[gbm] object QuantileNumColAgg {
 
   val compressThreshold = QuantileSummaries.defaultCompressThreshold
 
-  val relativeError = 0.01
+  val relativeError = QuantileSummaries.defaultRelativeError
 
   def createSummary = new QuantileSummaries(compressThreshold, relativeError)
 

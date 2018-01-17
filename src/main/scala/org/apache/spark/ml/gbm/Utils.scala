@@ -489,6 +489,63 @@ private[gbm] object Utils extends Logging {
       spark.read.parquet(new Path(path, name).toString)
     }
   }
+
+
+  private[this] var kryoRegistered: Boolean = false
+
+  def registerKryoClasses(sc: SparkContext): Unit = {
+    if (!kryoRegistered) {
+      sc.getConf.registerKryoClasses(Array(
+
+        classOf[BoostConfig],
+        classOf[TreeConfig],
+
+        classOf[ColDiscretizer],
+        classOf[Array[ColDiscretizer]],
+        classOf[QuantileNumColDiscretizer],
+        classOf[IntervalNumColDiscretizer],
+        classOf[CatColDiscretizer],
+        classOf[RankColDiscretizer],
+
+        classOf[ColAgg],
+        classOf[Array[ColAgg]],
+        classOf[QuantileNumColAgg],
+        classOf[IntervalNumColAgg],
+        classOf[CatColAgg],
+        classOf[RankColAgg],
+
+        classOf[Split],
+        classOf[SeqSplit],
+        classOf[SetSplit],
+
+        classOf[LearningNode],
+        classOf[Node],
+        classOf[InternalNode],
+        classOf[LeafNode],
+        classOf[NodeData],
+
+        classOf[TreeModel],
+        classOf[GBMModel],
+
+        classOf[BinVector[Byte]],
+        classOf[BinVector[Short]],
+        classOf[BinVector[Int]],
+        classOf[DenseBinVector[Byte]],
+        classOf[DenseBinVector[Short]],
+        classOf[DenseBinVector[Int]],
+        classOf[SparseBinVector[Byte, Byte]],
+        classOf[SparseBinVector[Byte, Short]],
+        classOf[SparseBinVector[Byte, Int]],
+        classOf[SparseBinVector[Short, Byte]],
+        classOf[SparseBinVector[Short, Short]],
+        classOf[SparseBinVector[Short, Int]],
+        classOf[SparseBinVector[Int, Byte]],
+        classOf[SparseBinVector[Int, Short]],
+        classOf[SparseBinVector[Int, Int]]))
+
+      kryoRegistered = true
+    }
+  }
 }
 
 

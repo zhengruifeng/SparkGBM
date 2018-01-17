@@ -19,6 +19,7 @@ object GBMExample {
       .getOrCreate()
 
     spark.sparkContext.setLogLevel("INFO")
+    spark.sparkContext.getConf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
 
     val rdd = spark.read.format("libsvm")
       .load("data/housing_scale")

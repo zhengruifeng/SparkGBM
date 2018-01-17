@@ -284,7 +284,7 @@ class GBM extends Logging with Serializable {
   def getSeed: Long = seed
 
 
-  /** parallelism of histogram computation and leaves splitting */
+  /** parallelism of histogram subtraction and split searching */
   private var parallelism = -1
 
   def setParallelism(value: Int): this.type = {
@@ -554,11 +554,9 @@ private[gbm] object GBM extends Logging {
                                                discretizer: Discretizer,
                                                initialModel: Option[GBMModel]): GBMModel = {
     val sc = data.sparkContext
-    Discretizer.registerKryoClasses(sc)
-    BinVector.registerKryoClasses(sc)
 
-    val binData = discretizer.transform(data)
-    val binTest = discretizer.transform(test)
+    val binData = discretizer.transform[B](data)
+    val binTest = discretizer.transform[B](test)
 
     boostConfig.getFloatType match {
       case SinglePrecision =>
@@ -593,6 +591,8 @@ private[gbm] object GBM extends Logging {
                                                                             initialModel: Option[GBMModel]): GBMModel = {
     val spark = SparkSession.builder().getOrCreate()
     val sc = spark.sparkContext
+
+    Utils.registerKryoClasses(sc)
 
     data.persist(boostConfig.getStorageLevel)
     logInfo(s"${data.count} instances in train data")

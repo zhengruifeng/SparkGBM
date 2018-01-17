@@ -6,7 +6,6 @@ import scala.collection.{BitSet, mutable}
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
-import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD

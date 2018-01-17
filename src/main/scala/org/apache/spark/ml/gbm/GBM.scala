@@ -553,8 +553,6 @@ private[gbm] object GBM extends Logging {
                                                validation: Boolean,
                                                discretizer: Discretizer,
                                                initialModel: Option[GBMModel]): GBMModel = {
-    val sc = data.sparkContext
-
     val binData = discretizer.transform[B](data)
     val binTest = discretizer.transform[B](test)
 
@@ -591,7 +589,6 @@ private[gbm] object GBM extends Logging {
                                                                             initialModel: Option[GBMModel]): GBMModel = {
     val spark = SparkSession.builder().getOrCreate()
     val sc = spark.sparkContext
-
     Utils.registerKryoClasses(sc)
 
     data.persist(boostConfig.getStorageLevel)

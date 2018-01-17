@@ -4,9 +4,6 @@ import scala.collection.mutable
 import scala.reflect.{ClassTag, classTag}
 import scala.{specialized => spec}
 
-import org.apache.spark.SparkContext
-
-
 private[gbm] trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
 
   def len: Int

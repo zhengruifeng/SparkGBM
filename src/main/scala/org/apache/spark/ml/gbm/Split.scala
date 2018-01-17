@@ -5,7 +5,6 @@ import java.{util => ju}
 import scala.collection.mutable
 import scala.{specialized => spec}
 
-import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 
 

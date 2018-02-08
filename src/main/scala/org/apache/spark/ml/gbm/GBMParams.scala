@@ -471,5 +471,19 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getParallelism: Int = $(parallelism)
 
   setDefault(parallelism -> -1)
+
+
+  /**
+    * Whether to sample partitions instead of instances.
+    * (default = false)
+    *
+    * @group param
+    */
+  final val enableSamplePartitions: BooleanParam =
+    new BooleanParam(this, "enableSamplePartitions", "Whether to sample partitions instead of instances.")
+
+  def getEnableSamplePartitions: Boolean = $(enableSamplePartitions)
+
+  setDefault(enableSamplePartitions -> false)
 }
 

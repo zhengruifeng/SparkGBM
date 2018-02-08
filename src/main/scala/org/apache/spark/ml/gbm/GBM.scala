@@ -296,6 +296,17 @@ class GBM extends Logging with Serializable {
   def getParallelism: Int = parallelism
 
 
+  /** whether to sample partitions instead of instances */
+  private var enableSamplePartitions = false
+
+  def setEnableSamplePartitions(value: Boolean): this.type = {
+    enableSamplePartitions = value
+    this
+  }
+
+  def getEnableSamplePartitions = enableSamplePartitions
+
+
   /** boosting type */
   private var boostType: String = GBM.GBTree
 
@@ -486,6 +497,7 @@ class GBM extends Logging with Serializable {
       .setMaxBruteBins(maxBruteBins)
       .setFloatType(floatType)
       .setParallelism(parallelism)
+      .setEnableSamplePartitions(enableSamplePartitions)
       .setSeed(seed)
 
 
@@ -836,10 +848,9 @@ private[gbm] object GBM extends Logging {
     val rowSampled = if (boostConfig.getSubSample == 1) {
       zipped
 
-    } else if (zipped.getNumPartitions * boostConfig.getSubSample >= sc.defaultParallelism * 8) {
-      // if number of partitions is large, directly sampling the partitions is more efficient
+    } else if (boostConfig.getEnableSamplePartitions &&
+      (instances.getNumPartitions * boostConfig.getSubSample).ceil < instances.getNumPartitions) {
       import RDDFunctions._
-      logInfo(s"Using partition-based sampling")
       zipped.samplePartitions(boostConfig.getSubSample, boostConfig.getSeed + numTrees)
 
     } else {

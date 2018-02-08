@@ -223,80 +223,26 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
   }
 
   def samplePartitions(fraction: Double, seed: Long): RDD[T] = {
-    require(fraction >= 0 && fraction <= 1)
+    require(fraction > 0 && fraction <= 1)
 
     val rng = new Random(seed)
 
-    val numGroups = self.sparkContext.defaultParallelism
     val numPartitions = self.getNumPartitions
-    val groupSize = numPartitions / numGroups
 
     val n = numPartitions * fraction
     val m = n.toInt
     val r = n - m
 
-    val start = rng.nextInt(numPartitions)
-    val pids = Array.range(start, numPartitions) ++ Array.range(0, start)
+    val shuffled = rng.shuffle(Seq.range(0, numPartitions))
 
     val weights = mutable.OpenHashMap.empty[Int, Double]
-    val remains = mutable.BitSet.empty
 
-    pids.grouped(groupSize).foreach { group =>
-      val shuffled = rng.shuffle(group.toSeq).toArray
-
-      val s = (group.length * fraction).floor.toInt
-
-      // select s pids per group
-      var i = 0
-      while (i < s) {
-        weights.update(shuffled(i), 1.0)
-        i += 1
-      }
-
-      while (i < group.length) {
-        remains.add(shuffled(i))
-        i += 1
-      }
-    }
-
-    if (weights.size < m) {
-      // select groups
-      val gids = rng.shuffle(Seq.range(0, numGroups))
-        .take(m - weights.size).toSet
-
-      val buff = mutable.ArrayBuffer.empty[Int]
-
-      pids.grouped(groupSize).zipWithIndex
-        .foreach { case (group, gid) =>
-          if (gids.contains(gid)) {
-            buff.clear()
-
-            group.filter(p => !weights.contains(p))
-              .foreach(p => buff.append(p))
-
-            rng.shuffle(buff).headOption
-              .foreach { p =>
-                weights.update(p, 1.0)
-                remains.remove(p)
-              }
-          }
-        }
-    }
-
-    if (weights.size < m) {
-      rng.shuffle(remains.toSeq).take(m - weights.size)
-        .foreach { p =>
-          weights.update(p, 1.0)
-          remains.remove(p)
-        }
+    shuffled.take(m).foreach { p =>
+      weights.update(p, 1.0)
     }
 
     if (r > 0) {
-      rng.shuffle(remains.toSeq).headOption
-        .foreach { p =>
-          weights.update(p, r)
-          remains.remove(p)
-        }
+      weights.update(shuffled.last, r)
     }
 
     samplePartitions(weights.toMap, seed)

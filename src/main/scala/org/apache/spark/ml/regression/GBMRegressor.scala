@@ -144,6 +144,8 @@ class GBMRegressor(override val uid: String) extends
 
   def setParallelism(value: Int): this.type = set(parallelism, value)
 
+  def setEnableSamplePartitions(value: Boolean): this.type = set(enableSamplePartitions, value)
+
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)
   }
@@ -253,6 +255,7 @@ class GBMRegressor(override val uid: String) extends
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setParallelism($(parallelism))
+      .setEnableSamplePartitions($(enableSamplePartitions))
       .setInitialModel(initialModel)
 
     val gbmModel = gbm.fit(data, test)

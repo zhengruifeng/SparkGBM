@@ -28,6 +28,7 @@ class BoostConfig extends Logging with Serializable {
   private var minDrop: Int = _
   private var maxDrop: Int = _
   private var aggregationDepth: Int = _
+  private var enableSamplePartitions: Boolean = _
   private var parallelism: Int = _
   private var seed: Long = _
 
@@ -250,6 +251,20 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def getAggregationDepth: Int = aggregationDepth
+
+
+  /** whether to sample partitions instead of instances */
+  private[gbm] def setEnableSamplePartitions(value: Boolean): this.type = {
+    enableSamplePartitions = value
+    this
+  }
+
+  def updateEnableSamplePartitions(value: Boolean): this.type = {
+    logInfo(s"enableSamplePartitions was changed from $enableSamplePartitions to $value")
+    setEnableSamplePartitions(value)
+  }
+
+  def getEnableSamplePartitions: Boolean = enableSamplePartitions
 
 
   /** parallelism of histogram computation and leaves splitting */

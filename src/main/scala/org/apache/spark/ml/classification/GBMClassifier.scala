@@ -134,6 +134,8 @@ class GBMClassifier(override val uid: String)
 
   def setParallelism(value: Int): this.type = set(parallelism, value)
 
+  def setEnableSamplePartitions(value: Boolean): this.type = set(enableSamplePartitions, value)
+
   override def fit(dataset: Dataset[_]): GBMClassificationModel = {
     fit(dataset, None)
   }
@@ -239,6 +241,7 @@ class GBMClassifier(override val uid: String)
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setParallelism($(parallelism))
+      .setEnableSamplePartitions($(enableSamplePartitions))
       .setInitialModel(initialModel)
 
     val gbmModel = gbm.fit(data, test)

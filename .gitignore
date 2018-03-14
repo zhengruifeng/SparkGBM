@@ -94,4 +94,3 @@ spark-warehouse/
 /log
 log*
 src/main/java/
-src/test/

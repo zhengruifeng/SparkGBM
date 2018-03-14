@@ -36,17 +36,41 @@ private[gbm] trait Split extends Serializable {
 
   def stats: Array[Double]
 
-  def leftWeight: Double = stats(0)
+  def leftWeight: Double = if (left) {
+    stats(0)
+  } else {
+    stats(3)
+  }
 
-  def leftGrad: Double = stats(1)
+  def leftGrad: Double = if (left) {
+    stats(1)
+  } else {
+    stats(4)
+  }
 
-  def leftHess: Double = stats(2)
+  def leftHess: Double = if (left) {
+    stats(2)
+  } else {
+    stats(5)
+  }
 
-  def rightWeight: Double = stats(3)
+  def rightWeight: Double = if (left) {
+    stats(3)
+  } else {
+    stats(0)
+  }
 
-  def rightGrad: Double = stats(4)
+  def rightGrad: Double = if (left) {
+    stats(4)
+  } else {
+    stats(1)
+  }
 
-  def rightHess: Double = stats(5)
+  def rightHess: Double = if (left) {
+    stats(5)
+  } else {
+    stats(2)
+  }
 
   def reverse: Split
 }
@@ -71,8 +95,7 @@ private[gbm] case class SeqSplit(featureId: Int,
   }
 
   override def reverse: Split = {
-    val newStats = stats.takeRight(3) ++ stats.take(3)
-    SeqSplit(featureId, missingGo, threshold, !left, gain, newStats)
+    SeqSplit(featureId, missingGo, threshold, !left, gain, stats)
   }
 }
 
@@ -96,8 +119,7 @@ private[gbm] case class SetSplit(featureId: Int,
   }
 
   override def reverse: Split = {
-    val newStats = stats.takeRight(3) ++ stats.take(3)
-    SetSplit(featureId, missingGo, set, !left, gain, newStats)
+    SetSplit(featureId, missingGo, set, !left, gain, stats)
   }
 }
 

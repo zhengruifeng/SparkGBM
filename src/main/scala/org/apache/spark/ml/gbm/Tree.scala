@@ -71,11 +71,8 @@ private[gbm] object Tree extends Logging {
         val rightHists = computeHistogram[H, B](data.zip(nodeIds), (n: Long) => n >= minNodeId && n % 2 == 1L,
           treeConfig.numCols, parallelism)
 
-        // pre-compute an even split of (nodeId, col) pairs
-        val ranges = computeRanges(prevSplits.keys.toArray, treeConfig.numCols, parallelism)
-
         // compute the histogram of both left leaves and right leaves by subtraction
-        hists = subtractHistogram[H](hists, rightHists, boostConfig.getMinNodeHess, ranges, parallelism)
+        hists = subtractHistogram[H](hists, rightHists, boostConfig.getMinNodeHess, parallelism)
       }
       histsCheckpointer.update(hists)
 
@@ -219,30 +216,31 @@ private[gbm] object Tree extends Logging {
     val numH = implicitly[Numeric[H]]
 
 
-    data.filter(t => f(t._2)).mapPartitions { it =>
+    data.filter(t => f(t._2))
+      .mapPartitions { it =>
 
-      val histSums = mutable.OpenHashMap.empty[Long, (H, H)]
+        val histSums = mutable.OpenHashMap.empty[Long, (H, H)]
 
-      it.flatMap { case ((grad, hess, bins), nodeId) =>
+        it.flatMap { case ((grad, hess, bins), nodeId) =>
 
-        val (g, h) = histSums.getOrElse(nodeId, (numH.zero, numH.zero))
-        histSums.update(nodeId, (numH.plus(g, grad), numH.plus(h, hess)))
+          val (g, h) = histSums.getOrElse(nodeId, (numH.zero, numH.zero))
+          histSums.update(nodeId, (numH.plus(g, grad), numH.plus(h, hess)))
 
-        // ignore zero-index bins
-        bins.activeIter.map { case (col, bin) =>
-          ((nodeId, col), (bin, grad, hess))
-        }
-
-      } ++
-        histSums.iterator.flatMap { case (nodeId, (gradSum, hessSum)) =>
-          // make sure all (nodeId, col) pairs are taken into account
-          // by the way, store sum of hist in zero-index bin
-          Iterator.range(0, numCols).map { c =>
-            ((nodeId, c), (intB.zero, gradSum, hessSum))
+          // ignore zero-index bins
+          bins.activeIter.map { case (col, bin) =>
+            ((nodeId, col), (bin, grad, hess))
           }
-        }
 
-    }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
+        } ++
+          histSums.iterator.flatMap { case (nodeId, (gradSum, hessSum)) =>
+            // make sure all (nodeId, col) pairs are taken into account
+            // by the way, store sum of hist in zero-index bin
+            Iterator.range(0, numCols).map { c =>
+              ((nodeId, c), (intB.zero, gradSum, hessSum))
+            }
+          }
+
+      }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
       seqOp = updateHistArray[H, B],
       combOp = mergeHistArray[H]
 
@@ -258,7 +256,6 @@ private[gbm] object Tree extends Logging {
     * @param nodeHists   histogram data of parent nodes
     * @param rightHists  histogram data of right leaves
     * @param minNodeHess minimum hess needed for a node
-    * @param ranges      pre-computed even splits of (nodeId, col) pairs
     * @param parallelism parallelism
     * @tparam H
     * @return histogram data of both left and right leaves
@@ -266,21 +263,14 @@ private[gbm] object Tree extends Logging {
   def subtractHistogram[H: Numeric : ClassTag](nodeHists: RDD[((Long, Int), Array[H])],
                                                rightHists: RDD[((Long, Int), Array[H])],
                                                minNodeHess: Double,
-                                               ranges: Array[(Long, Int)],
                                                parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val numH = implicitly[Numeric[H]]
-
-    val partitioner = if (ranges.isEmpty) {
-      new GBMHashPartitioner(parallelism)
-    } else {
-      new GBMRangePartitioner[(Long, Int)](ranges)
-    }
 
     rightHists.map { case ((rightNodeId, col), hist) =>
       val parentNodeId = rightNodeId >> 1
       ((parentNodeId, col), hist)
 
-    }.join(nodeHists, partitioner)
+    }.join(nodeHists, parallelism)
 
       .flatMap { case ((nodeId, col), (rightHist, nodeHist)) =>
         require(rightHist.length <= nodeHist.length)
@@ -363,41 +353,6 @@ private[gbm] object Tree extends Logging {
 
     logInfo(s"${accTrials.value} trials -> ${accSplits.value} splits -> ${splits.size} best splits")
     splits
-  }
-
-
-  /**
-    * Since the (nodeId, columnId) candidate pairs to search optimum split are known before computation
-    * we can partition them in a partial sorted way to reduce the communication overhead in following aggregation
-    *
-    * @param leaves      leaves in current level
-    * @param numCols     number of columns
-    * @param parallelism parallelism
-    * @return even splits of pairs
-    */
-  def computeRanges(leaves: Array[Long],
-                    numCols: Int,
-                    parallelism: Int): Array[(Long, Int)] = {
-    require(parallelism > 0)
-
-    val numLeaves = leaves.length
-
-    if (leaves.isEmpty || parallelism == 1) {
-      Array.empty
-
-    } else {
-
-      val step = numLeaves.toDouble / parallelism
-
-      // parallelism - 1 splitting points
-      Array.range(1, parallelism).map { i =>
-        val p = i * step
-        val n = p.toInt
-        val b = p - n
-        val c = (b * numCols).round.toInt
-        (leaves(n), c)
-      }.distinct.sorted
-    }
   }
 
 

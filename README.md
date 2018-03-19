@@ -185,4 +185,4 @@ Besides all the functions in DataFrame-based APIs, RDD-based APIs also support u
     
 ## Note
 
-Current master branch work for **Spark-2.2.0**
+Current master branch work for **Spark-2.3.0**

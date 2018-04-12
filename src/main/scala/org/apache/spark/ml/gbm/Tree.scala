@@ -332,24 +332,32 @@ private[gbm] object Tree extends Logging {
       nodeHists.sample(false, boostConfig.getColSampleByLevel, seed)
     }
 
-    val splits = sampled.flatMap {
-      case ((nodeId, col), hist) =>
+    val splits = sampled.mapPartitions { it =>
+      val splits = mutable.OpenHashMap.empty[Long, Split]
+
+      it.foreach { case ((nodeId, col), hist) =>
         accTrials.add(1L)
 
         val split = Split.split[H](col, hist, boostConfig, treeConfig)
         if (split.nonEmpty) {
           accSplits.add(1L)
-          Iterator.single((nodeId, split.get))
-        } else {
-          Iterator.empty
+
+          val s = splits.get(nodeId)
+          if (s.isEmpty || s.get.gain < split.get.gain) {
+            splits.update(nodeId, split.get)
+          }
         }
+      }
 
-    }.reduceByKeyLocally(
-      func = {
-        case (split1, split2) =>
-          Seq(split1, split2).maxBy(_.gain)
+      Iterator.single(splits.toArray)
 
-      }).toMap
+    }.treeReduce(f = {
+      case (splits1, splits2) =>
+        (splits1 ++ splits2).groupBy(_._1)
+          .map { case (nodeId, s) =>
+            (nodeId, s.map(_._2).maxBy(_.gain))
+          }.toArray
+    }, depth = boostConfig.getAggregationDepth).toMap
 
     logInfo(s"${accTrials.value} trials -> ${accSplits.value} splits -> ${splits.size} best splits")
     splits

@@ -6,7 +6,7 @@ import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.sql.SparkSession
 
 /**
-  * spark-submit --class example.HiggsSparseTest --master yarn-client --driver-memory 8G --executor-memory 2G --num-executors 32 SparkGBM-0.0.1.jar 2>log
+  * spark-submit --class example.HiggsSparseTest --master yarn-client --driver-memory 8G --executor-memory 2G --num-executors 32 --jars gbm/target/gbm-0.0.1.jar examples/target/examples-0.0.1.jar 2>log
   */
 object HiggsSparseTest {
 

@@ -9,7 +9,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg._
 
 /**
-  * spark-submit --class example.HiggsExtend --master yarn-client --driver-memory 8G --executor-memory 2G --num-executors 32 SparkGBM-0.0.1.jar
+  * spark-submit --class example.HiggsExtend --master yarn-client --driver-memory 8G --executor-memory 2G --num-executors 32 --jars gbm/target/gbm-0.0.1.jar examples/target/examples-0.0.1.jar
   */
 object HiggsExtend {
 

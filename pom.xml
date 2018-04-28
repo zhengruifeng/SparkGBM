@@ -8,6 +8,22 @@
     <artifactId>SparkGBM</artifactId>
     <version>0.0.1</version>
 
+    <packaging>pom</packaging>
+    <name>SparkGBM Parent POM</name>
+    <url>https://github.com/zhengruifeng/SparkGBM/</url>
+    <licenses>
+        <license>
+            <name>Apache 2.0 License</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.html</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <modules>
+        <module>gbm</module>
+        <module>examples</module>
+    </modules>
+
     <properties>
         <project.version>0.0.1</project.version>
         <java.version>1.8</java.version>
@@ -113,5 +129,5 @@
         </plugins>
     </build>
 
-    
+
 </project>

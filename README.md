@@ -34,8 +34,8 @@ From LightGBM we introduced:
 ### High-level DataFrame-based APIs
 
 **GBMClassifier** for binary classification: 
-[Source](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/org/apache/spark/ml/classification/GBMClassifier.scala)
-[Example](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/example/GBMClassifierExample.scala)
+[Source](https://github.com/zhengruifeng/SparkGBM/blob/master/gbm/src/main/scala/org/apache/spark/ml/classification/GBMClassifier.scala)
+[Example](https://github.com/zhengruifeng/SparkGBM/blob/master/examples/src/main/scala/example/GBMClassifierExample.scala)
 
     import org.apache.spark.ml.classification._
     
@@ -60,8 +60,8 @@ From LightGBM we introduced:
     val model2 = GBMClassificationModel.load(savePath)
 
 **GBMRegressor** for regression: 
-[Source](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/org/apache/spark/ml/regression/GBMRegressor.scala)
-[Example](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/example/GBMRegressorExample.scala)
+[Source](https://github.com/zhengruifeng/SparkGBM/blob/master/gbm/src/main/scala/org/apache/spark/ml/regression/GBMRegressor.scala)
+[Example](https://github.com/zhengruifeng/SparkGBM/blob/master/examples/src/main/scala/example/GBMRegressorExample.scala)
 
 
     import org.apache.spark.ml.regression._
@@ -107,8 +107,8 @@ From LightGBM we introduced:
 ### Low-level RDD-based APIs:
 
 Besides all the functions in DataFrame-based APIs, RDD-based APIs also support user-defined **objective**, **evaluation** and **callback**.
-[Source](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/org/apache/spark/ml/gbm/GBM.scala)
-[Example](https://github.com/zhengruifeng/SparkGBM/blob/master/src/main/scala/example/GBMExample.scala)
+[Source](https://github.com/zhengruifeng/SparkGBM/blob/master/gbm/src/main/scala/org/apache/spark/ml/gbm/GBM.scala)
+[Example](https://github.com/zhengruifeng/SparkGBM/blob/master/examples/src/main/scala/example/GBMExample.scala)
 
     import org.apache.spark.ml.gbm._
     

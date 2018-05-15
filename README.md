@@ -16,7 +16,7 @@ From XGBoost we introduced:
 
 1, Second order approximation of objective function
 
-2, L1/L2 regulation of weights to prevent overfitting
+2, L1/L2 regularization of weights to prevent overfitting
 
 3, Column subsampling by tree and by level
 
@@ -26,7 +26,7 @@ From LightGBM we introduced:
 
 1, Histogram subtraction to halve communication overhead
 
-2, Automatic data compression to reduce memory footprint
+2, Feature binning to reduce memory footprint
 
 
 ## API

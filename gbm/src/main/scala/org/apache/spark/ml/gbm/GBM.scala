@@ -839,8 +839,6 @@ private[gbm] object GBM extends Logging {
     val numH = implicitly[Numeric[H]]
     val toH = implicitly[FromDouble[H]]
 
-    val sc = instances.sparkContext
-
     var handlePersistence = false
 
     val zipped = instances.zip(preds)

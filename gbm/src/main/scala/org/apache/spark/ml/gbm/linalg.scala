@@ -66,20 +66,20 @@ private[gbm] object BinVector {
 
 private class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val values: Array[V]) extends BinVector[V] {
 
-  override def len = values.length
+  override def len: Int = values.length
 
   override def apply(index: Int) = values(index)
 
-  override def slice(sorted: Array[Int]) =
+  override def slice(sorted: Array[Int]): BinVector[V] =
     BinVector.dense(sorted.map(values))
 
   override def toArray: Array[V] =
     totalIter.map(_._2).toArray
 
-  override def totalIter =
+  override def totalIter: Iterator[(Int, V)] =
     Iterator.range(0, values.length).map(i => (i, values(i)))
 
-  override def activeIter = {
+  override def activeIter: Iterator[(Int, V)] = {
     val intV = implicitly[Integral[V]]
     totalIter.filter(t => !intV.equiv(t._2, intV.zero))
   }
@@ -97,9 +97,8 @@ private class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val
     BinVector.sparse[V](len, indexBuilder.result(), valueBuilder.result())
   }
 
-  override def computeDenseSize: Int = {
+  override def computeDenseSize: Int =
     BinVector.getTypeSize[V] * len + 8
-  }
 
   override def computeSparseSize: Int = {
     var nnz = 0
@@ -131,9 +130,10 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
   require(indices.length == values.length)
   require(len >= 0)
 
-  private def binarySearch = Utils.makeBinarySearch[K]
+  private def binarySearch: (Array[K], K) => Int =
+    Utils.makeBinarySearch[K]
 
-  override def apply(index: Int) = {
+  override def apply(index: Int): V = {
     val intK = implicitly[Integral[K]]
     val j = binarySearch(indices, intK.fromInt(index))
     if (j >= 0) {
@@ -144,8 +144,9 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
     }
   }
 
-  override def slice(sorted: Array[Int]) = {
+  override def slice(sorted: Array[Int]): BinVector[V] = {
     val intK = implicitly[Integral[K]]
+    import intK._
 
     val indexBuilder = mutable.ArrayBuilder.make[Int]
     val valueBuilder = mutable.ArrayBuilder.make[V]
@@ -153,7 +154,7 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
     var i = 0
     var j = 0
     while (i < sorted.length && j < indices.length) {
-      val k = intK.toInt(indices(j))
+      val k = indices(j).toInt
       if (sorted(i) == k) {
         indexBuilder += i
         valueBuilder += values(j)
@@ -172,16 +173,16 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
   override def toArray: Array[V] =
     totalIter.map(_._2).toArray
 
-  override def totalIter = new Iterator[(Int, V)]() {
+  override def totalIter: Iterator[(Int, V)] = new Iterator[(Int, V)]() {
     private val intK = implicitly[Integral[K]]
     private val intV = implicitly[Integral[V]]
 
     private var i = 0
     private var j = 0
 
-    override def hasNext = i < len
+    override def hasNext: Boolean = i < len
 
-    override def next = {
+    override def next: (Int, V) = {
       val v = if (j == indices.length) {
         intV.zero
       } else {
@@ -198,7 +199,7 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
     }
   }
 
-  override def activeIter = {
+  override def activeIter: Iterator[(Int, V)] = {
     val intK = implicitly[Integral[K]]
     val intV = implicitly[Integral[V]]
     Iterator.range(0, indices.length)
@@ -206,15 +207,13 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
       .filter(t => !intV.equiv(t._2, intV.zero))
   }
 
-  override def toDense: BinVector[V] = {
+  override def toDense: BinVector[V] =
     BinVector.dense[V](toArray)
-  }
 
   override def toSparse: BinVector[V] = this
 
-  override def computeDenseSize: Int = {
+  override def computeDenseSize: Int =
     BinVector.getTypeSize[V] * len + 8
-  }
 
   override def computeSparseSize: Int = {
     val kSize = BinVector.getTypeSize[K]

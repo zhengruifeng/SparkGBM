@@ -212,9 +212,10 @@ private[gbm] object Tree extends Logging {
                                                                                    f: (Long => Boolean),
                                                                                    numCols: Int,
                                                                                    parallelism: Int): RDD[((Long, Int), Array[H])] = {
-    val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
+    import numH._
 
+    val intB = implicitly[Integral[B]]
 
     data.filter(t => f(t._2))
       .mapPartitions { it =>
@@ -223,8 +224,8 @@ private[gbm] object Tree extends Logging {
 
         it.flatMap { case ((grad, hess, bins), nodeId) =>
 
-          val (g, h) = histSums.getOrElse(nodeId, (numH.zero, numH.zero))
-          histSums.update(nodeId, (numH.plus(g, grad), numH.plus(h, hess)))
+          val (g, h) = histSums.getOrElse(nodeId, (zero, zero))
+          histSums.update(nodeId, (g + grad, h + hess))
 
           // ignore zero-index bins
           bins.activeIter.map { case (col, bin) =>
@@ -265,6 +266,7 @@ private[gbm] object Tree extends Logging {
                                                minNodeHess: Double,
                                                parallelism: Int): RDD[((Long, Int), Array[H])] = {
     val numH = implicitly[Numeric[H]]
+    import numH._
 
     rightHists.map { case ((rightNodeId, col), hist) =>
       val parentNodeId = rightNodeId >> 1
@@ -277,7 +279,7 @@ private[gbm] object Tree extends Logging {
 
         var i = 0
         while (i < rightHist.length) {
-          nodeHist(i) = numH.minus(nodeHist(i), rightHist(i))
+          nodeHist(i) -= rightHist(i)
           i += 1
         }
 
@@ -293,9 +295,8 @@ private[gbm] object Tree extends Logging {
       var nnz = 0
       var i = 0
       while (i < hist.length) {
-        if (!numH.equiv(hist(i), numH.zero) ||
-          !numH.equiv(hist(i + 1), numH.zero)) {
-          hessSum += numH.toDouble(hist(i + 1))
+        if (hist(i) != zero || hist(i + 1) != zero) {
+          hessSum += hist(i + 1).toDouble
           nnz += 1
         }
         i += 2
@@ -366,21 +367,23 @@ private[gbm] object Tree extends Logging {
 
   def updateHistArray[H: Numeric : ClassTag, B: Integral : ClassTag](hist: Array[H],
                                                                      point: (B, H, H)): Array[H] = {
-    val intB = implicitly[Integral[B]]
     val numH = implicitly[Numeric[H]]
+    import numH._
+
+    val intB = implicitly[Integral[B]]
 
     val (bin, grad, hess) = point
 
     val index = intB.toInt(bin) << 1
 
     if (hist.length < index + 2) {
-      val newHist = hist ++ Array.fill(index + 2 - hist.length)(numH.zero)
+      val newHist = hist ++ Array.fill(index + 2 - hist.length)(zero)
       newHist(index) = grad
       newHist(index + 1) = hess
       newHist
     } else {
-      hist(index) = numH.plus(hist(index), grad)
-      hist(index + 1) = numH.plus(hist(index + 1), hess)
+      hist(index) += grad
+      hist(index + 1) += hess
       hist
     }
   }
@@ -389,17 +392,18 @@ private[gbm] object Tree extends Logging {
   def mergeHistArray[H: Numeric : ClassTag](hist1: Array[H],
                                             hist2: Array[H]): Array[H] = {
     val numH = implicitly[Numeric[H]]
+    import numH._
 
     var i = 0
     if (hist1.length >= hist2.length) {
       while (i < hist2.length) {
-        hist1(i) = numH.plus(hist1(i), hist2(i))
+        hist1(i) += hist2(i)
         i += 1
       }
       hist1
     } else {
       while (i < hist1.length) {
-        hist2(i) = numH.plus(hist1(i), hist2(i))
+        hist2(i) += hist1(i)
         i += 1
       }
       hist2
@@ -409,12 +413,13 @@ private[gbm] object Tree extends Logging {
 
   def adjustHistArray[H: Numeric : ClassTag](hist: Array[H]): Array[H] = {
     val numH = implicitly[Numeric[H]]
+    import numH._
 
     var i = 2
     while (i < hist.length) {
       // zero-index bin stores the sum of hist
-      hist(0) = numH.minus(hist(0), hist(i))
-      hist(1) = numH.minus(hist(1), hist(i + 1))
+      hist(0) -= hist(i)
+      hist(1) -= hist(i + 1)
       i += 2
     }
 

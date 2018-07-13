@@ -302,9 +302,9 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
 
   def numTrees: Int = model.numTrees
 
-  def numNodes: Array[Long] = model.numNodes
+  def numNodes: Array[Int] = model.numNodes
 
-  def numLeaves: Array[Long] = model.numLeaves
+  def numLeaves: Array[Int] = model.numLeaves
 
   def weights: Array[Double] = model.weights
 

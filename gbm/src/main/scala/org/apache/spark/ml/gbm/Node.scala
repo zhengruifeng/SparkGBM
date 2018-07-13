@@ -4,14 +4,14 @@ import scala.{specialized => spec}
 
 import org.apache.spark.ml.linalg._
 
-private[gbm] class LearningNode(val nodeId: Long,
+private[gbm] class LearningNode(val nodeId: Int,
                                 var isLeaf: Boolean,
                                 var prediction: Double,
                                 var split: Option[Split],
                                 var leftNode: Option[LearningNode],
                                 var rightNode: Option[LearningNode]) extends Serializable {
 
-  def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Long = {
+  def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int = {
     if (isLeaf) {
       nodeId
     } else if (split.get.goLeft(bins)) {
@@ -37,31 +37,31 @@ private[gbm] class LearningNode(val nodeId: Long,
       rightNode.map(_.nodeIterator).getOrElse(Iterator.empty)
   }
 
-  def numDescendants: Long = {
+  def numDescendants: Int = {
     (leftNode ++ rightNode).map(_.numDescendants).sum
   }
 
-  def subtreeDepth: Long = {
+  def subtreeDepth: Int = {
     if (isLeaf) {
-      0L
+      0
     } else {
-      (leftNode ++ rightNode).map(_.subtreeDepth).fold(0L)(math.max) + 1
+      (leftNode ++ rightNode).map(_.subtreeDepth).fold(0)(math.max) + 1
     }
   }
 }
 
 private[gbm] object LearningNode {
-  def create(nodeId: Long): LearningNode =
+  def create(nodeId: Int): LearningNode =
     new LearningNode(nodeId, true, Double.NaN, None, None, None)
 }
 
 
 trait Node extends Serializable {
 
-  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long
+  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Int
 
   private[gbm] def index(vec: Vector,
-                         discretizer: Discretizer): Long
+                         discretizer: Discretizer): Int
 
   private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double
 
@@ -72,14 +72,14 @@ trait Node extends Serializable {
 
   def nodeIterator: Iterator[Node]
 
-  def numDescendants: Long = {
-    var cnt = 0L
+  def numDescendants: Int = {
+    var cnt = 0
     nodeIterator.foreach(_ => cnt += 1)
     cnt
   }
 
-  def numLeaves: Long = {
-    var cnt = 0L
+  def numLeaves: Int = {
+    var cnt = 0
     nodeIterator.foreach {
       case _: LeafNode =>
         cnt += 1
@@ -126,7 +126,7 @@ class InternalNode(val featureId: Int,
     goLeftByBin[B](bins(featureId))
   }
 
-  private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long = {
+  private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Int = {
     if (goLeft(bins)) {
       leftNode.index[B](bins)
     } else {
@@ -135,7 +135,7 @@ class InternalNode(val featureId: Int,
   }
 
   private[gbm] override def index(vec: Vector,
-                                  discretizer: Discretizer): Long = {
+                                  discretizer: Discretizer): Int = {
     val v = vec(featureId)
     val b = discretizer.discretizeWithIndex(v, featureId)
     if (goLeftByBin[Int](b)) {
@@ -176,13 +176,13 @@ class InternalNode(val featureId: Int,
 }
 
 class LeafNode(val weight: Double,
-               val leafId: Long) extends Node {
+               val leafId: Int) extends Node {
 
   override def subtreeDepth: Int = 0
 
   override def nodeIterator: Iterator[Node] = Iterator(this)
 
-  private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long = leafId
+  private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Int = leafId
 
   private[gbm] override def index(vec: Vector,
                                   discretizer: Discretizer) = leafId
@@ -204,7 +204,7 @@ private[gbm] case class NodeData(id: Int,
                                  leftNode: Int,
                                  rightNode: Int,
                                  weight: Double,
-                                 leafId: Long)
+                                 leafId: Int)
 
 
 private[gbm] object NodeData {

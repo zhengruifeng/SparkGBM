@@ -1101,9 +1101,9 @@ class GBMModel(val discretizer: Discretizer,
 
   def numTrees: Int = trees.length
 
-  def numLeaves: Array[Long] = trees.map(_.numLeaves)
+  def numLeaves: Array[Int] = trees.map(_.numLeaves)
 
-  def numNodes: Array[Long] = trees.map(_.numNodes)
+  def numNodes: Array[Int] = trees.map(_.numNodes)
 
   def depths: Array[Int] = trees.map(_.depth)
 
@@ -1179,7 +1179,7 @@ class GBMModel(val discretizer: Discretizer,
   }
 
 
-  /** leaf transformation with first trees
+  /** leaf transformation with first #firstTrees trees
     * if oneHot is enable, transform input into a sparse one-hot encoded vector */
   def leaf(features: Vector,
            oneHot: Boolean,
@@ -1200,8 +1200,8 @@ class GBMModel(val discretizer: Discretizer,
       var i = 0
       while (i < n) {
         val index = trees(i).index(features, discretizer)
-        indices(i) = step + index.toInt
-        step += numLeaves(i).toInt
+        indices(i) = step + index
+        step += numLeaves(i)
         i += 1
       }
 

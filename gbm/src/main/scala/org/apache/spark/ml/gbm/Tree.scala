@@ -26,23 +26,23 @@ private[gbm] object Tree extends Logging {
                                                                         treeConfig: TreeConfig): Option[TreeModel] = {
     val sc = data.sparkContext
 
-    var nodeIds = sc.emptyRDD[Long]
-    val nodesCheckpointer = new Checkpointer[Long](sc,
+    var nodeIds = sc.emptyRDD[Int]
+    val nodesCheckpointer = new Checkpointer[Int](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
 
-    var hists = sc.emptyRDD[((Long, Int), Array[H])]
-    val histsCheckpointer = new Checkpointer[((Long, Int), Array[H])](sc,
+    var hists = sc.emptyRDD[((Int, Int), Array[H])]
+    val histsCheckpointer = new Checkpointer[((Int, Int), Array[H])](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
 
     val logPrefix = s"Iter ${treeConfig.iteration}: Tree ${treeConfig.treeIndex}:"
     logInfo(s"$logPrefix tree building start")
 
-    val root = LearningNode.create(1L)
+    val root = LearningNode.create(1)
 
-    val prevSplits = mutable.OpenHashMap.empty[Long, Split]
+    val prevSplits = mutable.OpenHashMap.empty[Int, Split]
 
-    var minNodeId = 1L
-    var numLeaves = 1L
+    var minNodeId = 1
+    var numLeaves = 1
     var finished = false
 
     while (!finished) {
@@ -53,22 +53,22 @@ private[gbm] object Tree extends Logging {
       val depth = root.subtreeDepth
       logInfo(s"$logPrefix Depth $depth: splitting start, parallelism $parallelism")
 
-      if (minNodeId == 1L) {
-        nodeIds = data.map(_ => 1L)
+      if (minNodeId == 1) {
+        nodeIds = data.map(_ => 1)
       } else {
         nodeIds = updateNodeIds[H, B](data, nodeIds, prevSplits.toMap)
       }
       nodesCheckpointer.update(nodeIds)
 
 
-      if (minNodeId == 1L) {
+      if (minNodeId == 1) {
         // direct compute the histogram of root node
-        hists = computeHistogram[H, B](data.zip(nodeIds), (n: Long) => true,
+        hists = computeHistogram[H, B](data.zip(nodeIds), (n: Int) => true,
           treeConfig.numCols, parallelism)
 
       } else {
         // compute the histogram of right leaves
-        val rightHists = computeHistogram[H, B](data.zip(nodeIds), (n: Long) => n >= minNodeId && n % 2 == 1L,
+        val rightHists = computeHistogram[H, B](data.zip(nodeIds), (n: Int) => n >= minNodeId && n % 2 == 1,
           treeConfig.numCols, parallelism)
 
         // compute the histogram of both left leaves and right leaves by subtraction
@@ -146,8 +146,8 @@ private[gbm] object Tree extends Logging {
     * @param splits    splits of leaves
     */
   def updateTree(root: LearningNode,
-                 minNodeId: Long,
-                 splits: Map[Long, Split]): Unit = {
+                 minNodeId: Int,
+                 splits: Map[Int, Split]): Unit = {
     val nodes = root.nodeIterator.filter { node =>
       node.nodeId >= minNodeId && splits.contains(node.nodeId)
     }.toArray
@@ -178,8 +178,8 @@ private[gbm] object Tree extends Logging {
     * @return updated nodeIds
     */
   def updateNodeIds[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[(H, H, BinVector[B])],
-                                                                   nodeIds: RDD[Long],
-                                                                   splits: Map[Long, Split]): RDD[Long] = {
+                                                                   nodeIds: RDD[Int],
+                                                                   splits: Map[Int, Split]): RDD[Int] = {
     data.zip(nodeIds).map {
       case ((_, _, bins), nodeId) =>
         val split = splits.get(nodeId)
@@ -208,10 +208,10 @@ private[gbm] object Tree extends Logging {
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
-  def computeHistogram[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Long)],
-                                                                                   f: (Long => Boolean),
+  def computeHistogram[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Int)],
+                                                                                   f: (Int => Boolean),
                                                                                    numCols: Int,
-                                                                                   parallelism: Int): RDD[((Long, Int), Array[H])] = {
+                                                                                   parallelism: Int): RDD[((Int, Int), Array[H])] = {
     val numH = implicitly[Numeric[H]]
     import numH._
 
@@ -220,7 +220,7 @@ private[gbm] object Tree extends Logging {
     data.filter(t => f(t._2))
       .mapPartitions { it =>
 
-        val histSums = mutable.OpenHashMap.empty[Long, (H, H)]
+        val histSums = mutable.OpenHashMap.empty[Int, (H, H)]
 
         it.flatMap { case ((grad, hess, bins), nodeId) =>
 
@@ -261,10 +261,10 @@ private[gbm] object Tree extends Logging {
     * @tparam H
     * @return histogram data of both left and right leaves
     */
-  def subtractHistogram[H: Numeric : ClassTag](nodeHists: RDD[((Long, Int), Array[H])],
-                                               rightHists: RDD[((Long, Int), Array[H])],
+  def subtractHistogram[H: Numeric : ClassTag](nodeHists: RDD[((Int, Int), Array[H])],
+                                               rightHists: RDD[((Int, Int), Array[H])],
                                                minNodeHess: Double,
-                                               parallelism: Int): RDD[((Long, Int), Array[H])] = {
+                                               parallelism: Int): RDD[((Int, Int), Array[H])] = {
     val numH = implicitly[Numeric[H]]
     import numH._
 
@@ -318,10 +318,10 @@ private[gbm] object Tree extends Logging {
     * @tparam H
     * @return optimal splits for each node
     */
-  def findSplits[H: Numeric : ClassTag](nodeHists: RDD[((Long, Int), Array[H])],
+  def findSplits[H: Numeric : ClassTag](nodeHists: RDD[((Int, Int), Array[H])],
                                         boostConfig: BoostConfig,
                                         treeConfig: TreeConfig,
-                                        seed: Long): Map[Long, Split] = {
+                                        seed: Long): Map[Int, Split] = {
     val sc = nodeHists.sparkContext
     val accTrials = sc.longAccumulator("NumTrials")
     val accSplits = sc.longAccumulator("NumSplits")
@@ -334,7 +334,7 @@ private[gbm] object Tree extends Logging {
     }
 
     val splits = sampled.mapPartitions { it =>
-      val splits = mutable.OpenHashMap.empty[Long, Split]
+      val splits = mutable.OpenHashMap.empty[Int, Split]
 
       it.foreach { case ((nodeId, col), hist) =>
         accTrials.add(1L)
@@ -432,17 +432,17 @@ class TreeModel(val root: Node) extends Serializable {
 
   lazy val depth: Int = root.subtreeDepth
 
-  lazy val numLeaves: Long = root.numLeaves
+  lazy val numLeaves: Int = root.numLeaves
 
-  lazy val numNodes: Long = root.numDescendants
+  lazy val numNodes: Int = root.numDescendants
 
   private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double = root.predict[B](bins)
 
   def predict(vec: Vector, discretizer: Discretizer): Double = root.predict(vec, discretizer)
 
-  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Long = root.index[B](bins)
+  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Int = root.index[B](bins)
 
-  def index(vec: Vector, discretizer: Discretizer): Long = root.index(vec, discretizer)
+  def index(vec: Vector, discretizer: Discretizer): Int = root.index(vec, discretizer)
 
   def computeImportance: Map[Int, Double] = {
     val gains = mutable.OpenHashMap.empty[Int, Double]
@@ -474,7 +474,7 @@ private[gbm] object TreeModel {
 
   def createNode(node: LearningNode,
                  columns: Array[Int],
-                 leafIds: Array[Long]): Node = {
+                 leafIds: Array[Int]): Node = {
 
     if (node.isLeaf) {
       require(node.leftNode.isEmpty &&

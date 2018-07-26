@@ -24,60 +24,35 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
                   val zeroAsMissing: Boolean,
                   val sparsity: Double) extends Serializable {
 
-  def transform(vec: Vector): Array[Int] = {
+  def transform[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): Array[B] = {
     require(vec.size == numCols)
 
-    val bins = Array.ofDim[Int](numCols)
+    val intB = implicitly[Integral[B]]
 
-    if (zeroAsMissing) {
-      Utils.getActiveIter(vec).foreach { case (i, v) =>
-        bins(i) = discretizeWithIndex(v, i)
-      }
+    val bins = Array.fill(numCols)(intB.zero)
 
+    val iter = if (zeroAsMissing) {
+      Utils.getActiveIter(vec)
     } else {
-      Utils.getTotalIter(vec).foreach { case (i, v) =>
-        bins(i) = discretizeWithIndex(v, i)
-      }
+      Utils.getTotalIter(vec)
+    }
+
+    iter.foreach { case (i, v) =>
+      val bin = discretizeWithIndex(v, i)
+      bins(i) = intB.fromInt(bin)
     }
 
     bins
   }
 
 
-  private[gbm] def transform[@spec(Byte, Short, Int) B: Integral : ClassTag](data: RDD[(Double, Double, Vector)]): RDD[(Double, Double, BinVector[B])] = {
-    val intB: Integral[B] = implicitly[Integral[B]]
-
-    val getIter = if (zeroAsMissing) {
-      (vec: Vector) => Utils.getActiveIter(vec)
-    } else {
-      (vec: Vector) => Utils.getTotalIter(vec)
-    }
-
-    data.mapPartitions { it =>
-
-      val indexBuilder = mutable.ArrayBuilder.make[Int]
-      val valueBuilder = mutable.ArrayBuilder.make[B]
-
-      it.map { case (weight, label, vec) =>
-        indexBuilder.clear()
-        valueBuilder.clear()
-
-        getIter(vec).foreach { case (i, v) =>
-          val bin = discretizeWithIndex(v, i)
-          if (bin != 0) {
-            indexBuilder += i
-            valueBuilder += intB.fromInt(bin)
-          }
-        }
-
-        val bins = BinVector.sparse[B](numCols, indexBuilder.result(), valueBuilder.result()).compress
-        (weight, label, bins)
-      }
-    }
+  private[gbm] def transformToGBMVector[@spec(Byte, Short, Int) F: Integral : ClassTag, @spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): GBMVector[F, B] = {
+    val array = transform[B](vec)
+    GBMVector.dense[F, B](array).compress
   }
 
 
-  private[gbm] def discretizeWithIndex(value: Double, index: Int): Int = {
+  private def discretizeWithIndex(value: Double, index: Int): Int = {
     if (value.isNaN || value.isInfinity) {
       0
     } else if (zeroAsMissing && value == 0) {
@@ -207,7 +182,7 @@ private[gbm] object Discretizer extends Logging {
 
     // compute number of non-missing for each row
     val countNNM = if (zeroAsMissing) {
-      (vec: Vector) => {
+      vec: Vector => {
         Utils.getActiveIter(vec).count { case (i, v) =>
           !v.isNaN && !v.isInfinity
         }
@@ -215,7 +190,7 @@ private[gbm] object Discretizer extends Logging {
 
     } else {
 
-      (vec: Vector) => {
+      vec: Vector => {
         vec.size - Utils.getActiveIter(vec).count { case (i, v) =>
           v.isNaN || v.isInfinity
         }

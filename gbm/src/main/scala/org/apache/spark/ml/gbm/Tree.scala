@@ -5,7 +5,6 @@ import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 
 
@@ -21,17 +20,17 @@ private[gbm] object Tree extends Logging {
     * @tparam B type of bin
     * @return a new tree if any
     */
-  def train[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[(H, H, BinVector[B])],
-                                                                        boostConfig: BoostConfig,
-                                                                        treeConfig: TreeConfig): Option[TreeModel] = {
+  def train[H: Numeric : ClassTag : FromDouble, F: Integral : ClassTag, B: Integral : ClassTag](data: RDD[(H, H, GBMVector[F, B])],
+                                                                                                boostConfig: BoostConfig,
+                                                                                                treeConfig: TreeConfig): Option[TreeModel] = {
     val sc = data.sparkContext
 
     var nodeIds = sc.emptyRDD[Int]
     val nodesCheckpointer = new Checkpointer[Int](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
 
-    var hists = sc.emptyRDD[((Int, Int), Array[H])]
-    val histsCheckpointer = new Checkpointer[((Int, Int), Array[H])](sc,
+    var hists = sc.emptyRDD[((Int, F), Array[H])]
+    val histsCheckpointer = new Checkpointer[((Int, F), Array[H])](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
 
     val logPrefix = s"Iter ${treeConfig.iteration}: Tree ${treeConfig.treeIndex}:"
@@ -56,28 +55,28 @@ private[gbm] object Tree extends Logging {
       if (minNodeId == 1) {
         nodeIds = data.map(_ => 1)
       } else {
-        nodeIds = updateNodeIds[H, B](data, nodeIds, prevSplits.toMap)
+        nodeIds = updateNodeIds[H, F, B](data, nodeIds, prevSplits.toMap)
       }
       nodesCheckpointer.update(nodeIds)
 
 
       if (minNodeId == 1) {
         // direct compute the histogram of root node
-        hists = computeHistogram[H, B](data.zip(nodeIds), (n: Int) => true,
+        hists = computeHistogram[H, F, B](data.zip(nodeIds), (n: Int) => true,
           treeConfig.numCols, parallelism)
 
       } else {
         // compute the histogram of right leaves
-        val rightHists = computeHistogram[H, B](data.zip(nodeIds), (n: Int) => n >= minNodeId && n % 2 == 1,
+        val rightHists = computeHistogram[H, F, B](data.zip(nodeIds), (n: Int) => n >= minNodeId && n % 2 == 1,
           treeConfig.numCols, parallelism)
 
         // compute the histogram of both left leaves and right leaves by subtraction
-        hists = subtractHistogram[H](hists, rightHists, boostConfig.getMinNodeHess, parallelism)
+        hists = subtractHistogram[F, H](hists, rightHists, boostConfig.getMinNodeHess, parallelism)
       }
       histsCheckpointer.update(hists)
 
       // find best splits
-      val splits = findSplits[H](hists, boostConfig, treeConfig,
+      val splits = findSplits[F, H](hists, boostConfig, treeConfig,
         boostConfig.getSeed + treeConfig.treeIndex + depth)
 
       if (splits.isEmpty) {
@@ -177,15 +176,15 @@ private[gbm] object Tree extends Logging {
     * @tparam B
     * @return updated nodeIds
     */
-  def updateNodeIds[H: Numeric : ClassTag, B: Integral : ClassTag](data: RDD[(H, H, BinVector[B])],
-                                                                   nodeIds: RDD[Int],
-                                                                   splits: Map[Int, Split]): RDD[Int] = {
+  def updateNodeIds[H: Numeric : ClassTag, F: Integral : ClassTag, B: Integral : ClassTag](data: RDD[(H, H, GBMVector[F, B])],
+                                                                                           nodeIds: RDD[Int],
+                                                                                           splits: Map[Int, Split]): RDD[Int] = {
     data.zip(nodeIds).map {
       case ((_, _, bins), nodeId) =>
         val split = splits.get(nodeId)
         if (split.nonEmpty) {
           val leftNodeId = nodeId << 1
-          if (split.get.goLeft[B](bins)) {
+          if (split.get.goLeft[F, B](bins)) {
             leftNodeId
           } else {
             leftNodeId + 1
@@ -208,12 +207,14 @@ private[gbm] object Tree extends Logging {
     * @tparam B
     * @return histogram data containing (nodeId, columnId, histogram)
     */
-  def computeHistogram[H: Numeric : ClassTag : FromDouble, B: Integral : ClassTag](data: RDD[((H, H, BinVector[B]), Int)],
-                                                                                   f: (Int => Boolean),
-                                                                                   numCols: Int,
-                                                                                   parallelism: Int): RDD[((Int, Int), Array[H])] = {
+  def computeHistogram[H: Numeric : ClassTag : FromDouble, F: Integral : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, GBMVector[F, B]), Int)],
+                                                                                                           f: (Int => Boolean),
+                                                                                                           numCols: Int,
+                                                                                                           parallelism: Int): RDD[((Int, F), Array[H])] = {
     val numH = implicitly[Numeric[H]]
     import numH._
+
+    val intF = implicitly[Integral[F]]
 
     val intB = implicitly[Integral[B]]
 
@@ -237,7 +238,7 @@ private[gbm] object Tree extends Logging {
             // make sure all (nodeId, col) pairs are taken into account
             // by the way, store sum of hist in zero-index bin
             Iterator.range(0, numCols).map { c =>
-              ((nodeId, c), (intB.zero, gradSum, hessSum))
+              ((nodeId, intF.fromInt(c)), (intB.zero, gradSum, hessSum))
             }
           }
 
@@ -261,10 +262,10 @@ private[gbm] object Tree extends Logging {
     * @tparam H
     * @return histogram data of both left and right leaves
     */
-  def subtractHistogram[H: Numeric : ClassTag](nodeHists: RDD[((Int, Int), Array[H])],
-                                               rightHists: RDD[((Int, Int), Array[H])],
-                                               minNodeHess: Double,
-                                               parallelism: Int): RDD[((Int, Int), Array[H])] = {
+  def subtractHistogram[F: Integral : ClassTag, H: Numeric : ClassTag](nodeHists: RDD[((Int, F), Array[H])],
+                                                                       rightHists: RDD[((Int, F), Array[H])],
+                                                                       minNodeHess: Double,
+                                                                       parallelism: Int): RDD[((Int, F), Array[H])] = {
     val numH = implicitly[Numeric[H]]
     import numH._
 
@@ -318,10 +319,12 @@ private[gbm] object Tree extends Logging {
     * @tparam H
     * @return optimal splits for each node
     */
-  def findSplits[H: Numeric : ClassTag](nodeHists: RDD[((Int, Int), Array[H])],
-                                        boostConfig: BoostConfig,
-                                        treeConfig: TreeConfig,
-                                        seed: Long): Map[Int, Split] = {
+  def findSplits[F: Integral : ClassTag, H: Numeric : ClassTag](nodeHists: RDD[((Int, F), Array[H])],
+                                                                boostConfig: BoostConfig,
+                                                                treeConfig: TreeConfig,
+                                                                seed: Long): Map[Int, Split] = {
+    val intF = implicitly[Integral[F]]
+
     val sc = nodeHists.sparkContext
     val accTrials = sc.longAccumulator("NumTrials")
     val accSplits = sc.longAccumulator("NumSplits")
@@ -339,7 +342,7 @@ private[gbm] object Tree extends Logging {
       it.foreach { case ((nodeId, col), hist) =>
         accTrials.add(1L)
 
-        val split = Split.split[H](col, hist, boostConfig, treeConfig)
+        val split = Split.split[H](intF.toInt(col), hist, boostConfig, treeConfig)
         if (split.nonEmpty) {
           accSplits.add(1L)
 
@@ -436,13 +439,13 @@ class TreeModel(val root: Node) extends Serializable {
 
   lazy val numNodes: Int = root.numDescendants
 
-  private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Double = root.predict[B](bins)
+  private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double = root.predict[B](bins)
 
-  def predict(vec: Vector, discretizer: Discretizer): Double = root.predict(vec, discretizer)
+  private[gbm] def predict[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Double = root.predict[F, B](bins)
 
-  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Int = root.index[B](bins)
+  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int = root.index[B](bins)
 
-  def index(vec: Vector, discretizer: Discretizer): Int = root.index(vec, discretizer)
+  private[gbm] def index[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Int = root.index[F, B](bins)
 
   def computeImportance: Map[Int, Double] = {
     val gains = mutable.OpenHashMap.empty[Int, Double]

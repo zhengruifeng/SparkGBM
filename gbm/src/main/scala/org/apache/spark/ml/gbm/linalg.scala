@@ -4,30 +4,30 @@ import scala.collection.mutable
 import scala.reflect.{ClassTag, classTag}
 import scala.{specialized => spec}
 
-private[gbm] trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
+private[gbm] trait GBMVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V] extends Serializable {
 
   def len: Int
 
   def apply(index: Int): V
 
-  def slice(sorted: Array[Int]): BinVector[V]
+  def slice(sorted: Array[Int]): GBMVector[K, V]
 
   def toArray: Array[V]
 
-  def totalIter: Iterator[(Int, V)]
+  def totalIter: Iterator[(K, V)]
 
-  def activeIter: Iterator[(Int, V)]
+  def activeIter: Iterator[(K, V)]
 
-  def computeDenseSize: Int
+  def nnz: Int = activeIter.size
 
-  def computeSparseSize: Int
+  def toDense: GBMVector[K, V]
 
-  def toDense: BinVector[V]
+  def toSparse: GBMVector[K, V]
 
-  def toSparse: BinVector[V]
-
-  def compress: BinVector[V] = {
-    if (computeDenseSize <= computeSparseSize) {
+  def compress()(implicit kk: ClassTag[K], kv: ClassTag[V]): GBMVector[K, V] = {
+    val kSize = GBMVector.getTypeSize[K]
+    val vSize = GBMVector.getTypeSize[V]
+    if (vSize * len + 8 <= (kSize + vSize) * nnz + 20) {
       toDense
     } else {
       toSparse
@@ -35,23 +35,16 @@ private[gbm] trait BinVector[@spec(Byte, Short, Int) V] extends Serializable {
   }
 }
 
-private[gbm] object BinVector {
+private[gbm] object GBMVector {
 
-  def dense[@spec(Byte, Short, Int) V: Integral : ClassTag](values: Array[V]): BinVector[V] = {
-    new DenseBinVector[V](values)
+  def dense[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int, Long, Float, Double) V: Numeric : ClassTag](values: Array[V]): GBMVector[K, V] = {
+    new DenseGBMVector[K, V](values)
   }
 
-  def sparse[@spec(Byte, Short, Int) V: Integral : ClassTag](size: Int,
-                                                             indices: Array[Int],
-                                                             values: Array[V]): BinVector[V] = {
-    val lastIndex = indices.lastOption.getOrElse(-1)
-    if (lastIndex <= Byte.MaxValue) {
-      new SparseBinVector[Byte, V](size, indices.map(_.toByte), values)
-    } else if (lastIndex <= Short.MaxValue) {
-      new SparseBinVector[Short, V](size, indices.map(_.toShort), values)
-    } else {
-      new SparseBinVector[Int, V](size, indices, values)
-    }
+  def sparse[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int, Long, Float, Double) V: Numeric : ClassTag](size: Int,
+                                                                                                                                 indices: Array[K],
+                                                                                                                                 values: Array[V]): GBMVector[K, V] = {
+    new SparseGBMVector[K, V](size, indices, values)
   }
 
   def getTypeSize[T: ClassTag]: Int = {
@@ -59,73 +52,53 @@ private[gbm] object BinVector {
       case ClassTag.Byte => 1
       case ClassTag.Short => 2
       case ClassTag.Int => 4
+      case ClassTag.Long => 8
+      case ClassTag.Float => 4
+      case ClassTag.Double => 8
     }
   }
 }
 
 
-private class DenseBinVector[@spec(Byte, Short, Int) V: Integral : ClassTag](val values: Array[V]) extends BinVector[V] {
+private class DenseGBMVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int, Long, Float, Double) V: Numeric : ClassTag](val values: Array[V]) extends GBMVector[K, V] {
 
   override def len: Int = values.length
 
   override def apply(index: Int) = values(index)
 
-  override def slice(sorted: Array[Int]): BinVector[V] =
-    BinVector.dense(sorted.map(values))
+  override def slice(sorted: Array[Int]): GBMVector[K, V] =
+    GBMVector.dense(sorted.map(values))
 
   override def toArray: Array[V] =
     totalIter.map(_._2).toArray
 
-  override def totalIter: Iterator[(Int, V)] =
-    Iterator.range(0, values.length).map(i => (i, values(i)))
-
-  override def activeIter: Iterator[(Int, V)] = {
-    val intV = implicitly[Integral[V]]
-    totalIter.filter(t => !intV.equiv(t._2, intV.zero))
+  override def totalIter: Iterator[(K, V)] = {
+    val intK = implicitly[Integral[K]]
+    values.iterator.zipWithIndex.map { case (v, i) => (intK.fromInt(i), v) }
   }
 
-  override def toDense: BinVector[V] = this
+  override def activeIter: Iterator[(K, V)] = {
+    val numV = implicitly[Numeric[V]]
+    totalIter.filter(t => t._2 != numV.zero)
+  }
 
-  override def toSparse: BinVector[V] = {
-    val indexBuilder = mutable.ArrayBuilder.make[Int]
+  override def toDense: GBMVector[K, V] = this
+
+  override def toSparse: GBMVector[K, V] = {
+    val indexBuilder = mutable.ArrayBuilder.make[K]
     val valueBuilder = mutable.ArrayBuilder.make[V]
-
     activeIter.foreach { case (i, v) =>
       indexBuilder += i
       valueBuilder += v
     }
-    BinVector.sparse[V](len, indexBuilder.result(), valueBuilder.result())
-  }
-
-  override def computeDenseSize: Int =
-    BinVector.getTypeSize[V] * len + 8
-
-  override def computeSparseSize: Int = {
-    var nnz = 0
-    var lastIndex = -1
-    activeIter.foreach { case (i, v) =>
-      nnz += 1
-      lastIndex = i
-    }
-
-    val kSize = if (lastIndex <= Byte.MaxValue) {
-      1
-    } else if (lastIndex <= Short.MaxValue) {
-      2
-    } else {
-      4
-    }
-
-    val vSize = BinVector.getTypeSize[V]
-
-    (kSize + vSize) * nnz + 20
+    GBMVector.sparse[K, V](len, indexBuilder.result(), valueBuilder.result())
   }
 }
 
 
-private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int) V: Integral : ClassTag](val len: Int,
-                                                                                                                              val indices: Array[K],
-                                                                                                                              val values: Array[V]) extends BinVector[V] {
+private class SparseGBMVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int, Long, Float, Double) V: Numeric : ClassTag](val len: Int,
+                                                                                                                                                  val indices: Array[K],
+                                                                                                                                                  val values: Array[V]) extends GBMVector[K, V] {
 
   require(indices.length == values.length)
   require(len >= 0)
@@ -139,24 +112,22 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
     if (j >= 0) {
       values(j)
     } else {
-      val intV = implicitly[Integral[V]]
-      intV.zero
+      val numV = implicitly[Numeric[V]]
+      numV.zero
     }
   }
 
-  override def slice(sorted: Array[Int]): BinVector[V] = {
+  override def slice(sorted: Array[Int]): GBMVector[K, V] = {
     val intK = implicitly[Integral[K]]
-    import intK._
-
-    val indexBuilder = mutable.ArrayBuilder.make[Int]
+    val indexBuilder = mutable.ArrayBuilder.make[K]
     val valueBuilder = mutable.ArrayBuilder.make[V]
 
     var i = 0
     var j = 0
     while (i < sorted.length && j < indices.length) {
-      val k = indices(j).toInt
+      val k = intK.toInt(indices(j))
       if (sorted(i) == k) {
-        indexBuilder += i
+        indexBuilder += intK.fromInt(i)
         valueBuilder += values(j)
         i += 1
         j += 1
@@ -167,59 +138,49 @@ private class SparseBinVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
       }
     }
 
-    BinVector.sparse[V](sorted.length, indexBuilder.result(), valueBuilder.result())
+    GBMVector.sparse[K, V](sorted.length, indexBuilder.result(), valueBuilder.result())
   }
 
   override def toArray: Array[V] =
     totalIter.map(_._2).toArray
 
-  override def totalIter: Iterator[(Int, V)] = new Iterator[(Int, V)]() {
+  override def totalIter: Iterator[(K, V)] = new Iterator[(K, V)]() {
     private val intK = implicitly[Integral[K]]
-    private val intV = implicitly[Integral[V]]
+    private val numV = implicitly[Numeric[V]]
 
     private var i = 0
     private var j = 0
 
     override def hasNext: Boolean = i < len
 
-    override def next: (Int, V) = {
+    override def next: (K, V) = {
       val v = if (j == indices.length) {
-        intV.zero
+        numV.zero
       } else {
         val k = intK.toInt(indices(j))
         if (i == k) {
           j += 1
           values(j - 1)
         } else {
-          intV.zero
+          numV.zero
         }
       }
       i += 1
-      (i - 1, v)
+      (intK.fromInt(i - 1), v)
     }
   }
 
-  override def activeIter: Iterator[(Int, V)] = {
-    val intK = implicitly[Integral[K]]
-    val intV = implicitly[Integral[V]]
-    Iterator.range(0, indices.length)
-      .map(i => (intK.toInt(indices(i)), values(i)))
-      .filter(t => !intV.equiv(t._2, intV.zero))
+  override def activeIter: Iterator[(K, V)] = {
+    val numV = implicitly[Numeric[V]]
+    indices.iterator
+      .zip(values.iterator)
+      .filter(t => t._2 != numV.zero)
   }
 
-  override def toDense: BinVector[V] =
-    BinVector.dense[V](toArray)
+  override def toDense: GBMVector[K, V] =
+    GBMVector.dense[K, V](toArray)
 
-  override def toSparse: BinVector[V] = this
-
-  override def computeDenseSize: Int =
-    BinVector.getTypeSize[V] * len + 8
-
-  override def computeSparseSize: Int = {
-    val kSize = BinVector.getTypeSize[K]
-    val vSize = BinVector.getTypeSize[V]
-    (kSize + vSize) * indices.length + 20
-  }
+  override def toSparse: GBMVector[K, V] = this
 }
 
 

@@ -28,7 +28,7 @@ private[gbm] trait Split extends Serializable {
     goLeftByBin[B](bins(featureId))
   }
 
-  def goLeft[@spec(Byte, Short, Int) B: Integral](bins: BinVector[B]): Boolean = {
+  def goLeft[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Boolean = {
     goLeftByBin[B](bins(featureId))
   }
 

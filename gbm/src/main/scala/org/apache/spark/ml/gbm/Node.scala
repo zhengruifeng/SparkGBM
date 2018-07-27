@@ -58,11 +58,11 @@ trait Node extends Serializable {
 
   private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int
 
-  private[gbm] def index[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Int
+  private[gbm] def index[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Int
 
   private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double
 
-  private[gbm] def predict[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Double
+  private[gbm] def predict[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Double
 
   def subtreeDepth: Int
 
@@ -122,7 +122,7 @@ class InternalNode(val featureId: Int,
     goLeftByBin[B](bins(featureId))
   }
 
-  private[gbm] def goLeft[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Boolean = {
+  private[gbm] def goLeft[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Boolean = {
     goLeftByBin[B](bins(featureId))
   }
 
@@ -134,11 +134,11 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private[gbm] override def index[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Int = {
+  private[gbm] override def index[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Int = {
     if (goLeft(bins)) {
-      leftNode.index[F, B](bins)
+      leftNode.index[C, B](bins)
     } else {
-      rightNode.index[F, B](bins)
+      rightNode.index[C, B](bins)
     }
   }
 
@@ -150,11 +150,11 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private[gbm] override def predict[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Double = {
+  private[gbm] override def predict[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Double = {
     if (goLeft(bins)) {
-      leftNode.predict[F, B](bins)
+      leftNode.predict[C, B](bins)
     } else {
-      rightNode.predict[F, B](bins)
+      rightNode.predict[C, B](bins)
     }
   }
 
@@ -178,11 +178,11 @@ class LeafNode(val weight: Double,
 
   private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int = leafId
 
-  private[gbm] override def index[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Int = leafId
+  private[gbm] override def index[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Int = leafId
 
   private[gbm] override def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double = weight
 
-  private[gbm] override def predict[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Double = weight
+  private[gbm] override def predict[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Double = weight
 }
 
 

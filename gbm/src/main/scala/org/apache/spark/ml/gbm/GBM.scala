@@ -537,27 +537,13 @@ private[gbm] object GBM extends Logging {
             validation: Boolean,
             discretizer: Discretizer,
             initialModel: Option[GBMModel]): GBMModel = {
-    val numFeatures = discretizer.numCols
-    val featureIndexType = if (numFeatures <= Byte.MaxValue) {
-      "Byte"
-    } else if (numFeatures <= Short.MaxValue) {
-      "Short"
-    } else {
-      "Int"
-    }
-    logInfo(s"Data representation of feature indices: $featureIndexType")
+    val columnIndexType = Utils.getTypeByRange(discretizer.numCols)
+    logInfo(s"Data type of column indices: $columnIndexType")
 
-    val maxBinIndex = discretizer.numBins.max
-    val binIndexType = if (maxBinIndex <= Byte.MaxValue) {
-      "Byte"
-    } else if (maxBinIndex <= Short.MaxValue) {
-      "Short"
-    } else {
-      "Int"
-    }
-    logInfo(s"Data representation of bin indices: $binIndexType")
+    val binType = Utils.getTypeByRange(discretizer.numBins.max)
+    logInfo(s"Data type of bin indices: $binType")
 
-    (featureIndexType, binIndexType) match {
+    (columnIndexType, binType) match {
       case ("Byte", "Byte") =>
         boostWithBinType[Byte, Byte](data, test, boostConfig, validation, discretizer, initialModel)
 
@@ -589,30 +575,30 @@ private[gbm] object GBM extends Logging {
 
 
   /**
-    * train a GBM model, with the given type of binIndex and featureIndex, dataset contains (weight, label, vec)
+    * train a GBM model, with the given type of bins and column indices, dataset contains (weight, label, vec)
     */
-  def boostWithBinType[F: Integral : ClassTag, B: Integral : ClassTag](data: RDD[(Double, Double, Vector)],
+  def boostWithBinType[C: Integral : ClassTag, B: Integral : ClassTag](data: RDD[(Double, Double, Vector)],
                                                                        test: RDD[(Double, Double, Vector)],
                                                                        boostConfig: BoostConfig,
                                                                        validation: Boolean,
                                                                        discretizer: Discretizer,
                                                                        initialModel: Option[GBMModel]): GBMModel = {
     val binData = data.map { case (weight, label, vec) =>
-      (weight, label, discretizer.transformToGBMVector[F, B](vec))
+      (weight, label, discretizer.transformToGBMVector[C, B](vec))
     }
 
     val binTest = test.map { case (weight, label, vec) =>
-      (weight, label, discretizer.transformToGBMVector[F, B](vec))
+      (weight, label, discretizer.transformToGBMVector[C, B](vec))
     }
 
-    logInfo(s"Data representation of gradient: ${boostConfig.getFloatType.capitalize}")
+    logInfo(s"Data type of gradient: ${boostConfig.getFloatType.capitalize}")
 
     boostConfig.getFloatType match {
       case SinglePrecision =>
-        boostImpl[Float, F, B](binData, binTest, boostConfig, validation, discretizer, initialModel)
+        boostImpl[Float, C, B](binData, binTest, boostConfig, validation, discretizer, initialModel)
 
       case DoublePrecision =>
-        boostImpl[Double, F, B](binData, binTest, boostConfig, validation, discretizer, initialModel)
+        boostImpl[Double, C, B](binData, binTest, boostConfig, validation, discretizer, initialModel)
     }
   }
 
@@ -627,11 +613,12 @@ private[gbm] object GBM extends Logging {
     * @param discretizer  discretizer to convert raw features into bins
     * @param initialModel inital model
     * @tparam H type of gradient, hessian and tree predictions
+    * @tparam C type of column index
     * @tparam B type of bin
     * @return the model
     */
-  def boostImpl[H: Numeric : ClassTag : FromDouble, F: Integral : ClassTag, B: Integral : ClassTag](data: RDD[(Double, Double, GBMVector[F, B])],
-                                                                                                    test: RDD[(Double, Double, GBMVector[F, B])],
+  def boostImpl[H: Numeric : ClassTag : FromDouble, C: Integral : ClassTag, B: Integral : ClassTag](data: RDD[(Double, Double, GBMVector[C, B])],
+                                                                                                    test: RDD[(Double, Double, GBMVector[C, B])],
                                                                                                     boostConfig: BoostConfig,
                                                                                                     validation: Boolean,
                                                                                                     discretizer: Discretizer,
@@ -659,7 +646,7 @@ private[gbm] object GBM extends Logging {
     val trainPredsCheckpointer = new Checkpointer[Array[H]](sc,
       boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
 
-    var trainPreds = computePrediction[H, F, B](data, trees.zip(weights).toArray, boostConfig.getBaseScore)
+    var trainPreds = computePrediction[H, C, B](data, trees.zip(weights).toArray, boostConfig.getBaseScore)
     trainPredsCheckpointer.update(trainPreds)
 
     val testPredsCheckpointer = new Checkpointer[Array[H]](sc,
@@ -667,7 +654,7 @@ private[gbm] object GBM extends Logging {
 
     var testPreds = sc.emptyRDD[Array[H]]
     if (validation && boostConfig.getEvaluateFunc.nonEmpty) {
-      testPreds = computePrediction[H, F, B](test, trees.zip(weights).toArray, boostConfig.getBaseScore)
+      testPreds = computePrediction[H, C, B](test, trees.zip(weights).toArray, boostConfig.getBaseScore)
       testPredsCheckpointer.update(testPreds)
     }
 
@@ -861,10 +848,11 @@ private[gbm] object GBM extends Logging {
     * @param dropped      indices of columns which are selected to drop during building of current tree
     * @param colSampleRng random number generator for column sampling
     * @tparam H
+    * @tparam C
     * @tparam B
     * @return a new tree if possible
     */
-  def buildTree[H: Numeric : ClassTag : FromDouble, F: Integral : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, GBMVector[F, B])],
+  def buildTree[H: Numeric : ClassTag : FromDouble, C: Integral : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, GBMVector[C, B])],
                                                                                                     preds: RDD[Array[H]],
                                                                                                     weights: Array[Double],
                                                                                                     boostConfig: BoostConfig,
@@ -908,9 +896,9 @@ private[gbm] object GBM extends Logging {
 
     // column sampling function
     val slice = if (boostConfig.getColSampleByTree == 1) {
-      bins: GBMVector[F, B] => bins
+      bins: GBMVector[C, B] => bins
     } else {
-      bins: GBMVector[F, B] => bins.slice(cols)
+      bins: GBMVector[C, B] => bins.slice(cols)
     }
 
     // indices of categorical columns in the selected column subset
@@ -962,7 +950,7 @@ private[gbm] object GBM extends Logging {
     }
 
     val treeConfig = new TreeConfig(iteration, numTrees, catCols, cols)
-    val tree = Tree.train[H, F, B](colSampled, boostConfig, treeConfig)
+    val tree = Tree.train[H, C, B](colSampled, boostConfig, treeConfig)
 
     if (handlePersistence) {
       colSampled.unpersist(blocking = false)
@@ -979,10 +967,11 @@ private[gbm] object GBM extends Logging {
     * @param trees     array of trees with weights
     * @param baseScore global bias
     * @tparam H
+    * @tparam C
     * @tparam B
     * @return RDD containing final score and the scores of each tree
     */
-  def computePrediction[H: Numeric : ClassTag : FromDouble, F: Integral : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, GBMVector[F, B])],
+  def computePrediction[H: Numeric : ClassTag : FromDouble, C: Integral : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, GBMVector[C, B])],
                                                                                                             trees: Array[(TreeModel, Double)],
                                                                                                             baseScore: Double): RDD[Array[H]] = {
     val numH = implicitly[Numeric[H]]
@@ -1018,10 +1007,11 @@ private[gbm] object GBM extends Logging {
     * @param baseScore   global bias
     * @param keepWeights whether to keep the weights of previous trees
     * @tparam H
+    * @tparam C
     * @tparam B
     * @return RDD containing final score and the predictions of each tree
     */
-  def updatePrediction[H: Numeric : ClassTag : FromDouble, F: Integral : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, GBMVector[F, B])],
+  def updatePrediction[H: Numeric : ClassTag : FromDouble, C: Integral : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, GBMVector[C, B])],
                                                                                                            preds: RDD[Array[H]],
                                                                                                            weights: Array[Double],
                                                                                                            tree: TreeModel,
@@ -1034,7 +1024,7 @@ private[gbm] object GBM extends Logging {
 
     if (keepWeights) {
       instances.zip(preds).map { case ((_, _, bins), pred) =>
-        val p = toH.fromDouble(tree.predict[F, B](bins))
+        val p = toH.fromDouble(tree.predict[C, B](bins))
         val newPred = pred :+ p
         require(newPred.length == weights.length + 1)
 
@@ -1045,7 +1035,7 @@ private[gbm] object GBM extends Logging {
     } else {
 
       instances.zip(preds).map { case ((_, _, bins), pred) =>
-        val p = toH.fromDouble(tree.predict[F, B](bins))
+        val p = toH.fromDouble(tree.predict[C, B](bins))
         val newPred = pred :+ p
         require(newPred.length == weights.length + 1)
         newPred(0) = toH.fromDouble(baseScore)
@@ -1069,10 +1059,11 @@ private[gbm] object GBM extends Logging {
     * @param preds       prediction of instances, containing the final score and the scores of each tree
     * @param boostConfig boosting configuration containing the evaluation functions
     * @tparam H
+    * @tparam C
     * @tparam B
     * @return Evaluation result with names as the keys and metrics as the values
     */
-  def evaluate[H: Numeric : ClassTag, F: Integral : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, GBMVector[F, B])],
+  def evaluate[H: Numeric : ClassTag, C: Integral : ClassTag, B: Integral : ClassTag](instances: RDD[(Double, Double, GBMVector[C, B])],
                                                                                       preds: RDD[Array[H]],
                                                                                       boostConfig: BoostConfig): Map[String, Double] = {
 

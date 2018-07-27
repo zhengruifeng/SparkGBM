@@ -168,6 +168,16 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
 
 private[gbm] object Utils extends Logging {
 
+  def getTypeByRange(value: Int): String = {
+    if (value <= Byte.MaxValue) {
+      "Byte"
+    } else if (value <= Short.MaxValue) {
+      "Short"
+    } else {
+      "Int"
+    }
+  }
+
   /**
     * traverse all the elements of a vector
     */

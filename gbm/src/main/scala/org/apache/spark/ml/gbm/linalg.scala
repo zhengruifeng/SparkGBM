@@ -24,8 +24,7 @@ private[gbm] trait GBMVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, 
 
   def toSparse: GBMVector[K, V]
 
-  def compress()
-              (implicit kk: ClassTag[K], kv: ClassTag[V]): GBMVector[K, V] = {
+  def compress()(implicit kk: ClassTag[K], kv: ClassTag[V]): GBMVector[K, V] = {
     val kSize = GBMVector.getTypeSize[K]
     val vSize = GBMVector.getTypeSize[V]
     if (vSize * len + 8 <= (kSize + vSize) * nnz + 20) {

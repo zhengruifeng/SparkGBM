@@ -208,7 +208,7 @@ private[gbm] object Tree extends Logging {
     * @return histogram data containing (nodeId, columnId, histogram)
     */
   def computeHistogram[H: Numeric : ClassTag : FromDouble, F: Integral : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, GBMVector[F, B]), Int)],
-                                                                                                           f: (Int => Boolean),
+                                                                                                           f: Int => Boolean,
                                                                                                            numCols: Int,
                                                                                                            parallelism: Int): RDD[((Int, F), Array[H])] = {
     val numH = implicitly[Numeric[H]]

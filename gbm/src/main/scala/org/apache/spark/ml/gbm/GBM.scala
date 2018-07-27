@@ -457,9 +457,8 @@ class GBM extends Logging with Serializable {
       initialModel.get.discretizer
 
     } else {
-      catCols.iterator.forall(v => v >= 0 && v < numCols)
-      rankCols.iterator.forall(v => v >= 0 && v < numCols)
-
+      require(catCols.iterator.forall(v => v >= 0 && v < numCols))
+      require(rankCols.iterator.forall(v => v >= 0 && v < numCols))
       require((catCols & rankCols).iterator.isEmpty)
 
       Discretizer.fit(data.map(_._3), numCols, catCols, rankCols, maxBins,

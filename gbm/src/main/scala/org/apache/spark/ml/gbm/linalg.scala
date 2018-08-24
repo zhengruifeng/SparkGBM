@@ -52,9 +52,11 @@ trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, D
 
   def isSparse: Boolean = !isDense
 
-  def compress()
-              (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
-               cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
+  def isEmpty: Boolean = len == 0
+
+  def compressed()
+                (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                 cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
     if (nev.size * len + 8 <= (nek.size + nev.size) * nnz + 20) {
       toDense
     } else {
@@ -66,16 +68,47 @@ trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, D
           (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
            cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
 
+  def minus(index: K, value: V)
+           (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+            cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+    plus(index, nuv.negate(value))
+  }
+
   def plus(other: KVVector[K, V])
           (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
            cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
     import nuv._
 
-    val newLen = math.max(len, other.len)
-    val newValues = Array.fill(newLen)(zero)
+    (this.isDense, other.isDense) match {
+      case (true, true) =>
+        val Seq(arr1, arr2) = Seq(toArray, other.toArray).sortBy(_.length)
+        Iterator.range(0, arr1.length).foreach(i => arr2(i) += arr1(i))
+        KVVector.dense[K, V](arr2).compressed
 
-    (activeIter ++ other.activeIter).foreach { case (k, v) => newValues(ink.toInt(k)) += v }
-    KVVector.dense[K, V](newValues).compress
+      case (true, false) =>
+        val arr = if (len >= other.len) {
+          toArray
+        } else {
+          toArray ++ Array.ofDim[V](other.len - len)
+        }
+        other.activeIter.foreach { case (k, v) => arr(ink.toInt(k)) += v }
+        KVVector.dense[K, V](arr).compressed
+
+      case (false, true) =>
+        other.plus(this)
+
+      case (false, false) =>
+        val map = mutable.OpenHashMap.empty[K, V]
+        activeIter.foreach { case (k, v) => map.update(k, v) }
+        other.activeIter.foreach { case (k, v) =>
+          val v2 = map.getOrElse(k, zero)
+          map.update(k, v + v2)
+        }
+
+        val (indices, values) = map.toArray.sortBy(_._1).unzip
+        val newLen = math.max(len, other.len)
+        KVVector.sparse[K, V](newLen, indices, values).compressed
+    }
   }
 
   def minus(other: KVVector[K, V])
@@ -158,7 +191,7 @@ class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Flo
   override def toArray()
                       (implicit ink: Integral[K],
                        cv: ClassTag[V], nuv: Numeric[V]): Array[V] = {
-    totalIter.map(_._2).toArray
+    values
   }
 
   override def totalIter()

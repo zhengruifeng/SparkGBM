@@ -49,7 +49,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
                                                                                              (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                                                               cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): KVVector[C, B] = {
     val array = transform[B](vec)
-    KVVector.dense[C, B](array).compress
+    KVVector.dense[C, B](array).compressed
   }
 
 

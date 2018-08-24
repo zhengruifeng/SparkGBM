@@ -19,20 +19,18 @@ import org.apache.spark.unsafe.hash.Murmur3_x86_32
 trait ColumSelector extends Serializable {
   def contains[C](index: C)
                  (implicit inc: Integral[C]): Boolean
-
-  override def equals(other: Any): Boolean = {
-    (this, other) match {
-      case (HashSelector(m1, s1), HashSelector(m2, s2)) =>
-        m1 == m2 && s1 == s2
-
-      case _ => false
-    }
-  }
 }
 
 case class TotalSelector() extends ColumSelector {
   override def contains[C](index: C)
                           (implicit inc: Integral[C]): Boolean = true
+
+  override def equals(other: Any): Boolean = {
+    other match {
+      case TotalSelector => true
+      case _ => false
+    }
+  }
 
   override def toString: String = "TotalSelector"
 }
@@ -44,6 +42,13 @@ case class HashSelector(maximum: Int,
   override def contains[C](index: C)
                           (implicit inc: Integral[C]): Boolean = {
     Murmur3_x86_32.hashLong(inc.toLong(index), seed).abs < maximum
+  }
+
+  override def equals(other: Any): Boolean = {
+    other match {
+      case HashSelector(m2, s2) => maximum == m2 && seed == s2
+      case _ => false
+    }
   }
 
   override def toString: String = s"HashSelector(maximum: $maximum, seed: $seed)"
@@ -297,6 +302,10 @@ private[gbm] object Utils extends Logging {
     if (!kryoRegistered) {
       sc.getConf.registerKryoClasses(Array(
 
+        classOf[GBM],
+        classOf[GBMModel],
+        classOf[TreeModel],
+
         classOf[BoostConfig],
         classOf[BaseConfig],
 
@@ -324,38 +333,57 @@ private[gbm] object Utils extends Logging {
         classOf[LeafNode],
         classOf[NodeData],
 
-        classOf[TreeModel],
-        classOf[GBMModel],
+        classOf[ColumSelector],
+        classOf[TotalSelector],
+        classOf[HashSelector],
 
         classOf[KVVector[Byte, Byte]],
         classOf[KVVector[Byte, Short]],
         classOf[KVVector[Byte, Int]],
+        classOf[KVVector[Byte, Float]],
+        classOf[KVVector[Byte, Double]],
         classOf[KVVector[Short, Byte]],
         classOf[KVVector[Short, Short]],
         classOf[KVVector[Short, Int]],
+        classOf[KVVector[Short, Float]],
+        classOf[KVVector[Short, Double]],
         classOf[KVVector[Int, Byte]],
         classOf[KVVector[Int, Short]],
         classOf[KVVector[Int, Int]],
+        classOf[KVVector[Int, Float]],
+        classOf[KVVector[Int, Double]],
 
         classOf[DenseKVVector[Byte, Byte]],
         classOf[DenseKVVector[Byte, Short]],
         classOf[DenseKVVector[Byte, Int]],
+        classOf[DenseKVVector[Byte, Float]],
+        classOf[DenseKVVector[Byte, Double]],
         classOf[DenseKVVector[Short, Byte]],
         classOf[DenseKVVector[Short, Short]],
         classOf[DenseKVVector[Short, Int]],
+        classOf[DenseKVVector[Short, Float]],
+        classOf[DenseKVVector[Short, Double]],
         classOf[DenseKVVector[Int, Byte]],
         classOf[DenseKVVector[Int, Short]],
         classOf[DenseKVVector[Int, Int]],
+        classOf[DenseKVVector[Int, Float]],
+        classOf[DenseKVVector[Int, Double]],
 
-        classOf[DenseKVVector[Byte, Byte]],
-        classOf[DenseKVVector[Byte, Short]],
-        classOf[DenseKVVector[Byte, Int]],
-        classOf[DenseKVVector[Short, Byte]],
-        classOf[DenseKVVector[Short, Short]],
-        classOf[DenseKVVector[Short, Int]],
-        classOf[DenseKVVector[Int, Byte]],
-        classOf[DenseKVVector[Int, Short]],
-        classOf[DenseKVVector[Int, Int]]))
+        classOf[SparseKVVector[Byte, Byte]],
+        classOf[SparseKVVector[Byte, Short]],
+        classOf[SparseKVVector[Byte, Int]],
+        classOf[SparseKVVector[Byte, Float]],
+        classOf[SparseKVVector[Byte, Double]],
+        classOf[SparseKVVector[Short, Byte]],
+        classOf[SparseKVVector[Short, Short]],
+        classOf[SparseKVVector[Short, Int]],
+        classOf[SparseKVVector[Short, Float]],
+        classOf[SparseKVVector[Short, Double]],
+        classOf[SparseKVVector[Int, Byte]],
+        classOf[SparseKVVector[Int, Short]],
+        classOf[SparseKVVector[Int, Int]],
+        classOf[SparseKVVector[Int, Float]],
+        classOf[SparseKVVector[Int, Double]]))
 
       kryoRegistered = true
     }

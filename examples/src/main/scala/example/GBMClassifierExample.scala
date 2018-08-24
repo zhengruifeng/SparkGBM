@@ -14,7 +14,7 @@ object GBMClassifierExample {
     val spark = SparkSession
       .builder
       .appName("GBMClassifierExample")
-      .getOrCreate()
+      .getOrCreate
 
     spark.sparkContext.setLogLevel("INFO")
 

@@ -582,6 +582,26 @@ private[gbm] class BaseConfig(val iteration: Int,
       TotalSelector()
     }
   }
+
+  def contains[T, C](indices: Array[T], colId: C)
+                    (implicit int: Integral[T],
+                     inc: Integral[C]): Array[Boolean] = {
+    var prevSelector: ColumSelector = null
+    var prevResult = false
+
+    indices.map { index =>
+      val selector = getSelector(int.toInt(index))
+
+      if (selector == prevSelector) {
+        prevResult
+      } else {
+        val result = selector.contains(colId)
+        prevSelector = selector
+        prevResult = result
+        result
+      }
+    }
+  }
 }
 
 

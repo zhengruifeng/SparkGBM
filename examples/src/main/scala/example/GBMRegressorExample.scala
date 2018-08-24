@@ -13,7 +13,7 @@ object GBMRegressorExample {
     val spark = SparkSession
       .builder
       .appName("GBMRegressorExample")
-      .getOrCreate()
+      .getOrCreate
 
     spark.sparkContext.setLogLevel("INFO")
 

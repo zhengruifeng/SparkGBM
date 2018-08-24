@@ -147,7 +147,7 @@ private[gbm] object Tree extends Serializable with Logging {
                         minNodeId: N,
                         splits: Map[(T, N), Split])
                        (implicit ct: ClassTag[T], int: Integral[T],
-                         cn: ClassTag[N], inn: Integral[N]): Unit = {
+                        cn: ClassTag[N], inn: Integral[N]): Unit = {
     roots.zipWithIndex.foreach {
       case (root, treeId) =>
         val nodes = root.nodeIterator.filter { node =>
@@ -230,10 +230,11 @@ private[gbm] object Tree extends Serializable with Logging {
       val histSums = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
       iter.flatMap { case ((bins, treeIds, gradSeq, hessSeq), nodeIds) =>
-        nodeIds.toIterator.zipWithIndex
-          .filter { case (nodeId, _) => f(nodeId) }
-          .flatMap { case (nodeId, i) =>
+        Iterator.range(0, treeIds.length)
+          .filter(i => f(nodeIds(i)))
+          .flatMap { i =>
             val treeId = treeIds(i)
+            val nodeId = nodeIds(i)
             val grad = gradSeq(i)
             val hess = hessSeq(i)
 
@@ -268,22 +269,22 @@ private[gbm] object Tree extends Serializable with Logging {
       combOp = _ plus _
 
     ).mapValues { hist =>
-      var negNNZGradSum = nuh.zero
-      var negNNZHessSum = nuh.zero
+      var nzGradSum = nuh.zero
+      var nzHessSum = nuh.zero
 
       hist.activeIter.foreach { case (bin, v) =>
         if (inb.gt(bin, inb.one)) {
           if (inb.equiv(inb.rem(bin, inb.fromInt(2)), inb.zero)) {
-            negNNZGradSum = nuh.minus(negNNZGradSum, v)
+            nzGradSum = nuh.plus(nzGradSum, v)
           } else {
-            negNNZHessSum = nuh.minus(negNNZHessSum, v)
+            nzHessSum = nuh.plus(nzHessSum, v)
           }
         }
       }
 
-      hist.plus(inb.zero, negNNZGradSum)
-        .plus(inb.one, negNNZHessSum)
-        .compress
+      hist.minus(inb.zero, nzGradSum)
+        .minus(inb.one, nzHessSum)
+        .compressed
 
     }.reduceByKey(_ plus _, parallelism)
   }
@@ -352,9 +353,8 @@ private[gbm] object Tree extends Serializable with Logging {
                                 cb: ClassTag[B], inb: Integral[B],
                                 ch: ClassTag[H], nuh: Numeric[H], fdh: NumericExt[H]): Map[(T, N), Split] = {
     val sc = nodeHists.sparkContext
-    val accTrials = sc.longAccumulator("NumTrials")
-    val accSplits = sc.longAccumulator("NumSplits")
-    val accNNZ = sc.longAccumulator("NNZ")
+    val accNZ = sc.doubleAccumulator("NZ")
+    val accSplit = sc.longAccumulator("Split")
 
     // column sampling by level
     val sampled = if (boostConf.getColSampleByLevel == 1) {
@@ -366,11 +366,10 @@ private[gbm] object Tree extends Serializable with Logging {
     val splits = sampled.mapPartitions { iter =>
       val splits = mutable.OpenHashMap.empty[(T, N), Split]
       iter.foreach { case ((treeId, nodeId, colId), hist) =>
-        accTrials.add(1L)
-        accNNZ.add(hist.nnz)
+        accNZ.add(hist.nnz.toDouble / hist.len)
         val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
         if (split.nonEmpty) {
-          accSplits.add(1L)
+          accSplit.add(1L)
           val prevSplit = splits.get((treeId, nodeId))
           if (prevSplit.isEmpty || prevSplit.get.gain < split.get.gain) {
             splits.update((treeId, nodeId), split.get)
@@ -386,12 +385,9 @@ private[gbm] object Tree extends Serializable with Logging {
     }, boostConf.getAggregationDepth)
       .toMap
 
-    val numTrials = accTrials.value
-    val numSplits = accSplits.value
-    val numNNZ = accNNZ.value
+    logInfo(s"${accNZ.count} trials -> ${accSplit.value} splits -> ${splits.size} best splits")
+    logInfo(s"Sparsity of histogram: ${1 - accNZ.avg}")
 
-    logInfo(s"$numTrials trials -> $numSplits splits -> ${splits.size} best splits")
-    logInfo(s"Sparsity of histogram: ${1 - numNNZ.toDouble / numTrials / boostConf.getNumCols}")
     splits
   }
 }

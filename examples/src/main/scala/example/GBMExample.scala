@@ -16,7 +16,7 @@ object GBMExample {
     val spark = SparkSession
       .builder
       .appName("GBMExample")
-      .getOrCreate()
+      .getOrCreate
 
     spark.sparkContext.setLogLevel("INFO")
     spark.sparkContext.getConf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
@@ -89,7 +89,6 @@ object GBMExample {
     }
 
     val recoder = new MetricRecoder
-
 
     val gbm = new GBM
     gbm.setMaxIter(15)

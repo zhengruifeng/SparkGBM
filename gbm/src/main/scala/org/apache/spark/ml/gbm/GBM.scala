@@ -417,7 +417,7 @@ class GBM extends Logging with Serializable {
       Discretizer.fit(data.map(_._3), numCols, boostConf.getCatCols, boostConf.getRankCols,
         maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
     }
-    logInfo(s"bins: ${discretizer.numBins.mkString(",").take(200)}")
+    logInfo(s"Bins: ${discretizer.numBins.mkString(",")}")
     logInfo(s"Maximum bins: ${discretizer.numBins.max}")
     logInfo(s"Average bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
     logInfo(s"Sparsity of train data: ${discretizer.sparsity}")
@@ -427,7 +427,7 @@ class GBM extends Logging with Serializable {
       val (weight, sum) = data.map { case (weight, label, _) =>
         (weight, label.map(_ * weight))
       }.treeReduce(f = {
-        case ((weight1, sum1), (weight2, sum2) =>
+        case ((weight1, sum1), (weight2, sum2)) =>
           require(sum1.length == sum2.length)
           Iterator.range(0, sum1.length).foreach(i => sum1(i) += sum2(i))
           (weight1 + weight2, sum1)
@@ -967,11 +967,11 @@ private[gbm] object GBM extends Logging {
     val data = instances.zip(gradients)
       .map { case ((_, _, bins), (treeIds, gradSeq, hessSeq)) => (bins, treeIds, gradSeq, hessSeq) }
 
-    instances.zip(gradients).zip(rawScores).collect().foreach { case (((weight, label, bins), (treeIds, gradSeq, hessSeq)), (rawSum, rawSeq)) =>
-      val raw = computeRaw(rawSum, rawSeq).map(nuh.toDouble)
-      val str = s"Iter: $iteration, weight: $weight, label: ${label.mkString(",")}, raw: ${raw.mkString(",")}, bins: $bins, treeIds: ${treeIds.mkString(",")}, grad: ${gradSeq.mkString(",")}, hess: ${hessSeq.mkString(",")}"
-      logInfo(str)
-    }
+//    instances.zip(gradients).zip(rawScores).collect().foreach { case (((weight, label, bins), (treeIds, gradSeq, hessSeq)), (rawSum, rawSeq)) =>
+//      val raw = computeRaw(rawSum, rawSeq).map(nuh.toDouble)
+//      val str = s"Iter: $iteration, weight: $weight, label: ${label.mkString(",")}, raw: ${raw.mkString(",")}, bins: $bins, treeIds: ${treeIds.mkString(",")}, grad: ${gradSeq.mkString(",")}, hess: ${hessSeq.mkString(",")}"
+//      logInfo(str)
+//    }
 
     val trees = Tree.train[T, N, C, B, H](data, boostConfig, baseConfig)
     gradients.unpersist(false)

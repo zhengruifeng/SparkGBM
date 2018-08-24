@@ -1,133 +1,283 @@
 package org.apache.spark.ml.gbm
 
+import java.{util => ju}
+
 import scala.collection.mutable
-import scala.reflect.{ClassTag, classTag}
+import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
-private[gbm] trait GBMVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V] extends Serializable {
+trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V] extends Serializable {
 
   def len: Int
 
-  def apply(index: Int): V
+  def negate()
+            (implicit cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
 
-  def slice(sorted: Array[Int]): GBMVector[K, V]
+  def apply(index: Int)
+           (implicit ink: Integral[K], nek: NumericExt[K],
+            nuv: Numeric[V]): V
 
-  def toArray: Array[V]
+  def slice(sorted: Array[Int])
+           (implicit ck: ClassTag[K], ink: Integral[K],
+            cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
 
-  def totalIter: Iterator[(K, V)]
+  def toArray()
+             (implicit ink: Integral[K],
+              cv: ClassTag[V], nuv: Numeric[V]): Array[V]
 
-  def activeIter: Iterator[(K, V)]
+  def totalIter()
+               (implicit ink: Integral[K],
+                nuv: Numeric[V]): Iterator[(K, V)]
 
-  def nnz: Int = activeIter.size
+  def activeIter()
+                (implicit ink: Integral[K],
+                 nuv: Numeric[V]): Iterator[(K, V)]
 
-  def toDense: GBMVector[K, V]
+  def reverseActiveIter()
+                       (implicit ink: Integral[K],
+                        nuv: Numeric[V]): Iterator[(K, V)]
 
-  def toSparse: GBMVector[K, V]
+  def nnz()
+         (implicit nuv: Numeric[V]): Int
 
-  def compress()(implicit kk: ClassTag[K], kv: ClassTag[V]): GBMVector[K, V] = {
-    val kSize = GBMVector.getTypeSize[K]
-    val vSize = GBMVector.getTypeSize[V]
-    if (vSize * len + 8 <= (kSize + vSize) * nnz + 20) {
+  def toDense()
+             (implicit ink: Integral[K],
+              cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
+
+  def toSparse()
+              (implicit ck: ClassTag[K], ink: Integral[K],
+               cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
+
+  def isDense: Boolean
+
+  def isSparse: Boolean = !isDense
+
+  def compress()
+              (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+               cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
+    if (nev.size * len + 8 <= (nek.size + nev.size) * nnz + 20) {
       toDense
     } else {
       toSparse
     }
   }
+
+  def plus(index: K, value: V)
+          (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+           cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
+
+  def plus(other: KVVector[K, V])
+          (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+           cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
+    import nuv._
+
+    val newLen = math.max(len, other.len)
+    val newValues = Array.fill(newLen)(zero)
+
+    (activeIter ++ other.activeIter).foreach { case (k, v) => newValues(ink.toInt(k)) += v }
+    KVVector.dense[K, V](newValues).compress
+  }
+
+  def minus(other: KVVector[K, V])
+           (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+            cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
+    plus(other.negate)
+  }
 }
 
-private[gbm] object GBMVector {
+object KVVector {
 
-  def dense[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int, Long, Float, Double) V: Numeric : ClassTag](values: Array[V]): GBMVector[K, V] = {
-    new DenseGBMVector[K, V](values)
+  def empty[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V]()
+                                                                                      (implicit cv: ClassTag[V]): KVVector[K, V] = {
+    dense[K, V](Array.empty[V])
   }
 
-  def sparse[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int, Long, Float, Double) V: Numeric : ClassTag](size: Int,
-                                                                                                                                 indices: Array[K],
-                                                                                                                                 values: Array[V]): GBMVector[K, V] = {
-    new SparseGBMVector[K, V](size, indices, values)
+  def dense[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](values: Array[V]): KVVector[K, V] = {
+    new DenseKVVector[K, V](values)
   }
 
-  def getTypeSize[T: ClassTag]: Int = {
-    classTag[T] match {
-      case ClassTag.Byte => 1
-      case ClassTag.Short => 2
-      case ClassTag.Int => 4
-      case ClassTag.Long => 8
-      case ClassTag.Float => 4
-      case ClassTag.Double => 8
+  def sparse[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](size: Int,
+                                                                                        indices: Array[K],
+                                                                                        values: Array[V]): KVVector[K, V] = {
+    new SparseKVVector[K, V](size, indices, values)
+  }
+}
+
+
+class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](val values: Array[V]) extends KVVector[K, V] {
+
+  override def len: Int = {
+    values.length
+  }
+
+  override def negate()
+                     (implicit cv: ClassTag[V],
+                      nuv: Numeric[V]): KVVector[K, V] = {
+    KVVector.dense[K, V](values.map(nuv.negate))
+  }
+
+  override def apply(index: Int)
+                    (implicit ink: Integral[K], nek: NumericExt[K],
+                     nuv: Numeric[V]) = values(index)
+
+  override def plus(index: K, value: V)
+                   (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                    cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+    require(ink.gteq(index, ink.zero))
+
+    val newLen = math.max(ink.toInt(index) + 1, len)
+
+    import nuv._
+    if (value == zero) {
+      if (len == newLen) {
+        this
+      } else {
+        KVVector.dense[K, V](values ++ Array.fill(newLen - len)(zero))
+      }
+
+    } else {
+      val i = ink.toInt(index)
+      if (i < len) {
+        values(i) += value
+        this
+
+      } else {
+        val newValues = values ++ Array.fill(i - len + 1)(zero)
+        newValues(i) = value
+        KVVector.dense[K, V](newValues)
+      }
     }
   }
-}
 
+  override def slice(sorted: Array[Int])
+                    (implicit ck: ClassTag[K], ink: Integral[K],
+                     cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+    KVVector.dense(sorted.map(values))
+  }
 
-private class DenseGBMVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int, Long, Float, Double) V: Numeric : ClassTag](val values: Array[V]) extends GBMVector[K, V] {
-
-  override def len: Int = values.length
-
-  override def apply(index: Int) = values(index)
-
-  override def slice(sorted: Array[Int]): GBMVector[K, V] =
-    GBMVector.dense(sorted.map(values))
-
-  override def toArray: Array[V] =
+  override def toArray()
+                      (implicit ink: Integral[K],
+                       cv: ClassTag[V], nuv: Numeric[V]): Array[V] = {
     totalIter.map(_._2).toArray
-
-  override def totalIter: Iterator[(K, V)] = {
-    val intK = implicitly[Integral[K]]
-    values.iterator.zipWithIndex.map { case (v, i) => (intK.fromInt(i), v) }
   }
 
-  override def activeIter: Iterator[(K, V)] = {
-    val numV = implicitly[Numeric[V]]
-    totalIter.filter(t => t._2 != numV.zero)
+  override def totalIter()
+                        (implicit ink: Integral[K],
+                         nuv: Numeric[V]): Iterator[(K, V)] = {
+    values.iterator
+      .zipWithIndex.map { case (v, i) => (ink.fromInt(i), v) }
   }
 
-  override def toDense: GBMVector[K, V] = this
+  override def activeIter()
+                         (implicit ink: Integral[K],
+                          nuv: Numeric[V]): Iterator[(K, V)] = {
+    totalIter.filter(t => t._2 != nuv.zero)
+  }
 
-  override def toSparse: GBMVector[K, V] = {
+  def reverseActiveIter()
+                       (implicit ink: Integral[K],
+                        nuv: Numeric[V]): Iterator[(K, V)] = {
+    values.reverseIterator
+      .zipWithIndex
+      .map { case (v, i) => (ink.fromInt(len - 1 - i), v) }
+      .filter(t => t._2 != nuv.zero)
+  }
+
+  override def nnz()
+                  (implicit nuv: Numeric[V]): Int = {
+    values.count(_ != nuv.zero)
+  }
+
+  override def toDense()
+                      (implicit ink: Integral[K],
+                       cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = this
+
+  override def toSparse()
+                       (implicit ck: ClassTag[K], ink: Integral[K],
+                        cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
     val indexBuilder = mutable.ArrayBuilder.make[K]
     val valueBuilder = mutable.ArrayBuilder.make[V]
     activeIter.foreach { case (i, v) =>
       indexBuilder += i
       valueBuilder += v
     }
-    GBMVector.sparse[K, V](len, indexBuilder.result(), valueBuilder.result())
+    KVVector.sparse[K, V](len, indexBuilder.result(), valueBuilder.result())
   }
+
+  def isDense: Boolean = true
+
+  override def toString: String =
+    s"${values.mkString("[", ",", "]")}"
 }
 
 
-private class SparseGBMVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @spec(Byte, Short, Int, Long, Float, Double) V: Numeric : ClassTag](val len: Int,
-                                                                                                                                                  val indices: Array[K],
-                                                                                                                                                  val values: Array[V]) extends GBMVector[K, V] {
+class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](val len: Int,
+                                                                                                val indices: Array[K],
+                                                                                                val values: Array[V]) extends KVVector[K, V] {
 
   require(indices.length == values.length)
   require(len >= 0)
 
-  private def binarySearch: (Array[K], K) => Int =
-    Utils.makeBinarySearch[K]
+  override def negate()
+                     (implicit cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+    KVVector.sparse[K, V](len, indices, values.map(nuv.negate))
+  }
 
-  override def apply(index: Int): V = {
-    val intK = implicitly[Integral[K]]
-    val j = binarySearch(indices, intK.fromInt(index))
+  override def apply(index: Int)
+                    (implicit ink: Integral[K], nek: NumericExt[K],
+                     nuv: Numeric[V]): V = {
+    val j = nek.search(indices, ink.fromInt(index))
     if (j >= 0) {
       values(j)
     } else {
-      val numV = implicitly[Numeric[V]]
-      numV.zero
+      nuv.zero
     }
   }
 
-  override def slice(sorted: Array[Int]): GBMVector[K, V] = {
-    val intK = implicitly[Integral[K]]
+  override def plus(index: K, value: V)
+                   (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                    cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+    require(ink.gteq(index, ink.zero))
+
+    import nuv._
+
+    val newLen = math.max(ink.toInt(index) + 1, len)
+
+    if (value == zero) {
+      if (len == newLen) {
+        this
+      } else {
+        KVVector.sparse[K, V](newLen, indices, values)
+      }
+
+    } else {
+      val j = nek.search(indices, index)
+      if (j >= 0) {
+        values(j) += value
+        this
+
+      } else {
+        val left = -j - 1
+        val right = indices.length - left
+        val newIndices = indices.take(left) ++ Array(index) ++ indices.takeRight(right)
+        val newValues = values.take(left) ++ Array(value) ++ values.takeRight(right)
+        KVVector.sparse[K, V](newLen, newIndices, newValues)
+      }
+    }
+  }
+
+  override def slice(sorted: Array[Int])
+                    (implicit ck: ClassTag[K], ink: Integral[K],
+                     cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
     val indexBuilder = mutable.ArrayBuilder.make[K]
     val valueBuilder = mutable.ArrayBuilder.make[V]
 
     var i = 0
     var j = 0
     while (i < sorted.length && j < indices.length) {
-      val k = intK.toInt(indices(j))
+      val k = ink.toInt(indices(j))
       if (sorted(i) == k) {
-        indexBuilder += intK.fromInt(i)
+        indexBuilder += ink.fromInt(i)
         valueBuilder += values(j)
         i += 1
         j += 1
@@ -138,16 +288,18 @@ private class SparseGBMVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
       }
     }
 
-    GBMVector.sparse[K, V](sorted.length, indexBuilder.result(), valueBuilder.result())
+    KVVector.sparse[K, V](sorted.length, indexBuilder.result(), valueBuilder.result())
   }
 
-  override def toArray: Array[V] =
+  override def toArray()
+                      (implicit ink: Integral[K],
+                       cv: ClassTag[V], nuv: Numeric[V]): Array[V] = {
     totalIter.map(_._2).toArray
+  }
 
-  override def totalIter: Iterator[(K, V)] = new Iterator[(K, V)]() {
-    private val intK = implicitly[Integral[K]]
-    private val numV = implicitly[Numeric[V]]
-
+  override def totalIter()
+                        (implicit ink: Integral[K],
+                         nuv: Numeric[V]): Iterator[(K, V)] = new Iterator[(K, V)]() {
     private var i = 0
     private var j = 0
 
@@ -155,65 +307,168 @@ private class SparseGBMVector[@spec(Byte, Short, Int) K: Integral : ClassTag, @s
 
     override def next: (K, V) = {
       val v = if (j == indices.length) {
-        numV.zero
+        nuv.zero
       } else {
-        val k = intK.toInt(indices(j))
+        val k = ink.toInt(indices(j))
         if (i == k) {
           j += 1
           values(j - 1)
         } else {
-          numV.zero
+          nuv.zero
         }
       }
       i += 1
-      (intK.fromInt(i - 1), v)
+      (ink.fromInt(i - 1), v)
     }
   }
 
-  override def activeIter: Iterator[(K, V)] = {
-    val numV = implicitly[Numeric[V]]
-    indices.iterator
-      .zip(values.iterator)
-      .filter(t => t._2 != numV.zero)
+  override def activeIter()
+                         (implicit ink: Integral[K],
+                          nuv: Numeric[V]): Iterator[(K, V)] = {
+    indices.iterator.zip(values.iterator)
+      .filter(t => t._2 != nuv.zero)
   }
 
-  override def toDense: GBMVector[K, V] =
-    GBMVector.dense[K, V](toArray)
+  def reverseActiveIter()
+                       (implicit ink: Integral[K],
+                        nuv: Numeric[V]): Iterator[(K, V)] = {
+    indices.reverseIterator.zip(values.reverseIterator)
+      .filter(t => t._2 != nuv.zero)
+  }
 
-  override def toSparse: GBMVector[K, V] = this
+  override def nnz()
+                  (implicit nuv: Numeric[V]): Int = {
+    values.count(_ != nuv.zero)
+  }
+
+  override def toDense()
+                      (implicit ink: Integral[K],
+                       cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+    KVVector.dense[K, V](toArray)
+  }
+
+  override def toSparse()
+                       (implicit ck: ClassTag[K], ink: Integral[K],
+                        cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+    if (indices.length == nnz) {
+      this
+
+    } else {
+      val indexBuilder = mutable.ArrayBuilder.make[K]
+      val valueBuilder = mutable.ArrayBuilder.make[V]
+      activeIter.foreach { case (i, v) =>
+        indexBuilder += i
+        valueBuilder += v
+      }
+      KVVector.sparse[K, V](len, indexBuilder.result(), valueBuilder.result())
+    }
+  }
+
+  def isDense: Boolean = false
+
+  override def toString: String = {
+    s"$len, ${indices.zip(values).map { case (k, v) => s"$k->$v" }.mkString("[", ",", "]")}"
+  }
 }
 
 
-private trait FromDouble[H] extends Serializable {
+private trait NumericExt[K] extends Serializable {
 
-  def fromDouble(value: Double): H
+  def fromFloat(value: Float): K
+
+  def fromDouble(value: Double): K
+
+  def search(array: Array[K], value: K): Int
+
+  def size: Int
 }
 
+private object ByteNumericExt extends NumericExt[Byte] {
 
-private object DoubleFromDouble extends FromDouble[Double] {
+  override def fromFloat(value: Float): Byte = value.toByte
 
-  override def fromDouble(value: Double): Double = value
+  override def fromDouble(value: Double): Byte = value.toByte
+
+  override def search(array: Array[Byte], value: Byte): Int = ju.Arrays.binarySearch(array, value)
+
+  override def size: Int = 1
 }
 
+private object ShortNumericExt extends NumericExt[Short] {
 
-private object FloatFromDouble extends FromDouble[Float] {
+  override def fromFloat(value: Float): Short = value.toShort
+
+  override def fromDouble(value: Double): Short = value.toShort
+
+  override def search(array: Array[Short], value: Short): Int = ju.Arrays.binarySearch(array, value)
+
+  override def size: Int = 2
+}
+
+private object IntNumericExt extends NumericExt[Int] {
+
+  override def fromFloat(value: Float): Int = value.toInt
+
+  override def fromDouble(value: Double): Int = value.toInt
+
+  override def search(array: Array[Int], value: Int): Int = ju.Arrays.binarySearch(array, value)
+
+  override def size: Int = 4
+}
+
+private object LongNumericExt extends NumericExt[Long] {
+
+  override def fromFloat(value: Float): Long = value.toLong
+
+  override def fromDouble(value: Double): Long = value.toLong
+
+  override def search(array: Array[Long], value: Long): Int = ju.Arrays.binarySearch(array, value)
+
+  override def size: Int = 8
+}
+
+private object FloatNumericExt extends NumericExt[Float] {
+
+  override def fromFloat(value: Float): Float = value
 
   override def fromDouble(value: Double): Float = value.toFloat
+
+  override def search(array: Array[Float], value: Float): Int = ju.Arrays.binarySearch(array, value)
+
+  override def size: Int = 4
+}
+
+private object DoubleNumericExt extends NumericExt[Double] {
+
+  override def fromFloat(value: Float): Double = value.toDouble
+
+  override def fromDouble(value: Double): Double = value
+
+  override def search(array: Array[Double], value: Double): Int = ju.Arrays.binarySearch(array, value)
+
+  override def size: Int = 8
 }
 
 
-private object DecimalFromDouble extends FromDouble[BigDecimal] {
+private[gbm] object NumericExt {
 
-  override def fromDouble(value: Double): BigDecimal = BigDecimal(value)
+  implicit final val byteNumericExt: NumericExt[Byte] = ByteNumericExt
+
+  implicit final val shortNumericExt: NumericExt[Short] = ShortNumericExt
+
+  implicit final val intNumericExt: NumericExt[Int] = IntNumericExt
+
+  implicit final val longNumericExt: NumericExt[Long] = LongNumericExt
+
+  implicit final val floatNumericExt: NumericExt[Float] = FloatNumericExt
+
+  implicit final val doubleNumericExt: NumericExt[Double] = DoubleNumericExt
 }
 
 
-private[gbm] object FromDouble {
+private[gbm] object ArrayConverters {
 
-  implicit final val doubleFromDouble: FromDouble[Double] = DoubleFromDouble
+  implicit def floatArrayToDouble(array: Array[Float]): Array[Double] = array.map(_.toDouble)
 
-  implicit final val floatFromDouble: FromDouble[Float] = FloatFromDouble
-
-  implicit final val decimalFromDouble: FromDouble[BigDecimal] = DecimalFromDouble
+  implicit def doubleArrayToFloat(array: Array[Double]): Array[Float] = array.map(_.toFloat)
 }
-

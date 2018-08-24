@@ -1,9 +1,7 @@
 package org.apache.spark.ml.classification
 
 import scala.collection.mutable
-
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.linalg._
@@ -11,7 +9,7 @@ import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.HasThreshold
 import org.apache.spark.ml.util._
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.DoubleType
+import org.apache.spark.sql.types.{DoubleType, IntegerType}
 import org.apache.spark.sql.{DataFrame, Dataset}
 import org.apache.spark.storage.StorageLevel
 
@@ -76,7 +74,7 @@ class GBMClassifier(override val uid: String)
 
   def setMaxLeaves(value: Int): this.type = set(maxLeaves, value)
 
-  def setBaseScore(value: Double): this.type = set(baseScore, value)
+  def setBaseScore(value: Array[Double]): this.type = set(baseScore, value)
 
   def setMinNodeHess(value: Double): this.type = set(minNodeHess, value)
 
@@ -147,9 +145,10 @@ class GBMClassifier(override val uid: String)
 
   private[ml] def fit(dataset: Dataset[_],
                       testDataset: Option[Dataset[_]]): GBMClassificationModel = {
+    transformSchema(dataset.schema, logging = true)
+
     require($(maxDrop) >= $(minDrop))
 
-    transformSchema(dataset.schema, logging = true)
 
     val instr = Instrumentation.create(this, dataset)
     instr.logParams(params: _*)
@@ -160,22 +159,21 @@ class GBMClassifier(override val uid: String)
       lit(1.0)
     }
 
-    val data = dataset.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol)))
-      .rdd.map { row =>
-      (row.getDouble(0), row.getDouble(1), row.getAs[Vector](2))
-    }
+    val labelWeights = dataset.groupBy(col($(labelCol)).cast(IntegerType)).agg(sum(w)).rdd
+      .map { row => (row.getInt(0), row.getDouble(1)) }
+      .collectAsMap.toMap
 
-    val test = testDataset.map { data =>
-      data.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol)))
-        .rdd.map { row =>
-        (row.getDouble(0), row.getDouble(1), row.getAs[Vector](2))
-      }
-    }
+    val numClasses = labelWeights.size
+    require(labelWeights.keys.forall(i => i >= 0 && i < numClasses))
 
-    val objFunc: LogisticObj =
+    val objFunc: ObjFunc =
       $(objectiveFunc) match {
         case GBMClassifier.LogisticObj =>
+          require(numClasses == 2)
           new LogisticObj
+
+        case GBMClassifier.SoftmaxObj =>
+          new SoftmaxObj(numClasses)
       }
 
     val evalFunc: Array[EvalFunc] =
@@ -193,7 +191,7 @@ class GBMClassifier(override val uid: String)
       callBackFunc.append(new EarlyStop($(earlyStopIters)))
     }
     if ($(modelCheckpointInterval) >= 1 && $(modelCheckpointPath).nonEmpty) {
-      val mockModel = copyValues(new GBMClassificationModel(uid, null).setParent(this))
+      val mockModel = copyValues(new GBMClassificationModel(uid, null, numClasses).setParent(this))
       callBackFunc.append(new ClassificationModelCheckpoint($(modelCheckpointInterval), $(modelCheckpointPath), mockModel))
     }
 
@@ -209,6 +207,28 @@ class GBMClassifier(override val uid: String)
         None
       }
 
+    val baseScore_ = $(objectiveFunc) match {
+      case GBMClassifier.LogisticObj =>
+        if ($(baseScore).nonEmpty) {
+          require($(baseScore).length == 1)
+          $(baseScore)
+        } else {
+          // share of positive
+          val sum = labelWeights.values.sum
+          Array(labelWeights(1) / sum)
+        }
+
+      case GBMClassifier.SoftmaxObj =>
+        if ($(baseScore).nonEmpty) {
+          require($(baseScore).length == numClasses)
+          $(baseScore)
+        } else {
+          // share of classes
+          val sum = labelWeights.values.sum
+          labelWeights.toArray.sortBy(_._1).map(_._2 / sum)
+        }
+    }
+
     val gbm = new GBM
     gbm.setMaxIter($(maxIter))
       .setMaxDepth($(maxDepth))
@@ -216,12 +236,12 @@ class GBMClassifier(override val uid: String)
       .setMaxBins($(maxBins))
       .setMinGain($(minGain))
       .setMinNodeHess($(minNodeHess))
-      .setBaseScore($(baseScore))
+      .setBaseScore(baseScore_)
       .setStepSize($(stepSize))
       .setRegAlpha($(regAlpha))
       .setRegLambda($(regLambda))
-      .setObjectiveFunc(objFunc)
-      .setEvaluateFunc(evalFunc)
+      .setObjFunc(objFunc)
+      .setEvalFunc(evalFunc)
       .setCallbackFunc(callBackFunc.toArray)
       .setCatCols($(catCols).toSet)
       .setRankCols($(rankCols).toSet)
@@ -244,9 +264,27 @@ class GBMClassifier(override val uid: String)
       .setEnableSamplePartitions($(enableSamplePartitions))
       .setInitialModel(initialModel)
 
+    val transLabel = if ($(objectiveFunc) == GBMClassifier.LogisticObj) {
+      label: Double => Array(label)
+    } else {
+      label: Double =>
+        require(label == label.toInt)
+        val array = Array.ofDim[Double](numClasses)
+        array(label.toInt) = 1.0F
+        array
+    }
+
+    val data = dataset.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol))).rdd
+      .map { row => (row.getDouble(0), transLabel(row.getDouble(1)), row.getAs[Vector](2)) }
+
+    val test = testDataset.map { data =>
+      data.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol))).rdd
+        .map { row => (row.getDouble(0), transLabel(row.getDouble(1)), row.getAs[Vector](2)) }
+    }
+
     val gbmModel = gbm.fit(data, test)
 
-    val model = new GBMClassificationModel(uid, gbmModel)
+    val model = new GBMClassificationModel(uid, gbmModel, numClasses)
     instr.logSuccess(model)
     copyValues(model.setParent(this))
   }
@@ -264,8 +302,11 @@ object GBMClassifier extends DefaultParamsReadable[GBMClassifier] {
   /** String name for LogisticObj */
   private[classification] val LogisticObj: String = "logistic"
 
+  /** String name for SoftmaxObj */
+  private[classification] val SoftmaxObj: String = "softmax"
+
   /** Set of objective functions that GBMClassifier supports */
-  private[classification] val supportedObjs = Set(LogisticObj)
+  private[classification] val supportedObjs = Set(LogisticObj, SoftmaxObj)
 
   /** String name for LogLossEval */
   private[classification] val LogLossEval: String = "logloss"
@@ -281,7 +322,7 @@ object GBMClassifier extends DefaultParamsReadable[GBMClassifier] {
 }
 
 
-class GBMClassificationModel(override val uid: String, val model: GBMModel)
+class GBMClassificationModel(override val uid: String, val model: GBMModel, val numClasses: Int)
   extends ProbabilisticClassificationModel[Vector, GBMClassificationModel]
     with GBMClassificationParams with MLWritable with Serializable {
 
@@ -298,8 +339,6 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
 
   override def numFeatures: Int = model.numCols
 
-  override def numClasses = 2
-
   def numTrees: Int = model.numTrees
 
   def numNodes: Array[Int] = model.numNodes
@@ -315,24 +354,58 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
   }
 
   override def copy(extra: ParamMap): GBMClassificationModel = {
-    copyValues(new GBMClassificationModel(uid, model), extra).setParent(parent)
+    copyValues(new GBMClassificationModel(uid, model, numClasses), extra).setParent(parent)
   }
 
-  override protected def raw2probabilityInPlace(rawPrediction: Vector): DenseVector = {
-    rawPrediction match {
-      case dv: DenseVector =>
-        dv.values(1) = 1.0 / (1.0 + math.exp(-dv.values(1)))
-        dv.values(0) = 1.0 - dv.values(1)
-        dv
-      case sv: SparseVector =>
-        throw new RuntimeException("Unexpected error in GBTClassificationModel:" +
-          " raw2probabilityInPlace encountered SparseVector")
-    }
+  private lazy val computeRaw = $(objectiveFunc) match {
+    case "logistic" =>
+      features: Vector =>
+        val raw = model.predictRaw(features, $(firstTrees))(0)
+        Vectors.dense(-raw, raw)
+
+    case "softmax" =>
+      features: Vector =>
+        val raw = model.predict(features, $(firstTrees))
+        Vectors.dense(raw)
+  }
+
+  private lazy val computeScore = $(objectiveFunc) match {
+    case "logistic" =>
+      raw: Vector =>
+        require(raw.size == 2)
+        raw match {
+          case dv: DenseVector =>
+            val pos = model.obj.transform(Array(dv(1))).head
+            dv.values(0) = 1 - pos
+            dv.values(1) = pos
+            dv
+
+          case sv: SparseVector =>
+            throw new RuntimeException("Unexpected error in GBMClassificationModel:" +
+              " raw2probabilityInPlace encountered SparseVector")
+        }
+
+    case "softmax" =>
+      raw: Vector =>
+        require(raw.size == numClasses)
+        raw match {
+          case dv: DenseVector =>
+            val score = model.obj.transform(dv.values)
+            Array.copy(score, 0, dv.values, 0, numClasses)
+            dv
+
+          case sv: SparseVector =>
+            throw new RuntimeException("Unexpected error in GBMClassificationModel:" +
+              " raw2probabilityInPlace encountered SparseVector")
+        }
   }
 
   override protected def predictRaw(features: Vector): Vector = {
-    val score = model.predict(features, $(firstTrees))
-    Vectors.dense(-score, score)
+    computeRaw(features)
+  }
+
+  override protected def raw2probabilityInPlace(rawPrediction: Vector): Vector = {
+    computeScore(rawPrediction)
   }
 
   def featureImportances: Vector = {
@@ -352,7 +425,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel)
 
   def leaf(dataset: Dataset[_]): DataFrame = {
     if ($(leafCol).nonEmpty) {
-      val leafUDF = udf { (features: Any) =>
+      val leafUDF = udf { features: Any =>
         leaf(features.asInstanceOf[Vector])
       }
       dataset.withColumn($(leafCol), leafUDF(col($(featuresCol))))
@@ -378,6 +451,7 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
 
       val otherDF = sparkSession.createDataFrame(Seq(
         ("type", "classification"),
+        ("numClasses", instance.numClasses.toString),
         ("time", System.nanoTime.toString))).toDF("key", "value")
       val otherPath = new Path(path, "other").toString
       otherDF.write.parquet(otherPath)
@@ -394,6 +468,7 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
 
       val otherPath = new Path(path, "other").toString
       val otherDF = sparkSession.read.parquet(otherPath)
+      var numClasses = -1
       otherDF.select("key", "value").collect()
         .foreach { row =>
           val key = row.getString(0)
@@ -401,13 +476,18 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
           key match {
             case "type" =>
               require(value == "classification")
+
+            case "numClasses" =>
+              numClasses = value.toInt
+              require(numClasses > 1)
+
             case "time" =>
           }
         }
 
       val gbModel = GBMModel.load(path)
 
-      val model = new GBMClassificationModel(metadata.uid, gbModel)
+      val model = new GBMClassificationModel(metadata.uid, gbModel, numClasses)
       DefaultParamsReader.getAndSetParams(model, metadata)
       model
     }

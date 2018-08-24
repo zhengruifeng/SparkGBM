@@ -10,13 +10,15 @@ import org.apache.spark.internal.Logging
 
 private[gbm] trait Split extends Serializable {
 
-  def featureId: Int
+  def colId: Int
 
   def left: Boolean
 
-  protected def goByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean
+  protected def goByBin[@spec(Byte, Short, Int) B](bin: B)
+                                                  (implicit inb: Integral[B]): Boolean
 
-  protected def goLeftByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+  protected def goLeftByBin[@spec(Byte, Short, Int) B](bin: B)
+                                                      (implicit inb: Integral[B]): Boolean = {
     if (left) {
       goByBin[B](bin)
     } else {
@@ -24,49 +26,46 @@ private[gbm] trait Split extends Serializable {
     }
   }
 
-  def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean = {
-    goLeftByBin[B](bins(featureId))
+  def goLeft[@spec(Byte, Short, Int) B](bins: Int => B)
+                                       (implicit inb: Integral[B]): Boolean = {
+    goLeftByBin[B](bins(colId))
   }
 
-  def goLeft[@spec(Byte, Short, Int) F: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[F, B]): Boolean = {
-    goLeftByBin[B](bins(featureId))
-  }
+  def gain: Float
 
-  def gain: Double
+  def stats: Array[Float]
 
-  def stats: Array[Double]
-
-  def leftWeight: Double = if (left) {
+  def leftWeight: Float = if (left) {
     stats(0)
   } else {
     stats(3)
   }
 
-  def leftGrad: Double = if (left) {
+  def leftGrad: Float = if (left) {
     stats(1)
   } else {
     stats(4)
   }
 
-  def leftHess: Double = if (left) {
+  def leftHess: Float = if (left) {
     stats(2)
   } else {
     stats(5)
   }
 
-  def rightWeight: Double = if (left) {
+  def rightWeight: Float = if (left) {
     stats(3)
   } else {
     stats(0)
   }
 
-  def rightGrad: Double = if (left) {
+  def rightGrad: Float = if (left) {
     stats(4)
   } else {
     stats(1)
   }
 
-  def rightHess: Double = if (left) {
+  def rightHess: Float = if (left) {
     stats(5)
   } else {
     stats(2)
@@ -76,17 +75,17 @@ private[gbm] trait Split extends Serializable {
 }
 
 
-private[gbm] case class SeqSplit(featureId: Int,
+private[gbm] case class SeqSplit(colId: Int,
                                  missingGo: Boolean,
                                  threshold: Int,
                                  left: Boolean,
-                                 gain: Double,
-                                 stats: Array[Double]) extends Split {
+                                 gain: Float,
+                                 stats: Array[Float]) extends Split {
   require(stats.length == 6)
 
-  override def goByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
-    val intB = implicitly[Integral[B]]
-    val b = intB.toInt(bin)
+  override def goByBin[@spec(Byte, Short, Int) B](bin: B)
+                                                 (implicit inb: Integral[B]): Boolean = {
+    val b = inb.toInt(bin)
     if (b == 0) {
       missingGo
     } else {
@@ -95,22 +94,22 @@ private[gbm] case class SeqSplit(featureId: Int,
   }
 
   override def reverse: Split = {
-    SeqSplit(featureId, missingGo, threshold, !left, gain, stats)
+    SeqSplit(colId, missingGo, threshold, !left, gain, stats)
   }
 }
 
 
-private[gbm] case class SetSplit(featureId: Int,
+private[gbm] case class SetSplit(colId: Int,
                                  missingGo: Boolean,
                                  set: Array[Int],
                                  left: Boolean,
-                                 gain: Double,
-                                 stats: Array[Double]) extends Split {
+                                 gain: Float,
+                                 stats: Array[Float]) extends Split {
   require(stats.length == 6)
 
-  override def goByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
-    val intB = implicitly[Integral[B]]
-    val b = intB.toInt(bin)
+  override def goByBin[@spec(Byte, Short, Int) B](bin: B)
+                                                 (implicit inb: Integral[B]): Boolean = {
+    val b = inb.toInt(bin)
     if (b == 0) {
       missingGo
     } else {
@@ -119,7 +118,7 @@ private[gbm] case class SetSplit(featureId: Int,
   }
 
   override def reverse: Split = {
-    SetSplit(featureId, missingGo, set, !left, gain, stats)
+    SetSplit(colId, missingGo, set, !left, gain, stats)
   }
 }
 
@@ -129,29 +128,27 @@ private[gbm] object Split extends Logging {
   /**
     * find the best split
     *
-    * @param featureId   feature index
-    * @param hist        histogram
-    * @param boostConfig boosting config info
-    * @param treeConfig  tree config info
-    * @tparam H
+    * @param colId      feature index
+    * @param hist       histogram
+    * @param boostConf  boosting config info
+    * @param treeConfig tree config info
     * @return best split if any
     */
-  def split[@spec(Float, Double) H: Numeric](featureId: Int,
-                                             hist: Array[H],
-                                             boostConfig: BoostConfig,
-                                             treeConfig: TreeConfig): Option[Split] = {
+  def split[@spec(Float, Double) H](colId: Int,
+                                    hist: Array[H],
+                                    boostConf: BoostConfig,
+                                    treeConfig: BaseConfig)
+                                   (implicit nuh: Numeric[H]): Option[Split] = {
     require(hist.length % 2 == 0)
 
     if (hist.length <= 2) {
       return None
     }
 
-    val numH = implicitly[Numeric[H]]
-
     val len = hist.length >> 1
 
-    val gradSeq = Array.ofDim[Double](len)
-    val hessSeq = Array.ofDim[Double](len)
+    val gradSeq = Array.ofDim[Float](len)
+    val hessSeq = Array.ofDim[Float](len)
 
     var gradAbsSum = 0.0
     var hessAbsSum = 0.0
@@ -160,8 +157,8 @@ private[gbm] object Split extends Logging {
     var i = 0
     while (i < len) {
       val idx = i << 1
-      gradSeq(i) = numH.toDouble(hist(idx))
-      hessSeq(i) = numH.toDouble(hist(idx + 1))
+      gradSeq(i) = nuh.toFloat(hist(idx))
+      hessSeq(i) = nuh.toFloat(hist(idx + 1))
 
       if (gradSeq(i) != 0 || hessSeq(i) != 0) {
         gradAbsSum += gradSeq(i).abs
@@ -179,8 +176,8 @@ private[gbm] object Split extends Logging {
       gradSeq.head.abs < gradAbsSum * 1e-4 &&
       hessSeq.head.abs < hessAbsSum * 1e-4) {
 
-      gradSeq(0) = 0.0
-      hessSeq(0) = 0.0
+      gradSeq(0) = 0.0F
+      hessSeq(0) = 0.0F
       nnz -= 1
     }
 
@@ -188,12 +185,12 @@ private[gbm] object Split extends Logging {
       return None
     }
 
-    val split = if (treeConfig.isSeq(featureId)) {
-      splitSeq(featureId, gradSeq, hessSeq, boostConfig)
-    } else if (nnz <= boostConfig.getMaxBruteBins) {
-      splitSetBrute(featureId, gradSeq, hessSeq, boostConfig)
+    val split = if (boostConf.isSeq(colId)) {
+      splitSeq(colId, gradSeq, hessSeq, boostConf)
+    } else if (nnz <= boostConf.getMaxBruteBins) {
+      splitSetBrute(colId, gradSeq, hessSeq, boostConf)
     } else {
-      splitSetHeuristic(featureId, gradSeq, hessSeq, boostConfig)
+      splitSetHeuristic(colId, gradSeq, hessSeq, boostConf)
     }
 
     if (split.isEmpty ||
@@ -218,7 +215,7 @@ private[gbm] object Split extends Logging {
     * @param values numbers
     * @return true is all numbers are ok
     */
-  def validate(values: Array[Double]): Boolean = {
+  def validate(values: Array[Float]): Boolean = {
     values.forall(v => !v.isNaN && !v.isInfinity)
   }
 
@@ -226,19 +223,19 @@ private[gbm] object Split extends Logging {
   /**
     * sequentially search the best split, with specially dealing with missing value
     *
-    * @param featureId   feature index
-    * @param gradSeq     grad array
-    * @param hessSeq     hess array
-    * @param boostConfig boosting config info
+    * @param colId     feature index
+    * @param gradSeq   grad array
+    * @param hessSeq   hess array
+    * @param boostConf boosting config info
     * @return best split if any
     */
-  def splitSeq(featureId: Int,
-               gradSeq: Array[Double],
-               hessSeq: Array[Double],
-               boostConfig: BoostConfig): Option[SeqSplit] = {
+  def splitSeq(colId: Int,
+               gradSeq: Array[Float],
+               hessSeq: Array[Float],
+               boostConf: BoostConfig): Option[SeqSplit] = {
     // missing go left
     // find best split on indices of [i0, i1, i2, i3, i4]
-    val search1 = seqSearch(gradSeq, hessSeq, boostConfig)
+    val search1 = seqSearch(gradSeq, hessSeq, boostConf)
 
     val search2 = if (gradSeq.head == 0 && hessSeq.head == 0) {
       // if hist of missing value is zero
@@ -248,24 +245,24 @@ private[gbm] object Split extends Logging {
 
       // missing go right
       // find best split on indices of [i1, i2, i3, i4, i0]
-      seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConfig)
+      seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConf)
     }
 
     (search1, search2) match {
       case (Some((cut1, gain1, stats1)), Some((cut2, gain2, stats2))) =>
         if (gain1 >= gain2) {
-          Some(SeqSplit(featureId, true, cut1, true, gain1, stats1))
+          Some(SeqSplit(colId, true, cut1, true, gain1, stats1))
         } else {
           // adjust the cut of split2
           // cut = 2, [i1, i2, i3 | i4, i0] -> cut = 3
-          Some(SeqSplit(featureId, false, cut2 + 1, true, gain2, stats2))
+          Some(SeqSplit(colId, false, cut2 + 1, true, gain2, stats2))
         }
 
       case (Some((cut, gain, stats)), None) =>
-        Some(SeqSplit(featureId, true, cut, true, gain, stats))
+        Some(SeqSplit(colId, true, cut, true, gain, stats))
 
       case (None, Some((cut, gain, stats))) =>
-        Some(SeqSplit(featureId, false, cut + 1, true, gain, stats))
+        Some(SeqSplit(colId, false, cut + 1, true, gain, stats))
 
       case _ => None
     }
@@ -275,19 +272,19 @@ private[gbm] object Split extends Logging {
   /**
     * Heuristically find the best set split
     *
-    * @param featureId   feature index
-    * @param gradSeq     grad array
-    * @param hessSeq     hess array
-    * @param boostConfig boosting config info
+    * @param colId     feature index
+    * @param gradSeq   grad array
+    * @param hessSeq   hess array
+    * @param boostConf boosting config info
     * @return best split if any
     */
-  def splitSetHeuristic(featureId: Int,
-                        gradSeq: Array[Double],
-                        hessSeq: Array[Double],
-                        boostConfig: BoostConfig): Option[SetSplit] = {
+  def splitSetHeuristic(colId: Int,
+                        gradSeq: Array[Float],
+                        hessSeq: Array[Float],
+                        boostConf: BoostConfig): Option[SetSplit] = {
     // sort the hist according to the relevance of gain
     // [g0, g1, g2, g3], [h0, h1, h2, h3] -> [g1, g3, g0, g2], [h1, h3, h0, h2]
-    val epsion = boostConfig.getRegLambda / gradSeq.length
+    val epsion = boostConf.getRegLambda / gradSeq.length
     val (sortedGradSeq, sortedHessSeq, sortedIndices) =
       gradSeq.zip(hessSeq).zipWithIndex
         .map { case ((grad, hess), i) =>
@@ -296,7 +293,7 @@ private[gbm] object Split extends Logging {
         grad / (hess + epsion)
       }.unzip3
 
-    val search = seqSearch(sortedGradSeq, sortedHessSeq, boostConfig)
+    val search = seqSearch(sortedGradSeq, sortedHessSeq, boostConf)
 
     if (search.isEmpty) {
       return None
@@ -305,7 +302,7 @@ private[gbm] object Split extends Logging {
     val (cut, gain, stats) = search.get
     val indices1 = sortedIndices.take(cut + 1)
 
-    val split = createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, stats)
+    val split = createSetSplit(colId, gradSeq, hessSeq, gain, indices1, stats)
     Some(split)
   }
 
@@ -313,20 +310,20 @@ private[gbm] object Split extends Logging {
   /**
     * Search the best set split by brute force
     *
-    * @param featureId   feature index
-    * @param gradSeq     grad array
-    * @param hessSeq     hess array
-    * @param boostConfig boosting config info
+    * @param colId     feature index
+    * @param gradSeq   grad array
+    * @param hessSeq   hess array
+    * @param boostConf boosting config info
     * @return best split if any
     */
-  def splitSetBrute(featureId: Int,
-                    gradSeq: Array[Double],
-                    hessSeq: Array[Double],
-                    boostConfig: BoostConfig): Option[SetSplit] = {
+  def splitSetBrute(colId: Int,
+                    gradSeq: Array[Float],
+                    hessSeq: Array[Float],
+                    boostConf: BoostConfig): Option[SetSplit] = {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
-    val (_, baseScore) = computeScore(gradSum, hessSum, boostConfig)
+    val (_, baseScore) = computeScore(gradSum, hessSum, boostConf)
     if (!validate(Array(baseScore))) {
       return None
     }
@@ -343,15 +340,15 @@ private[gbm] object Split extends Logging {
 
     val bestSet1 = mutable.Set.empty[Int]
     val set1 = mutable.Set.empty[Int]
-    var bestScore = Double.MinValue
+    var bestScore = Float.MinValue
 
-    var grad1 = 0.0
-    var grad2 = 0.0
+    var grad1 = 0.0F
+    var grad2 = 0.0F
 
-    var hess1 = 0.0
-    var hess2 = 0.0
+    var hess1 = 0.0F
+    var hess2 = 0.0F
 
-    val stats = Array.fill(6)(Double.NaN)
+    val stats: Array[Float] = Array.fill(6)(Float.NaN)
 
     // the first element in nnz hist is always unselected in set1
     val k = 1L << (len - 1)
@@ -363,8 +360,8 @@ private[gbm] object Split extends Logging {
       val binStr = num.toBinaryString
 
       set1.clear()
-      grad1 = 0.0
-      hess1 = 0.0
+      grad1 = 0.0F
+      hess1 = 0.0F
 
       val pad = len - binStr.length
       var i = 0
@@ -382,10 +379,10 @@ private[gbm] object Split extends Logging {
       grad2 = gradSum - grad1
       hess2 = hessSum - hess1
 
-      if (hess1 >= boostConfig.getMinNodeHess && hess2 >= boostConfig.getMinNodeHess) {
+      if (hess1 >= boostConf.getMinNodeHess && hess2 >= boostConf.getMinNodeHess) {
 
-        val (weight1, score1) = computeScore(grad1, hess1, boostConfig)
-        val (weight2, score2) = computeScore(grad2, hess2, boostConfig)
+        val (weight1, score1) = computeScore(grad1, hess1, boostConf)
+        val (weight2, score2) = computeScore(grad2, hess2, boostConf)
 
         if (validate(Array(weight1, score1, weight2, score2))) {
           val score = score1 + score2
@@ -413,12 +410,12 @@ private[gbm] object Split extends Logging {
     }
 
     val gain = bestScore - baseScore
-    if (gain < boostConfig.getMinGain) {
+    if (gain < boostConf.getMinGain) {
       return None
     }
 
     val indices1 = bestSet1.toArray
-    val split = createSetSplit(featureId, gradSeq, hessSeq, gain, indices1, stats)
+    val split = createSetSplit(colId, gradSeq, hessSeq, gain, indices1, stats)
     Some(split)
   }
 
@@ -426,33 +423,33 @@ private[gbm] object Split extends Logging {
   /**
     * Sequentially search the best split
     *
-    * @param gradSeq     grad array
-    * @param hessSeq     hess array
-    * @param boostConfig boosting config info
+    * @param gradSeq   grad array
+    * @param hessSeq   hess array
+    * @param boostConf boosting config info
     * @return best split containing (cut, gain, Array(weightL, gradL, hessL, weightR, gradR, hessR)), if any
     */
-  def seqSearch(gradSeq: Array[Double],
-                hessSeq: Array[Double],
-                boostConfig: BoostConfig): Option[(Int, Double, Array[Double])] = {
+  def seqSearch(gradSeq: Array[Float],
+                hessSeq: Array[Float],
+                boostConf: BoostConfig): Option[(Int, Float, Array[Float])] = {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
-    val (_, baseScore) = computeScore(gradSum, hessSum, boostConfig)
+    val (_, baseScore) = computeScore(gradSum, hessSum, boostConf)
     if (!validate(Array(baseScore))) {
       return None
     }
 
     var bestCut = -1
-    var bestScore = Double.MinValue
+    var bestScore = Float.MinValue
 
     // weightLeft, weightRight, gradLeft, gradRight, hessLeft, hessRight
-    val stats = Array.fill(6)(Double.NaN)
+    val stats: Array[Float] = Array.fill(6)(Float.NaN)
 
-    var gradLeft = 0.0
-    var gradRight = 0.0
+    var gradLeft = 0.0F
+    var gradRight = 0.0F
 
-    var hessLeft = 0.0
-    var hessRight = 0.0
+    var hessLeft = 0.0F
+    var hessRight = 0.0F
 
 
     (0 until gradSeq.length - 1).foreach { i =>
@@ -462,10 +459,10 @@ private[gbm] object Split extends Logging {
         hessLeft += hessSeq(i)
         hessRight = hessSum - hessLeft
 
-        if (hessLeft >= boostConfig.getMinNodeHess && hessRight >= boostConfig.getMinNodeHess) {
+        if (hessLeft >= boostConf.getMinNodeHess && hessRight >= boostConf.getMinNodeHess) {
 
-          val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, boostConfig)
-          val (weightRight, scoreRight) = computeScore(gradRight, hessRight, boostConfig)
+          val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, boostConf)
+          val (weightRight, scoreRight) = computeScore(gradRight, hessRight, boostConf)
 
           if (validate(Array(weightLeft, scoreLeft, weightRight, scoreRight))) {
             val score = scoreLeft + scoreRight
@@ -493,7 +490,7 @@ private[gbm] object Split extends Logging {
     }
 
     val gain = bestScore - baseScore
-    if (bestCut >= 0 && gain >= boostConfig.getMinGain) {
+    if (bestCut >= 0 && gain >= boostConf.getMinGain) {
       Some((bestCut, gain, stats))
     } else {
       None
@@ -504,30 +501,30 @@ private[gbm] object Split extends Logging {
   /**
     * Compute the weight and score, given the sum of hist.
     *
-    * @param gradSum     sum of grad
-    * @param hessSum     sum of hess
-    * @param boostConfig boosting config info containing the regulization parameters
+    * @param gradSum   sum of grad
+    * @param hessSum   sum of hess
+    * @param boostConf boosting config info containing the regulization parameters
     * @return weight and score
     */
-  def computeScore(gradSum: Double,
-                   hessSum: Double,
-                   boostConfig: BoostConfig): (Double, Double) = {
-    if (boostConfig.getRegAlpha == 0) {
-      val weight = -gradSum / (hessSum + boostConfig.getRegLambda)
-      val loss = (hessSum + boostConfig.getRegLambda) * weight * weight / 2 + gradSum * weight
-      (weight, -loss)
+  def computeScore(gradSum: Float,
+                   hessSum: Float,
+                   boostConf: BoostConfig): (Float, Float) = {
+    if (boostConf.getRegAlpha == 0) {
+      val weight = -gradSum / (hessSum + boostConf.getRegLambda)
+      val loss = (hessSum + boostConf.getRegLambda) * weight * weight / 2 + gradSum * weight
+      (weight.toFloat, -loss.toFloat)
 
     } else {
-      val weight = if (gradSum + boostConfig.getRegAlpha < 0) {
-        -(boostConfig.getRegAlpha + gradSum) / (hessSum + boostConfig.getRegLambda)
-      } else if (gradSum - boostConfig.getRegAlpha > 0) {
-        (boostConfig.getRegAlpha - gradSum) / (hessSum + boostConfig.getRegLambda)
+      val weight = if (gradSum + boostConf.getRegAlpha < 0) {
+        -(boostConf.getRegAlpha + gradSum) / (hessSum + boostConf.getRegLambda)
+      } else if (gradSum - boostConf.getRegAlpha > 0) {
+        (boostConf.getRegAlpha - gradSum) / (hessSum + boostConf.getRegLambda)
       } else {
         0.0
       }
-      val loss = (hessSum + boostConfig.getRegLambda) * weight * weight / 2 + gradSum * weight +
-        boostConfig.getRegAlpha * weight.abs
-      (weight, -loss)
+      val loss = (hessSum + boostConf.getRegLambda) * weight * weight / 2 + gradSum * weight +
+        boostConf.getRegAlpha * weight.abs
+      (weight.toFloat, -loss.toFloat)
     }
   }
 
@@ -544,11 +541,11 @@ private[gbm] object Split extends Logging {
     * @return a SetSplit
     */
   def createSetSplit(featureId: Int,
-                     gradSeq: Array[Double],
-                     hessSeq: Array[Double],
-                     gain: Double,
+                     gradSeq: Array[Float],
+                     hessSeq: Array[Float],
+                     gain: Float,
                      indices1: Array[Int],
-                     stats: Array[Double]): SetSplit = {
+                     stats: Array[Float]): SetSplit = {
     require(indices1.max < gradSeq.length)
     require(stats.length == 6)
 

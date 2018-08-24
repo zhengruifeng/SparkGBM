@@ -57,7 +57,7 @@ class EarlyStop(val iters: Int) extends CallbackFunc {
     if (testMetrics.length > iters) {
       val len = iters + 1
 
-      boostConfig.getEvaluateFunc.foreach { eval =>
+      boostConfig.getEvalFunc.foreach { eval =>
         val values = testMetrics.takeRight(len).map(_ (eval.name))
         val start = values.head
         val end = values.last

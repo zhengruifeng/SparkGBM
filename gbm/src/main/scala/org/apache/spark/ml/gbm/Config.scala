@@ -8,42 +8,9 @@ import org.apache.spark.storage.StorageLevel
 
 class BoostConfig extends Logging with Serializable {
 
-  private var maxIter: Int = _
-  private var maxDepth: Int = _
-  private var maxLeaves: Int = _
-  private var minGain: Double = _
-  private var minNodeHess: Double = _
-  private var stepSize: Double = _
-  private var regAlpha: Double = _
-  private var regLambda: Double = _
-  private var subSample: Double = _
-  private var colSampleByTree: Double = _
-  private var colSampleByLevel: Double = _
-  private var maxBruteBins: Int = _
-  private var checkpointInterval: Int = _
-  private var storageLevel: StorageLevel = _
-  private var boostType: String = _
-  private var dropRate: Double = _
-  private var dropSkip: Double = _
-  private var minDrop: Int = _
-  private var maxDrop: Int = _
-  private var aggregationDepth: Int = _
-  private var enableSamplePartitions: Boolean = _
-  private var parallelism: Int = _
-  private var seed: Long = _
-
-  private var obj: ObjFunc = _
-  private var increEvals: Array[IncrementalEvalFunc] = _
-  private var batchEvals: Array[BatchEvalFunc] = _
-  private var callbacks: Array[CallbackFunc] = _
-
-  private var numCols: Int = _
-  private var floatType: String = _
-  private var baseScore: Double = _
-  private var catCols: BitSet = _
-  private var rankCols: BitSet = _
-
   /** maximum number of iterations */
+  private var maxIter: Int = 20
+
   private[gbm] def setMaxIter(value: Int): this.type = {
     require(value >= 0)
     maxIter = value
@@ -59,8 +26,10 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** maximum tree depth */
+  private var maxDepth: Int = 5
+
   private[gbm] def setMaxDepth(value: Int): this.type = {
-    require(value >= 1)
+    require(value >= 1 && value <= 30)
     maxDepth = value
     this
   }
@@ -74,6 +43,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** maximum number of tree leaves */
+  private var maxLeaves: Int = 1000
+
   private[gbm] def setMaxLeaves(value: Int): this.type = {
     require(value >= 2)
     maxLeaves = value
@@ -89,6 +60,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** minimum gain for each split */
+  private var minGain: Double = 0.0
+
   private[gbm] def setMinGain(value: Double): this.type = {
     require(value >= 0 && !value.isNaN && !value.isInfinity)
     minGain = value
@@ -104,6 +77,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** minimum sum of hess for each node */
+  private var minNodeHess: Double = 1.0
+
   private[gbm] def setMinNodeHess(value: Double): this.type = {
     require(value >= 0 && !value.isNaN && !value.isInfinity)
     minNodeHess = value
@@ -119,6 +94,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** learning rate */
+  private var stepSize: Double = 0.1
+
   private[gbm] def setStepSize(value: Double): this.type = {
     require(value > 0 && !value.isNaN && !value.isInfinity)
     stepSize = value
@@ -134,6 +111,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** L1 regularization term on weights */
+  private var regAlpha: Double = 0.0
+
   private[gbm] def setRegAlpha(value: Double): this.type = {
     require(value >= 0 && !value.isNaN && !value.isInfinity)
     regAlpha = value
@@ -149,6 +128,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** L2 regularization term on weights */
+  private var regLambda: Double = 1.0
+
   private[gbm] def setRegLambda(value: Double): this.type = {
     require(value >= 0 && !value.isNaN && !value.isInfinity)
     regLambda = value
@@ -164,6 +145,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** subsample ratio of the training instance */
+  private var subSample: Double = 1.0
+
   private[gbm] def setSubSample(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
     subSample = value
@@ -179,6 +162,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** subsample ratio of columns when constructing each tree */
+  private var colSampleByTree: Double = 1.0
+
   private[gbm] def setColSampleByTree(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
     colSampleByTree = value
@@ -194,6 +179,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** subsample ratio of columns when constructing each level */
+  private var colSampleByLevel: Double = 1.0
+
   private[gbm] def setColSampleByLevel(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
     colSampleByLevel = value
@@ -208,7 +195,26 @@ class BoostConfig extends Logging with Serializable {
   def getColSampleByLevel: Double = colSampleByLevel
 
 
+  /** the maximum number of non-zero histogram bins to search split for categorical columns by brute force */
+  private var maxBruteBins: Int = 10
+
+  private[gbm] def setMaxBruteBins(value: Int): this.type = {
+    require(value >= 0)
+    maxBruteBins = value
+    this
+  }
+
+  def updateMaxBruteBins(value: Int): this.type = {
+    logInfo(s"maxBruteBins was changed from $maxBruteBins to $value")
+    setMaxBruteBins(value)
+  }
+
+  def getMaxBruteBins: Int = maxBruteBins
+
+
   /** checkpoint interval */
+  private var checkpointInterval: Int = 10
+
   private[gbm] def setCheckpointInterval(value: Int): this.type = {
     require(value == -1 || value > 0)
     checkpointInterval = value
@@ -224,6 +230,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** storage level */
+  private var storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK
+
   private[gbm] def setStorageLevel(value: StorageLevel): this.type = {
     require(value != StorageLevel.NONE)
     storageLevel = value
@@ -238,7 +246,94 @@ class BoostConfig extends Logging with Serializable {
   def getStorageLevel: StorageLevel = storageLevel
 
 
+  /** boosting type */
+  private var boostType: String = "gbtree"
+
+  private[gbm] def setBoostType(value: String): this.type = {
+    require(value == "gbtree" || value == "dart")
+    boostType = value
+    this
+  }
+
+  def updateBoostType(value: String): this.type = {
+    logInfo(s"boostType was changed from $boostType to $value")
+    setBoostType(value)
+  }
+
+  def getBoostType: String = boostType
+
+
+  /** dropout rate */
+  private var dropRate: Double = 0.0
+
+  private[gbm] def setDropRate(value: Double): this.type = {
+    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
+    dropRate = value
+    this
+  }
+
+  def updateDropRate(value: Double): this.type = {
+    logInfo(s"dropRate was changed from $dropRate to $value")
+    setDropRate(value)
+  }
+
+  def getDropRate: Double = dropRate
+
+
+  /** probability of skipping drop */
+  private var dropSkip: Double = 0.5
+
+  private[gbm] def setDropSkip(value: Double): this.type = {
+    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
+    dropSkip = value
+    this
+  }
+
+  def updateDropSkip(value: Double): this.type = {
+    logInfo(s"dropSkip was changed from $dropSkip to $value")
+    setDropSkip(value)
+  }
+
+  def getDropSkip: Double = dropSkip
+
+
+  /** minimum number of dropped trees in each iteration */
+  private var minDrop: Int = 0
+
+  private[gbm] def setMinDrop(value: Int): this.type = {
+    require(value >= 0)
+    minDrop = value
+    this
+  }
+
+  def updateMinDrop(value: Int): this.type = {
+    logInfo(s"minDrop was changed from $minDrop to $value")
+    setMinDrop(value)
+  }
+
+  def getMinDrop: Int = minDrop
+
+
+  /** maximum number of dropped trees in each iteration */
+  private var maxDrop: Int = 50
+
+  private[gbm] def setMaxDrop(value: Int): this.type = {
+    require(value >= 0)
+    maxDrop = value
+    this
+  }
+
+  def updateMaxDrop(value: Int): this.type = {
+    logInfo(s"maxDrop was changed from $maxDrop to $value")
+    setMaxDrop(value)
+  }
+
+  def getMaxDrop: Int = maxDrop
+
+
   /** depth for treeAggregate */
+  private var aggregationDepth: Int = 2
+
   private[gbm] def setAggregationDepth(value: Int): this.type = {
     require(value >= 2)
     aggregationDepth = value
@@ -253,7 +348,9 @@ class BoostConfig extends Logging with Serializable {
   def getAggregationDepth: Int = aggregationDepth
 
 
-  /** whether to sample partitions instead of instances */
+  /** whether to sample partitions instead of instances if possible */
+  private var enableSamplePartitions: Boolean = false
+
   private[gbm] def setEnableSamplePartitions(value: Boolean): this.type = {
     enableSamplePartitions = value
     this
@@ -268,6 +365,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** parallelism of histogram computation and leaves splitting */
+  private var parallelism: Int = -1
+
   private[gbm] def setParallelism(value: Int): this.type = {
     require(value != 0)
     parallelism = value
@@ -292,6 +391,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** random number seed */
+  private var seed: Long = -1L
+
   private[gbm] def setSeed(value: Long): this.type = {
     seed = value
     this
@@ -305,157 +406,130 @@ class BoostConfig extends Logging with Serializable {
   def getSeed: Long = seed
 
 
-  /** boosting type */
-  private[gbm] def setBoostType(value: String): this.type = {
-    require(value == "gbtree" || value == "dart")
-    boostType = value
-    this
-  }
+  /** scalar objective function */
+  private var objFunc: ObjFunc = new SquareObj
 
-  def updateBoostType(value: String): this.type = {
-    logInfo(s"boostType was changed from $boostType to $value")
-    setBoostType(value)
-  }
-
-  def getBoostType: String = boostType
-
-
-  /** dropout rate */
-  private[gbm] def setDropRate(value: Double): this.type = {
-    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    dropRate = value
-    this
-  }
-
-  def updateDropRate(value: Double): this.type = {
-    logInfo(s"dropRate was changed from $dropRate to $value")
-    setDropRate(value)
-  }
-
-  def getDropRate: Double = dropRate
-
-
-  /** probability of skipping drop */
-  private[gbm] def setDropSkip(value: Double): this.type = {
-    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    dropSkip = value
-    this
-  }
-
-  def updateDropSkip(value: Double): this.type = {
-    logInfo(s"dropSkip was changed from $dropSkip to $value")
-    setDropSkip(value)
-  }
-
-  def getDropSkip: Double = dropSkip
-
-
-  /** minimum number of dropped trees in each iteration */
-  private[gbm] def setMinDrop(value: Int): this.type = {
-    require(value >= 0)
-    minDrop = value
-    this
-  }
-
-  def updateMinDrop(value: Int): this.type = {
-    logInfo(s"minDrop was changed from $minDrop to $value")
-    setMinDrop(value)
-  }
-
-  def getMinDrop: Int = minDrop
-
-
-  /** maximum number of dropped trees in each iteration */
-  private[gbm] def setMaxDrop(value: Int): this.type = {
-    require(value >= 0)
-    maxDrop = value
-    this
-  }
-
-  def updateMaxDrop(value: Int): this.type = {
-    logInfo(s"maxDrop was changed from $maxDrop to $value")
-    setMaxDrop(value)
-  }
-
-  def getMaxDrop: Int = maxDrop
-
-
-  /** the maximum number of non-zero histogram bins to search split for categorical columns by brute force */
-  private[gbm] def setMaxBruteBins(value: Int): this.type = {
-    require(value >= 0)
-    maxBruteBins = value
-    this
-  }
-
-  def updateMaxBruteBins(value: Int): this.type = {
-    logInfo(s"maxBruteBins was changed from $maxBruteBins to $value")
-    setMaxBruteBins(value)
-  }
-
-  def getMaxBruteBins: Int = maxBruteBins
-
-
-  /** objective function */
-  private[gbm] def setObjectiveFunc(value: ObjFunc): this.type = {
+  private[gbm] def setObjFunc(value: ObjFunc): this.type = {
     require(value != null)
-    obj = value
+    objFunc = value
     this
   }
 
-  def updateObjectiveFunc(value: ObjFunc): this.type = {
-    logInfo(s"obj was changed from ${obj.name} to ${value.name}")
-    setObjectiveFunc(value)
+  def updateObjFunc(value: ObjFunc): this.type = {
+    logInfo(s"scalarObjFunc was changed from ${objFunc.name} to ${value.name}")
+    setObjFunc(value)
   }
 
-  def getObjectiveFunc: ObjFunc = obj
+  def getObjFunc: ObjFunc = objFunc
 
 
-  /** evaluation functions */
-  private[gbm] def setEvaluateFunc(value: Array[EvalFunc]): this.type = {
-    require(value.forall(e => e.isInstanceOf[IncrementalEvalFunc] || e.isInstanceOf[BatchEvalFunc]))
-    require(value.map(_.name).distinct.length == value.length)
-    increEvals = value.flatMap {
-      case eval: IncrementalEvalFunc =>
-        Some(eval)
-      case _ => None
-    }
-    batchEvals = value.flatMap {
-      case eval: BatchEvalFunc =>
-        Some(eval)
-      case _ => None
-    }
+  /** scalar incremental evaluation functions */
+  private var evalFunc: Array[EvalFunc] = Array.empty
 
+  private[gbm] def setEvalFunc(value: Array[EvalFunc]): this.type = {
+    require(value != null)
+    evalFunc = value
     this
   }
 
-  def updateEvaluateFunc(value: Array[EvalFunc]): this.type = {
-    logInfo(s"eval was changed from ${getEvaluateFunc.map(_.name).mkString("(", ",", ")")} to ${value.map(_.name).mkString("(", ",", ")")}")
-    setEvaluateFunc(value)
+  def updateEvalFunc(value: Array[EvalFunc]): this.type = {
+    logInfo(s"scalarIncEvalFunc was changed from ${evalFunc.map(_.name)} to ${value.map(_.name)}")
+    setEvalFunc(value)
   }
 
-  def getEvaluateFunc: Array[EvalFunc] = increEvals ++ batchEvals
+  def getEvalFunc: Array[EvalFunc] = evalFunc
 
-  def getIncrementalEvaluateFunc: Array[IncrementalEvalFunc] = increEvals
+  def getBatchEvalFunc: Array[EvalFunc] = {
+    evalFunc.flatMap {
+      case _: IncEvalFunc => Iterator.empty
+      case e => Iterator.single(e)
+    }
+  }
 
-  def getBatchEvaluateFunc: Array[BatchEvalFunc] = batchEvals
+  def getIncEvalFunc: Array[IncEvalFunc] = {
+    evalFunc.flatMap {
+      case e: IncEvalFunc => Iterator.single(e)
+      case _ => Iterator.empty
+    }
+  }
 
 
   /** callback functions */
+  private var callbackFunc: Array[CallbackFunc] = Array.empty
+
   private[gbm] def setCallbackFunc(value: Array[CallbackFunc]): this.type = {
     require(value.map(_.name).distinct.length == value.length)
-    callbacks = value
+    callbackFunc = value
     this
   }
 
   def updateCallbackFunc(value: Array[CallbackFunc]): this.type = {
-    logInfo(s"obj was changed from ${callbacks.map(_.name).mkString("(", ",", ")")} to ${value.map(_.name).mkString("(", ",", ")")}")
+    logInfo(s"callbackFunc was changed from ${callbackFunc.map(_.name).mkString("(", ",", ")")} to ${value.map(_.name).mkString("(", ",", ")")}")
     setCallbackFunc(value)
   }
 
-  def getCallbackFunc: Array[CallbackFunc] = callbacks
+  def getCallbackFunc: Array[CallbackFunc] = callbackFunc
+
+
+  /** base score for global scalar bias */
+  private var baseScore: Array[Double] = Array.empty
+
+  private[gbm] def setBaseScore(value: Array[Double]): this.type = {
+    require(value.nonEmpty)
+    require(value.forall(v => !v.isNaN && !v.isInfinity))
+    baseScore = value
+    this
+  }
+
+  def getBaseScore: Array[Double] = baseScore
+
+  def computeRawBaseScore: Array[Double] = objFunc.inverseTransform(baseScore)
+
+
+  /** length of raw prediction vectors */
+  private var rawSize: Int = 0
+
+  private[gbm] def setRawSize(value: Int): this.type = {
+    require(value > 0)
+    rawSize = value
+    this
+  }
+
+  def getRawSize: Int = rawSize
+
+
+  /** number of base models in one round */
+  private var baseModelParallelism: Int = 1
+
+  private[gbm] def setBaseModelParallelism(value: Int): this.type = {
+    require(value > 0)
+    baseModelParallelism = value
+    this
+  }
+
+  def updateBaseModelParallelism(value: Int): this.type = {
+    logInfo(s"numParallelBaseModels was changed from $baseModelParallelism to $value")
+    setBaseModelParallelism(value)
+  }
+
+  def getBaseModelParallelism: Int = baseModelParallelism
+
+
+  /** Double precision */
+  private var floatType: String = "Double"
+
+  private[gbm] def setFloatType(value: String): this.type = {
+    require(value == "Double" || value == "double")
+    floatType = value
+    this
+  }
+
+  def getFloatType: String = floatType
 
 
   /** number of columns */
+  private var numCols: Int = -1
+
   private[gbm] def setNumCols(value: Int): this.type = {
     require(value > 0)
     numCols = value
@@ -465,27 +539,9 @@ class BoostConfig extends Logging with Serializable {
   def getNumCols: Int = numCols
 
 
-  /** float precision */
-  private[gbm] def setFloatType(value: String): this.type = {
-    require(value == "float" || value == "double")
-    floatType = value
-    this
-  }
-
-  def getFloatType: String = floatType
-
-
-  /** base score for global bias */
-  private[gbm] def setBaseScore(value: Double): this.type = {
-    require(!value.isNaN && !value.isInfinity)
-    baseScore = value
-    this
-  }
-
-  def getBaseScore: Double = baseScore
-
-
   /** indices of categorical columns */
+  private var catCols: BitSet = BitSet.empty
+
   private[gbm] def setCatCols(value: BitSet): this.type = {
     catCols = value
     this
@@ -495,6 +551,8 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** indices of ranking columns */
+  private var rankCols: BitSet = BitSet.empty
+
   private[gbm] def setRankCols(value: BitSet): this.type = {
     rankCols = value
     this
@@ -503,22 +561,27 @@ class BoostConfig extends Logging with Serializable {
   def getRankCols: BitSet = rankCols
 
 
-  private[gbm] def isNum(colIndex: Int): Boolean = !isCat(colIndex) && !isRank(colIndex)
+  private[gbm] def isNum(colId: Int): Boolean = !isCat(colId) && !isRank(colId)
 
-  private[gbm] def isCat(colIndex: Int): Boolean = catCols.contains(colIndex)
+  private[gbm] def isCat(colId: Int): Boolean = catCols.contains(colId)
 
-  private[gbm] def isRank(colIndex: Int): Boolean = rankCols.contains(colIndex)
+  private[gbm] def isRank(colId: Int): Boolean = rankCols.contains(colId)
+
+  private[gbm] def isSeq(colId: Int): Boolean = !isCat(colId)
 }
 
 
-private[gbm] class TreeConfig(val iteration: Int,
-                              val treeIndex: Int,
-                              val catCols: BitSet,
-                              val columns: Array[Int]) extends Serializable {
+private[gbm] class BaseConfig(val iteration: Int,
+                              val numTrees: Int,
+                              val colSelectors: Array[ColumSelector]) extends Serializable {
 
-  def isSeq(colIndex: Int): Boolean = !catCols.contains(colIndex)
-
-  def numCols: Int = columns.length
+  def getSelector(index: Int): ColumSelector = {
+    if (colSelectors.nonEmpty) {
+      colSelectors(index)
+    } else {
+      TotalSelector()
+    }
+  }
 }
 
 

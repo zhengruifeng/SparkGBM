@@ -4,12 +4,13 @@ import scala.{specialized => spec}
 
 private[gbm] class LearningNode(val nodeId: Int,
                                 var isLeaf: Boolean,
-                                var prediction: Double,
+                                var prediction: Float,
                                 var split: Option[Split],
                                 var leftNode: Option[LearningNode],
                                 var rightNode: Option[LearningNode]) extends Serializable {
 
-  def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int = {
+  def index[@spec(Byte, Short, Int) B](bins: Array[B])
+                                      (implicit inb: Integral[B]): Int = {
     if (isLeaf) {
       nodeId
     } else if (split.get.goLeft(bins)) {
@@ -19,7 +20,8 @@ private[gbm] class LearningNode(val nodeId: Int,
     }
   }
 
-  def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double = {
+  def predict[@spec(Byte, Short, Int) B](bins: Array[B])
+                                        (implicit inb: Integral[B]): Float = {
     if (isLeaf) {
       prediction
     } else if (split.get.goLeft(bins)) {
@@ -50,57 +52,45 @@ private[gbm] class LearningNode(val nodeId: Int,
 
 private[gbm] object LearningNode {
   def create(nodeId: Int): LearningNode =
-    new LearningNode(nodeId, true, Double.NaN, None, None, None)
+    new LearningNode(nodeId, true, 0.0F, None, None, None)
 }
 
 
 trait Node extends Serializable {
 
-  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int
+  private[gbm] def index[@spec(Byte, Short, Int) B](bins: Int => B)
+                                                   (implicit inb: Integral[B]): Int
 
-  private[gbm] def index[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Int
-
-  private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double
-
-  private[gbm] def predict[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Double
+  private[gbm] def predict[@spec(Byte, Short, Int) B](bins: Int => B)
+                                                     (implicit inb: Integral[B]): Float
 
   def subtreeDepth: Int
 
   def nodeIterator: Iterator[Node]
 
-  def numDescendants: Int = {
-    var cnt = 0
-    nodeIterator.foreach(_ => cnt += 1)
-    cnt
-  }
+  def numDescendants: Int =
+    nodeIterator.size
 
-  def numLeaves: Int = {
-    var cnt = 0
-    nodeIterator.foreach {
-      case _: LeafNode =>
-        cnt += 1
-      case _ =>
-    }
-    cnt
-  }
+  def numLeaves: Int =
+    nodeIterator.count(_.isInstanceOf[LeafNode])
 }
 
 
-class InternalNode(val featureId: Int,
+class InternalNode(val colId: Int,
                    val isSeq: Boolean,
                    val missingGo: Boolean,
                    val data: Array[Int],
                    val left: Boolean,
-                   val gain: Double,
+                   val gain: Float,
                    val leftNode: Node,
                    val rightNode: Node) extends Node {
   if (isSeq) {
     require(data.length == 1)
   }
 
-  private def goByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
-    val intB = implicitly[Integral[B]]
-    val b = intB.toInt(bin)
+  private def goByBin[@spec(Byte, Short, Int) B](bin: B)
+                                                (implicit inb: Integral[B]): Boolean = {
+    val b = inb.toInt(bin)
     if (b == 0) {
       missingGo
     } else if (isSeq) {
@@ -110,7 +100,8 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private def goLeftByBin[@spec(Byte, Short, Int) B: Integral](bin: B): Boolean = {
+  private def goLeftByBin[@spec(Byte, Short, Int) B](bin: B)
+                                                    (implicit inb: Integral[B]): Boolean = {
     if (left) {
       goByBin[B](bin)
     } else {
@@ -118,15 +109,13 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private[gbm] def goLeft[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Boolean = {
-    goLeftByBin[B](bins(featureId))
+  private[gbm] def goLeft[@spec(Byte, Short, Int) B](bins: Int => B)
+                                                    (implicit inb: Integral[B]): Boolean = {
+    goLeftByBin[B](bins(colId))
   }
 
-  private[gbm] def goLeft[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Boolean = {
-    goLeftByBin[B](bins(featureId))
-  }
-
-  private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int = {
+  private[gbm] override def index[@spec(Byte, Short, Int) B](bins: Int => B)
+                                                            (implicit inb: Integral[B]): Int = {
     if (goLeft(bins)) {
       leftNode.index[B](bins)
     } else {
@@ -134,27 +123,12 @@ class InternalNode(val featureId: Int,
     }
   }
 
-  private[gbm] override def index[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Int = {
-    if (goLeft(bins)) {
-      leftNode.index[C, B](bins)
-    } else {
-      rightNode.index[C, B](bins)
-    }
-  }
-
-  private[gbm] override def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double = {
+  private[gbm] override def predict[@spec(Byte, Short, Int) B](bins: Int => B)
+                                                              (implicit inb: Integral[B]): Float = {
     if (goLeft(bins)) {
       leftNode.predict[B](bins)
     } else {
       rightNode.predict[B](bins)
-    }
-  }
-
-  private[gbm] override def predict[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Double = {
-    if (goLeft(bins)) {
-      leftNode.predict[C, B](bins)
-    } else {
-      rightNode.predict[C, B](bins)
     }
   }
 
@@ -169,33 +143,31 @@ class InternalNode(val featureId: Int,
   }
 }
 
-class LeafNode(val weight: Double,
+class LeafNode(val weight: Float,
                val leafId: Int) extends Node {
 
   override def subtreeDepth: Int = 0
 
   override def nodeIterator: Iterator[Node] = Iterator(this)
 
-  private[gbm] override def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int = leafId
+  private[gbm] override def index[@spec(Byte, Short, Int) B](bins: Int => B)
+                                                            (implicit inb: Integral[B]): Int = leafId
 
-  private[gbm] override def index[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Int = leafId
-
-  private[gbm] override def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double = weight
-
-  private[gbm] override def predict[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Double = weight
+  private[gbm] override def predict[@spec(Byte, Short, Int) B](bins: Int => B)
+                                                              (implicit inb: Integral[B]): Float = weight
 }
 
 
 private[gbm] case class NodeData(id: Int,
-                                 featureId: Int,
+                                 colId: Int,
                                  isSeq: Boolean,
                                  missingGo: Boolean,
                                  data: Array[Int],
                                  left: Boolean,
-                                 gain: Double,
+                                 gain: Float,
                                  leftNode: Int,
                                  rightNode: Int,
-                                 weight: Double,
+                                 weight: Float,
                                  leafId: Int)
 
 
@@ -206,14 +178,14 @@ private[gbm] object NodeData {
       case n: InternalNode =>
         val (leftNodeData, leftIdx) = createData(n.leftNode, id + 1)
         val (rightNodeData, rightIdx) = createData(n.rightNode, leftIdx + 1)
-        val thisNodeData = NodeData(id, n.featureId, n.isSeq, n.missingGo,
+        val thisNodeData = NodeData(id, n.colId, n.isSeq, n.missingGo,
           n.data, n.left, n.gain, leftNodeData.head.id, rightNodeData.head.id,
-          Double.NaN, -1)
+          Float.NaN, -1)
         (thisNodeData +: (leftNodeData ++ rightNodeData), rightIdx)
 
       case n: LeafNode =>
         (Seq(NodeData(id, -1, false, false, Array.emptyIntArray, false,
-          Double.NaN, -1, -1, n.weight, n.leafId)), id)
+          Float.NaN, -1, -1, n.weight, n.leafId)), id)
     }
   }
 
@@ -238,7 +210,7 @@ private[gbm] object NodeData {
       val node = if (n.leftNode != -1) {
         val leftChild = finalNodes(n.leftNode)
         val rightChild = finalNodes(n.rightNode)
-        new InternalNode(n.featureId, n.isSeq, n.missingGo, n.data, n.left, n.gain, leftChild, rightChild)
+        new InternalNode(n.colId, n.isSeq, n.missingGo, n.data, n.left, n.gain, leftChild, rightChild)
       } else {
         new LeafNode(n.weight, n.leafId)
       }

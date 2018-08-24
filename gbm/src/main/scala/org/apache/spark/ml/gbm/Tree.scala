@@ -2,167 +2,171 @@ package org.apache.spark.ml.gbm
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
-import scala.{specialized => spec}
+import scala.util.Random
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 
 
-private[gbm] object Tree extends Logging {
+private[gbm] object Tree extends Serializable with Logging {
 
-  /**
-    * Implementation of training a new tree
-    *
-    * @param data        instances containing (grad, hess, bins)
-    * @param boostConfig boosting configuration
-    * @param treeConfig  tree growing configuration
-    * @tparam H type of gradient and hessian
-    * @tparam C type of column index
-    * @tparam B type of bin
-    * @return a new tree if any
-    */
-  def train[H: Numeric : ClassTag : FromDouble, C: Integral : ClassTag, B: Integral : ClassTag](data: RDD[(H, H, GBMVector[C, B])],
-                                                                                                boostConfig: BoostConfig,
-                                                                                                treeConfig: TreeConfig): Option[TreeModel] = {
+  def train[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H], Array[H])],
+                           boostConf: BoostConfig,
+                           baseConf: BaseConfig)
+                          (implicit ct: ClassTag[T], int: Integral[T],
+                           cn: ClassTag[N], inn: Integral[N],
+                           cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                           cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                           ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = data.sparkContext
 
-    var nodeIds = sc.emptyRDD[Int]
-    val nodesCheckpointer = new Checkpointer[Int](sc,
-      boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
+    var nodeIds = sc.emptyRDD[Array[N]]
+    val nodesCheckpointer = new Checkpointer[Array[N]](sc,
+      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
 
-    var hists = sc.emptyRDD[((Int, C), Array[H])]
-    val histsCheckpointer = new Checkpointer[((Int, C), Array[H])](sc,
-      boostConfig.getCheckpointInterval, boostConfig.getStorageLevel)
+    var hists = sc.emptyRDD[((T, N, C), KVVector[B, H])]
+    val histsCheckpointer = new Checkpointer[((T, N, C), KVVector[B, H])](sc,
+      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
 
-    val logPrefix = s"Iter ${treeConfig.iteration}: Tree ${treeConfig.treeIndex}:"
-    logInfo(s"$logPrefix tree building start")
+    val logPrefix = s"Iter ${baseConf.iteration}:"
+    logInfo(s"$logPrefix trees building start")
 
-    val root = LearningNode.create(1)
+    val splitRNG = new Random(boostConf.getSeed)
 
-    val prevSplits = mutable.OpenHashMap.empty[Int, Split]
+    val prevSplits = mutable.OpenHashMap.empty[(T, N), Split]
 
-    var minNodeId = 1
-    var numLeaves = 1
-    var finished = false
+    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
+    val numLeaves = Array.fill(baseConf.numTrees)(1)
+    val finished = Array.fill(baseConf.numTrees)(false)
 
-    while (!finished) {
+    var minNodeId = inn.one
+    var depth = 0
+
+    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
       val start = System.nanoTime
 
-      val parallelism = boostConfig.getRealParallelism(sc.defaultParallelism)
+      logInfo(s"$logPrefix Depth $depth: splitting start")
 
-      val depth = root.subtreeDepth
-      logInfo(s"$logPrefix Depth $depth: splitting start, parallelism $parallelism")
-
-      if (minNodeId == 1) {
-        nodeIds = data.map(_ => 1)
+      if (inn.equiv(minNodeId, inn.one)) {
+        nodeIds = data.map { case (_, treeIds, _, _) => Array.fill(treeIds.length)(inn.one) }
       } else {
-        nodeIds = updateNodeIds[H, C, B](data, nodeIds, prevSplits.toMap)
+        nodeIds = updateNodeIds[T, N, C, B, H](data, nodeIds, prevSplits.toMap)
       }
       nodesCheckpointer.update(nodeIds)
 
-
-      if (minNodeId == 1) {
-        // direct compute the histogram of root node
-        hists = computeHistogram[H, C, B](data.zip(nodeIds), (n: Int) => true,
-          treeConfig.numCols, parallelism)
+      if (inn.equiv(minNodeId, inn.one)) {
+        // direct compute the histogram of roots
+        hists = computeHistograms[T, N, C, B, H](data.zip(nodeIds), boostConf, baseConf, (n: N) => true)
 
       } else {
         // compute the histogram of right leaves
-        val rightHists = computeHistogram[H, C, B](data.zip(nodeIds), (n: Int) => n >= minNodeId && n % 2 == 1,
-          treeConfig.numCols, parallelism)
+        val rightHists = computeHistograms[T, N, C, B, H](data.zip(nodeIds), boostConf, baseConf,
+          (n: N) => inn.gteq(n, minNodeId) && inn.equiv(inn.rem(n, inn.fromInt(2)), inn.one))
 
         // compute the histogram of both left leaves and right leaves by subtraction
-        hists = subtractHistogram[H, C](hists, rightHists, boostConfig.getMinNodeHess, parallelism)
+        hists = subtractHistograms[T, N, C, B, H](hists, rightHists, boostConf)
       }
       histsCheckpointer.update(hists)
 
+      prevSplits.clear()
+
       // find best splits
-      val splits = findSplits[H, C](hists, boostConfig, treeConfig,
-        boostConfig.getSeed + treeConfig.treeIndex + depth)
+      val splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, splitRNG.nextLong)
 
       if (splits.isEmpty) {
-        logInfo(s"$logPrefix Depth $depth: no more splits found, tree building finished")
-        finished = true
-
-      } else if (numLeaves + splits.size > boostConfig.getMaxLeaves) {
-        // choose splits with highest gain score
-        val r = boostConfig.getMaxLeaves - numLeaves
-        val bestSplits = splits.toArray.sortBy(_._2.gain).takeRight(r).toMap
-
-        logInfo(s"$logPrefix Depth $depth: splitting finished, ${bestSplits.size}/$numLeaves leaves split, " +
-          s"gain=${bestSplits.values.map(_.gain).sum}, duration ${(System.nanoTime - start) / 1e9} seconds")
-
-        // update tree only by best splits
-        updateTree(root, minNodeId, bestSplits)
-        finished = true
+        logInfo(s"$logPrefix Depth $depth: no more splits found, trees building finished")
+        Iterator.range(0, finished.length).foreach(finished(_) = true)
 
       } else {
-        logInfo(s"$logPrefix Depth $depth: splitting finished, ${splits.size}/$numLeaves leaves split, " +
-          s"gain=${splits.values.map(_.gain).sum}, duration ${(System.nanoTime - start) / 1e9} seconds")
 
-        numLeaves += splits.size
+        val splitsByTree = splits.toArray
+          .map { case ((treeId, nodeId), split) => (treeId, nodeId, split) }
+          .groupBy(_._1)
+          .mapValues(_.map(t => (t._2, t._3)))
 
-        // update tree
-        updateTree(root, minNodeId, splits)
+        var numFinished = 0
 
-        // update last splits
-        prevSplits.clear()
-        splits.foreach { case (nodeId, split) =>
-          prevSplits.update(nodeId, split)
+        Iterator.range(0, baseConf.numTrees)
+          .filterNot(finished).foreach { treeId =>
+          val array = splitsByTree.getOrElse(int.fromInt(treeId), Array.empty[(N, Split)])
+
+          if (array.isEmpty) {
+            finished(treeId) = true
+            numFinished += 1
+
+          } else {
+            val prevNumLeaves = numLeaves(treeId)
+            if (prevNumLeaves + array.length >= boostConf.getMaxLeaves) {
+              val r = boostConf.getMaxLeaves - prevNumLeaves
+              array.sortBy(_._2.gain).takeRight(r)
+                .foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
+              finished(treeId) = true
+              numFinished += 1
+
+            } else {
+              numLeaves(treeId) += array.length
+              array.foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
+            }
+          }
         }
+
+        updateTrees[T, N](roots, minNodeId, prevSplits.toMap)
+
+        logInfo(s"$logPrefix Depth $depth: splitting finished, $numFinished trees building finished," +
+          s" ${prevSplits.size} leaves split, total gain=${prevSplits.values.map(_.gain).sum}," +
+          s" duration ${(System.nanoTime - start) / 1e9} seconds")
       }
 
-      if (root.subtreeDepth >= boostConfig.getMaxDepth) {
-        logInfo(s"$logPrefix maxDepth=${boostConfig.getMaxDepth} reached, tree building finished")
-        finished = true
-      }
-      if (numLeaves >= boostConfig.getMaxLeaves) {
-        logInfo(s"$logPrefix maxLeaves=${boostConfig.getMaxLeaves} reached, tree building finished")
-        finished = true
-      }
-
-      minNodeId <<= 1
+      minNodeId = inn.plus(minNodeId, minNodeId)
+      depth += 1
     }
-    logInfo(s"$logPrefix tree building finished")
+
+    if (depth >= boostConf.getMaxDepth) {
+      logInfo(s"$logPrefix maxDepth=${boostConf.getMaxDepth} reached, trees building finished")
+    } else {
+      logInfo(s"$logPrefix trees building finished")
+    }
 
     nodesCheckpointer.deleteAllCheckpoints()
     nodesCheckpointer.unpersistDataSet()
     histsCheckpointer.deleteAllCheckpoints()
     histsCheckpointer.unpersistDataSet()
 
-    if (root.subtreeDepth > 0) {
-      Some(TreeModel.createModel(root, boostConfig, treeConfig))
-    } else {
-      None
-    }
+    roots.map(TreeModel.createModel)
   }
 
 
   /**
-    * update tree
+    * update trees
     *
-    * @param root      root of tree
+    * @param roots     roots of trees
     * @param minNodeId minimum nodeId for this level
     * @param splits    splits of leaves
     */
-  def updateTree(root: LearningNode,
-                 minNodeId: Int,
-                 splits: Map[Int, Split]): Unit = {
-    val nodes = root.nodeIterator.filter { node =>
-      node.nodeId >= minNodeId && splits.contains(node.nodeId)
-    }.toArray
+  def updateTrees[T, N](roots: Array[LearningNode],
+                        minNodeId: N,
+                        splits: Map[(T, N), Split])
+                       (implicit ct: ClassTag[T], int: Integral[T],
+                         cn: ClassTag[N], inn: Integral[N]): Unit = {
+    roots.zipWithIndex.foreach {
+      case (root, treeId) =>
+        val nodes = root.nodeIterator.filter { node =>
+          node.nodeId >= inn.toInt(minNodeId) &&
+            splits.contains((int.fromInt(treeId), inn.fromInt(node.nodeId)))
+        }.toArray
 
-    nodes.foreach { node =>
-      node.isLeaf = false
-      node.split = splits.get(node.nodeId)
+        nodes.foreach { node =>
+          node.isLeaf = false
+          node.split = splits.get((int.fromInt(treeId), inn.fromInt(node.nodeId)))
 
-      val leftId = node.nodeId << 1
-      node.leftNode = Some(LearningNode.create(leftId))
-      node.leftNode.get.prediction = node.split.get.leftWeight
+          val leftNodeId = node.nodeId << 1
+          node.leftNode = Some(LearningNode.create(leftNodeId))
+          node.leftNode.get.prediction = node.split.get.leftWeight
 
-      val rightId = leftId + 1
-      node.rightNode = Some(LearningNode.create(rightId))
-      node.rightNode.get.prediction = node.split.get.rightWeight
+          val rightNodeId = leftNodeId + 1
+          node.rightNode = Some(LearningNode.create(rightNodeId))
+          node.rightNode.get.prediction = node.split.get.rightWeight
+        }
     }
   }
 
@@ -170,30 +174,33 @@ private[gbm] object Tree extends Logging {
   /**
     * update nodeIds
     *
-    * @param data    instances containing (grad, hess, bins)
+    * @param data    instances containing (bins, treeIds, grad, hess)
     * @param nodeIds previous nodeIds
     * @param splits  splits found in the last round
-    * @tparam H
-    * @tparam C
-    * @tparam B
     * @return updated nodeIds
     */
-  def updateNodeIds[H: Numeric : ClassTag, C: Integral : ClassTag, B: Integral : ClassTag](data: RDD[(H, H, GBMVector[C, B])],
-                                                                                           nodeIds: RDD[Int],
-                                                                                           splits: Map[Int, Split]): RDD[Int] = {
-    data.zip(nodeIds).map {
-      case ((_, _, bins), nodeId) =>
-        val split = splits.get(nodeId)
+  def updateNodeIds[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H], Array[H])],
+                                   nodeIds: RDD[Array[N]],
+                                   splits: Map[(T, N), Split])
+                                  (implicit ct: ClassTag[T], int: Integral[T],
+                                   cn: ClassTag[N], inn: Integral[N],
+                                   cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                   cb: ClassTag[B], inb: Integral[B],
+                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[Array[N]] = {
+    data.zip(nodeIds).map { case ((bins, treeIds, _, _), nodeIds) =>
+      treeIds.zip(nodeIds).map { case (treeId, nodeId) =>
+        val split = splits.get((treeId, nodeId))
         if (split.nonEmpty) {
-          val leftNodeId = nodeId << 1
-          if (split.get.goLeft[C, B](bins)) {
+          val leftNodeId = inn.plus(nodeId, nodeId)
+          if (split.get.goLeft[B](bins.apply)) {
             leftNodeId
           } else {
-            leftNodeId + 1
+            inn.plus(leftNodeId, inn.one)
           }
         } else {
           nodeId
         }
+      }
     }
   }
 
@@ -201,114 +208,129 @@ private[gbm] object Tree extends Logging {
   /**
     * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
     *
-    * @param data        instances appended with nodeId, containing ((grad, hess, bins), nodeId)
-    * @param f           function to filter nodeIds
-    * @param numCols     number of columns
-    * @param parallelism parallelism
-    * @tparam H
-    * @tparam C
-    * @tparam B
-    * @return histogram data containing (nodeId, columnId, histogram)
+    * @param data instances appended with nodeId, containing ((grad, hess, bins), nodeId)
+    * @param f    function to filter nodeIds
+    * @return histogram data containing (treeId, nodeId, columnId, histogram)
     */
-  def computeHistogram[H: Numeric : ClassTag : FromDouble, C: Integral : ClassTag, B: Integral : ClassTag](data: RDD[((H, H, GBMVector[C, B]), Int)],
-                                                                                                           f: Int => Boolean,
-                                                                                                           numCols: Int,
-                                                                                                           parallelism: Int): RDD[((Int, C), Array[H])] = {
-    val numH = implicitly[Numeric[H]]
-    import numH._
+  def computeHistograms[T, N, C, B, H](data: RDD[((KVVector[C, B], Array[T], Array[H], Array[H]), Array[N])],
+                                       boostConf: BoostConfig,
+                                       baseConf: BaseConfig,
+                                       f: N => Boolean)
+                                      (implicit ct: ClassTag[T], int: Integral[T],
+                                       cn: ClassTag[N], inn: Integral[N],
+                                       cc: ClassTag[C], inc: Integral[C],
+                                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
+    val sc = data.sparkContext
+    val parallelism = boostConf.getRealParallelism(sc.defaultParallelism)
 
-    val intC = implicitly[Integral[C]]
+    import PairRDDFunctions._
 
-    val intB = implicitly[Integral[B]]
+    data.mapPartitions { iter =>
+      val histSums = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
-    data.filter(t => f(t._2))
-      .mapPartitions { it =>
+      iter.flatMap { case ((bins, treeIds, gradSeq, hessSeq), nodeIds) =>
+        nodeIds.toIterator.zipWithIndex
+          .filter { case (nodeId, _) => f(nodeId) }
+          .flatMap { case (nodeId, i) =>
+            val treeId = treeIds(i)
+            val grad = gradSeq(i)
+            val hess = hessSeq(i)
 
-        val histSums = mutable.OpenHashMap.empty[Int, (H, H)]
+            val (g, h) = histSums.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
+            histSums.update((treeId, nodeId), (nuh.plus(g, grad), nuh.plus(h, hess)))
 
-        it.flatMap { case ((grad, hess, bins), nodeId) =>
+            val selector = baseConf.getSelector(int.toInt(treeId))
 
-          val (g, h) = histSums.getOrElse(nodeId, (zero, zero))
-          histSums.update(nodeId, (g + grad, h + hess))
-
-          // ignore zero-index bins
-          bins.activeIter.map { case (col, bin) =>
-            ((nodeId, col), (bin, grad, hess))
+            // ignore zero-index bins
+            bins.activeIter
+              .filter { case (colId, _) => selector.contains(colId) }
+              .map { case (colId, bin) => ((treeId, nodeId, colId), (bin, grad, hess)) }
           }
 
-        } ++
-          histSums.iterator.flatMap { case (nodeId, (gradSum, hessSum)) =>
-            // make sure all (nodeId, col) pairs are taken into account
-            // by the way, store sum of hist in zero-index bin
-            Iterator.range(0, numCols).map { c =>
-              ((nodeId, intC.fromInt(c)), (intB.zero, gradSum, hessSum))
-            }
+      } ++ histSums.iterator.flatMap { case ((treeId, nodeId), (gradSum, hessSum)) =>
+        val selector = baseConf.getSelector(int.toInt(treeId))
+
+        // make sure all available (treeId, nodeId, colId) tuples are taken into account
+        // by the way, store sum of hist in zero-index bin
+        Iterator.range(0, boostConf.getNumCols).filter(selector.contains)
+          .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, gradSum, hessSum)) }
+      }
+
+    }.aggregatePartitionsByKey(KVVector.empty[B, H])(
+      seqOp = {
+        case (hist, (bin, grad, hess)) =>
+          val indexGrad = inb.plus(bin, bin)
+          val indexHess = inb.plus(indexGrad, inb.one)
+          hist.plus(indexHess, hess)
+            .plus(indexGrad, grad)
+      },
+      combOp = _ plus _
+
+    ).mapValues { hist =>
+      var negNNZGradSum = nuh.zero
+      var negNNZHessSum = nuh.zero
+
+      hist.activeIter.foreach { case (bin, v) =>
+        if (inb.gt(bin, inb.one)) {
+          if (inb.equiv(inb.rem(bin, inb.fromInt(2)), inb.zero)) {
+            negNNZGradSum = nuh.minus(negNNZGradSum, v)
+          } else {
+            negNNZHessSum = nuh.minus(negNNZHessSum, v)
           }
+        }
+      }
 
-      }.aggregateByKey[Array[H]](Array.empty[H], parallelism)(
-      seqOp = updateHistArray[H, B],
-      combOp = mergeHistArray[H]
+      hist.plus(inb.zero, negNNZGradSum)
+        .plus(inb.one, negNNZHessSum)
+        .compress
 
-    ).map { case ((nodeId, col), hist) =>
-      ((nodeId, col), adjustHistArray[H](hist))
-    }
+    }.reduceByKey(_ plus _, parallelism)
   }
 
 
   /**
     * Histogram subtraction
     *
-    * @param nodeHists   histogram data of parent nodes
-    * @param rightHists  histogram data of right leaves
-    * @param minNodeHess minimum hess needed for a node
-    * @param parallelism parallelism
-    * @tparam H
-    * @tparam C
+    * @param nodeHists  histogram data of parent nodes
+    * @param rightHists histogram data of right leaves
     * @return histogram data of both left and right leaves
     */
-  def subtractHistogram[H: Numeric : ClassTag, C: Integral : ClassTag](nodeHists: RDD[((Int, C), Array[H])],
-                                                                       rightHists: RDD[((Int, C), Array[H])],
-                                                                       minNodeHess: Double,
-                                                                       parallelism: Int): RDD[((Int, C), Array[H])] = {
-    val numH = implicitly[Numeric[H]]
-    import numH._
+  def subtractHistograms[T, N, C, B, H](nodeHists: RDD[((T, N, C), KVVector[B, H])],
+                                        rightHists: RDD[((T, N, C), KVVector[B, H])],
+                                        boostConf: BoostConfig)
+                                       (implicit ct: ClassTag[T], int: Integral[T],
+                                        cn: ClassTag[N], inn: Integral[N],
+                                        cc: ClassTag[C], inc: Integral[C],
+                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
+    val sc = nodeHists.sparkContext
+    val parallelism = boostConf.getRealParallelism(sc.defaultParallelism)
 
-    rightHists.map { case ((rightNodeId, col), hist) =>
-      val parentNodeId = rightNodeId >> 1
-      ((parentNodeId, col), hist)
+    val threshold = neh.fromFloat(boostConf.getMinNodeHess.toFloat * 2)
+
+    rightHists.map { case ((treeId, rightNodeId, colId), parentHist) =>
+      val parentNodeId = inn.quot(rightNodeId, inn.fromInt(2))
+      ((treeId, parentNodeId, colId), parentHist)
 
     }.join(nodeHists, parallelism)
 
-      .flatMap { case ((nodeId, col), (rightHist, nodeHist)) =>
-        require(rightHist.length <= nodeHist.length)
+      .flatMap { case ((treeId, parentNodeId, colId), (rightHist, parentHist)) =>
+        require(rightHist.len <= parentHist.len)
+        val leftNodeId = inn.plus(parentNodeId, parentNodeId)
+        val rightNodeId = inn.plus(leftNodeId, inn.one)
+        val leftHist = parentHist.minus(rightHist)
 
-        var i = 0
-        while (i < rightHist.length) {
-          nodeHist(i) -= rightHist(i)
-          i += 1
-        }
+        ((treeId, leftNodeId, colId), leftHist) ::
+          ((treeId, rightNodeId, colId), rightHist) :: Nil
 
-        val leftNodeId = nodeId << 1
-        val rightNodeId = leftNodeId + 1
-
-        ((leftNodeId, col), nodeHist) ::
-          ((rightNodeId, col), rightHist) :: Nil
-
-      }.filter { case ((_, _), hist) =>
-
-      var hessSum = 0.0
-      var nnz = 0
-      var i = 0
-      while (i < hist.length) {
-        if (hist(i) != zero || hist(i + 1) != zero) {
-          hessSum += hist(i + 1).toDouble
-          nnz += 1
-        }
-        i += 2
-      }
-
+      }.filter { case (_, hist) =>
       // leaves with hess less than minNodeHess * 2 can not grow furthermore
-      nnz >= 2 && hessSum >= minNodeHess * 2
+      val hessSum = hist.activeIter.filter { case (b, _) =>
+        inb.equiv(inb.rem(b, inb.fromInt(2)), inb.one)
+      }.map(_._2).sum
+
+      nuh.gteq(hessSum, threshold) && hist.nnz > 2
     }
   }
 
@@ -316,202 +338,66 @@ private[gbm] object Tree extends Logging {
   /**
     * Search the optimal splits on each leaves
     *
-    * @param nodeHists   histogram data of leaves nodes
-    * @param boostConfig boosting configuration
-    * @param treeConfig  tree growing configuration
-    * @param seed        random seed for column sampling by level
-    * @tparam H
-    * @tparam C
+    * @param nodeHists histogram data of leaves nodes
+    * @param seed      random seed for column sampling by level
     * @return optimal splits for each node
     */
-  def findSplits[H: Numeric : ClassTag, C: Integral : ClassTag](nodeHists: RDD[((Int, C), Array[H])],
-                                                                boostConfig: BoostConfig,
-                                                                treeConfig: TreeConfig,
-                                                                seed: Long): Map[Int, Split] = {
-    val intC = implicitly[Integral[C]]
-
+  def findSplits[T, N, C, B, H](nodeHists: RDD[((T, N, C), KVVector[B, H])],
+                                boostConf: BoostConfig,
+                                baseConf: BaseConfig,
+                                seed: Long)
+                               (implicit ct: ClassTag[T], int: Integral[T],
+                                cn: ClassTag[N], inn: Integral[N],
+                                cc: ClassTag[C], inc: Integral[C],
+                                cb: ClassTag[B], inb: Integral[B],
+                                ch: ClassTag[H], nuh: Numeric[H], fdh: NumericExt[H]): Map[(T, N), Split] = {
     val sc = nodeHists.sparkContext
     val accTrials = sc.longAccumulator("NumTrials")
     val accSplits = sc.longAccumulator("NumSplits")
+    val accNNZ = sc.longAccumulator("NNZ")
 
     // column sampling by level
-    val sampled = if (boostConfig.getColSampleByLevel == 1) {
+    val sampled = if (boostConf.getColSampleByLevel == 1) {
       nodeHists
     } else {
-      nodeHists.sample(false, boostConfig.getColSampleByLevel, seed)
+      nodeHists.sample(false, boostConf.getColSampleByLevel, seed)
     }
 
-    val splits = sampled.mapPartitions { it =>
-      val splits = mutable.OpenHashMap.empty[Int, Split]
-
-      it.foreach { case ((nodeId, col), hist) =>
+    val splits = sampled.mapPartitions { iter =>
+      val splits = mutable.OpenHashMap.empty[(T, N), Split]
+      iter.foreach { case ((treeId, nodeId, colId), hist) =>
         accTrials.add(1L)
-
-        val split = Split.split[H](intC.toInt(col), hist, boostConfig, treeConfig)
+        accNNZ.add(hist.nnz)
+        val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
         if (split.nonEmpty) {
           accSplits.add(1L)
-
-          val s = splits.get(nodeId)
-          if (s.isEmpty || s.get.gain < split.get.gain) {
-            splits.update(nodeId, split.get)
+          val prevSplit = splits.get((treeId, nodeId))
+          if (prevSplit.isEmpty || prevSplit.get.gain < split.get.gain) {
+            splits.update((treeId, nodeId), split.get)
           }
         }
       }
-
       Iterator.single(splits.toArray)
 
     }.treeReduce(f = {
       case (splits1, splits2) =>
         (splits1 ++ splits2).groupBy(_._1)
-          .map { case (nodeId, s) =>
-            (nodeId, s.map(_._2).maxBy(_.gain))
-          }.toArray
-    }, depth = boostConfig.getAggregationDepth).toMap
+          .mapValues(_.map(_._2).maxBy(_.gain)).toArray
+    }, boostConf.getAggregationDepth)
+      .toMap
 
-    logInfo(s"${accTrials.value} trials -> ${accSplits.value} splits -> ${splits.size} best splits")
+    val numTrials = accTrials.value
+    val numSplits = accSplits.value
+    val numNNZ = accNNZ.value
+
+    logInfo(s"$numTrials trials -> $numSplits splits -> ${splits.size} best splits")
+    logInfo(s"Sparsity of histogram: ${1 - numNNZ.toDouble / numTrials / boostConf.getNumCols}")
     splits
   }
-
-
-  def updateHistArray[H: Numeric : ClassTag, B: Integral : ClassTag](hist: Array[H],
-                                                                     point: (B, H, H)): Array[H] = {
-    val numH = implicitly[Numeric[H]]
-    import numH._
-
-    val intB = implicitly[Integral[B]]
-
-    val (bin, grad, hess) = point
-
-    val index = intB.toInt(bin) << 1
-
-    if (hist.length < index + 2) {
-      val newHist = hist ++ Array.fill(index + 2 - hist.length)(zero)
-      newHist(index) = grad
-      newHist(index + 1) = hess
-      newHist
-    } else {
-      hist(index) += grad
-      hist(index + 1) += hess
-      hist
-    }
-  }
-
-
-  def mergeHistArray[H: Numeric : ClassTag](hist1: Array[H],
-                                            hist2: Array[H]): Array[H] = {
-    val numH = implicitly[Numeric[H]]
-    import numH._
-
-    var i = 0
-    if (hist1.length >= hist2.length) {
-      while (i < hist2.length) {
-        hist1(i) += hist2(i)
-        i += 1
-      }
-      hist1
-    } else {
-      while (i < hist1.length) {
-        hist2(i) += hist1(i)
-        i += 1
-      }
-      hist2
-    }
-  }
-
-
-  def adjustHistArray[H: Numeric : ClassTag](hist: Array[H]): Array[H] = {
-    val numH = implicitly[Numeric[H]]
-    import numH._
-
-    var i = 2
-    while (i < hist.length) {
-      // zero-index bin stores the sum of hist
-      hist(0) -= hist(i)
-      hist(1) -= hist(i + 1)
-      i += 2
-    }
-
-    hist
-  }
 }
 
 
-class TreeModel(val root: Node) extends Serializable {
-
-  lazy val depth: Int = root.subtreeDepth
-
-  lazy val numLeaves: Int = root.numLeaves
-
-  lazy val numNodes: Int = root.numDescendants
-
-  private[gbm] def predict[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Double = root.predict[B](bins)
-
-  private[gbm] def predict[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Double = root.predict[C, B](bins)
-
-  private[gbm] def index[@spec(Byte, Short, Int) B: Integral](bins: Array[B]): Int = root.index[B](bins)
-
-  private[gbm] def index[@spec(Byte, Short, Int) C: Integral, @spec(Byte, Short, Int) B: Integral](bins: GBMVector[C, B]): Int = root.index[C, B](bins)
-
-  def computeImportance: Map[Int, Double] = {
-    val gains = mutable.OpenHashMap.empty[Int, Double]
-
-    root.nodeIterator.foreach {
-      case n: InternalNode =>
-        val g = gains.getOrElse(n.featureId, 0.0)
-        gains.update(n.featureId, g + n.gain)
-
-      case _ =>
-    }
-
-    gains.toMap
-  }
-}
 
 
-private[gbm] object TreeModel {
-
-  def createModel(root: LearningNode,
-                  boostMeta: BoostConfig,
-                  treeMeta: TreeConfig): TreeModel = {
-    val leafIds = root.nodeIterator.filter(_.isLeaf)
-      .map(_.nodeId).toArray.sorted
-    val node = TreeModel.createNode(root, treeMeta.columns, leafIds)
-    new TreeModel(node)
-  }
 
 
-  def createNode(node: LearningNode,
-                 columns: Array[Int],
-                 leafIds: Array[Int]): Node = {
-
-    if (node.isLeaf) {
-      require(node.leftNode.isEmpty &&
-        node.rightNode.isEmpty &&
-        node.split.isEmpty)
-
-      val leafId = leafIds.indexOf(node.nodeId)
-      new LeafNode(node.prediction, leafId)
-
-    } else {
-      require(node.split.nonEmpty &&
-        node.leftNode.nonEmpty && node.rightNode.nonEmpty)
-
-      val reindex = columns(node.split.get.featureId)
-
-      node.split.get match {
-        case SeqSplit(_, missingGo, threshold, left, gain, _) =>
-          new InternalNode(reindex, true, missingGo,
-            Array(threshold), left, gain,
-            createNode(node.leftNode.get, columns, leafIds),
-            createNode(node.rightNode.get, columns, leafIds))
-
-
-        case SetSplit(_, missingGo, set, left, gain, _) =>
-          new InternalNode(reindex, false, missingGo,
-            set, left, gain,
-            createNode(node.leftNode.get, columns, leafIds),
-            createNode(node.rightNode.get, columns, leafIds))
-      }
-    }
-  }
-}

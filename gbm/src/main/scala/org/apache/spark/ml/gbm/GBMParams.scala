@@ -49,7 +49,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * Maximum number of bins used for discretizing continuous features and for choosing how to split
     * on features at each node.  More bins give higher granularity.
     * Must be >= 4 and >= number of categories in any categorical feature.
-    * (default = 128)
+    * (default = 64)
     *
     * @group param
     */
@@ -60,7 +60,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   def getMaxBins: Int = $(maxBins)
 
-  setDefault(maxBins -> 128)
+  setDefault(maxBins -> 64)
 
   /**
     * Maximum number of leaves of the tree (>= 2).
@@ -97,12 +97,13 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val baseScore: DoubleParam =
-    new DoubleParam(this, "baseScore", "Global bias, the initial prediction score of all instances.")
+  final val baseScore: DoubleArrayParam =
+    new DoubleArrayParam(this, "baseScore", "Global bias, the initial prediction score of all instances.",
+      (baseScore: Array[Double]) => baseScore.forall(v => !v.isNaN && !v.isInfinity))
 
-  def getBaseScore: Double = $(baseScore)
+  def getBaseScore: Array[Double] = $(baseScore)
 
-  setDefault(baseScore -> 0.0)
+  setDefault(baseScore -> Array.emptyDoubleArray)
 
 
   /**

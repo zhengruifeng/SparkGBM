@@ -31,7 +31,6 @@ object GBMClassifierExample {
 
     val gbmc = new GBMClassifier
     gbmc.setBoostType("gbtree")
-      .setBaseScore(0.0)
       .setStepSize(0.2)
       .setMaxIter(10)
       .setMaxDepth(5)
@@ -49,6 +48,7 @@ object GBMClassifierExample {
       .setEarlyStopIters(5)
       .setModelCheckpointInterval(4)
       .setModelCheckpointPath(modelCheckpointPath)
+      .setZeroAsMissing(true)
 
     /** train with validation */
     val model = gbmc.fit(train, test)

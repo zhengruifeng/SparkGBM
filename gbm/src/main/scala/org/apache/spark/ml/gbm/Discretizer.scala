@@ -24,12 +24,11 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
                   val zeroAsMissing: Boolean,
                   val sparsity: Double) extends Serializable {
 
-  def transform[@spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): Array[B] = {
+  def transform[@spec(Byte, Short, Int) B](vec: Vector)
+                                          (implicit cb: ClassTag[B], inb: Integral[B]): Array[B] = {
     require(vec.size == numCols)
 
-    val intB = implicitly[Integral[B]]
-
-    val bins = Array.fill(numCols)(intB.zero)
+    val bins = Array.fill(numCols)(inb.zero)
 
     val iter = if (zeroAsMissing) {
       Utils.getActiveIter(vec)
@@ -39,16 +38,18 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
 
     iter.foreach { case (i, v) =>
       val bin = discretizeWithIndex(v, i)
-      bins(i) = intB.fromInt(bin)
+      bins(i) = inb.fromInt(bin)
     }
 
     bins
   }
 
 
-  private[gbm] def transformToGBMVector[@spec(Byte, Short, Int) F: Integral : ClassTag, @spec(Byte, Short, Int) B: Integral : ClassTag](vec: Vector): GBMVector[F, B] = {
+  private[gbm] def transformToGBMVector[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B](vec: Vector)
+                                                                                             (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                                                              cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): KVVector[C, B] = {
     val array = transform[B](vec)
-    GBMVector.dense[F, B](array).compress
+    KVVector.dense[C, B](array).compress
   }
 
 
@@ -459,9 +460,9 @@ private[gbm] class QuantileNumColAgg(val maxBins: Int) extends ColAgg {
 
 private[gbm] object QuantileNumColAgg {
 
-  val compressThreshold = QuantileSummaries.defaultCompressThreshold
+  val compressThreshold: Int = QuantileSummaries.defaultCompressThreshold
 
-  val relativeError = QuantileSummaries.defaultRelativeError
+  val relativeError: Double = QuantileSummaries.defaultRelativeError
 
   def createSummary = new QuantileSummaries(compressThreshold, relativeError)
 

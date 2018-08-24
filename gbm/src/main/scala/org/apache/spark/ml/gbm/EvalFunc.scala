@@ -1,12 +1,19 @@
 package org.apache.spark.ml.gbm
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 
 /**
   * trait for evaluation function to compute the metric
   */
-private[ml] trait EvalFunc extends Logging with Serializable {
+trait EvalFunc extends Serializable {
+
+  /**
+    * compute the metric in a batch fashion, MUST NOT change the storage level of input data
+    *
+    * @param data scored dataset containing (weight, label, raw, score)
+    * @return the metric value
+    */
+  def compute(data: RDD[(Double, Array[Double], Array[Double], Array[Double])]): Double
 
   def isLargerBetter: Boolean
 
@@ -14,30 +21,34 @@ private[ml] trait EvalFunc extends Logging with Serializable {
 }
 
 
-/**
-  * trait for batch evaluation function
-  */
-trait BatchEvalFunc extends EvalFunc {
+trait ScalarEvalFunc extends EvalFunc {
 
-  /**
-    * compute the metric in a batch fashion, MUST NOT change the storage level of input data
-    *
-    * @param data scored dataset containing (weight, label, score)
-    * @return the metric value
-    */
-  def compute(data: RDD[(Double, Double, Double)]): Double
+  def computeImpl(data: RDD[(Double, Double, Double, Double)]): Double
+
+  final override def compute(data: RDD[(Double, Array[Double], Array[Double], Array[Double])]): Double = {
+    val scalarData = data.map { case (weight, label, raw, score) =>
+      require(label.length == 1 && raw.length == 1 && score.length == 1)
+      (weight, label.head, raw.head, score.head)
+    }
+    computeImpl(scalarData)
+  }
 }
+
 
 /**
   * trait for incremental (aggregation) evaluation function
   */
-trait IncrementalEvalFunc extends EvalFunc {
+trait IncEvalFunc extends EvalFunc {
+
+  final override def compute(data: RDD[(Double, Array[Double], Array[Double], Array[Double])]): Double = {
+    IncEvalFunc.compute(data, Array(this), 2).head._2
+  }
 
   /** update the internal statistics aggregator */
-  def update(weight: Double, label: Double, score: Double): Unit
+  def update(weight: Double, label: Array[Double], raw: Array[Double], score: Array[Double]): Unit
 
   /** merge the internal aggregators */
-  def merge(other: IncrementalEvalFunc): Unit
+  def merge(other: IncEvalFunc): Unit
 
   /** compute the final metric value */
   def getValue: Double
@@ -47,18 +58,27 @@ trait IncrementalEvalFunc extends EvalFunc {
 }
 
 
-private[gbm] object IncrementalEvalFunc {
+trait ScalarIncEvalFunc extends IncEvalFunc {
 
-  def compute(data: RDD[(Double, Double, Double)],
-              evals: Array[IncrementalEvalFunc],
+  def update(weight: Double, label: Double, raw: Double, score: Double): Unit
+
+  final override def update(weight: Double, label: Array[Double], raw: Array[Double], score: Array[Double]): Unit = {
+    require(label.length == 1 && raw.length == 1 && score.length == 1)
+    update(weight, label.head, raw.head, score.head)
+  }
+}
+
+
+private[gbm] object IncEvalFunc {
+  def compute(data: RDD[(Double, Array[Double], Array[Double], Array[Double])],
+              evals: Array[IncEvalFunc],
               depth: Int): Map[String, Double] = {
-
     evals.foreach(_.init)
 
-    data.treeAggregate[Array[IncrementalEvalFunc]](evals)(
+    data.treeAggregate[Array[IncEvalFunc]](evals)(
       seqOp = {
-        case (evals, (weight, label, score)) =>
-          evals.foreach(eval => eval.update(weight, label, score))
+        case (evals, (weight, label, rawScore, score)) =>
+          evals.foreach(eval => eval.update(weight, label, rawScore, score))
           evals
       }, combOp = {
         case (evals1, evals2) =>
@@ -78,7 +98,7 @@ private[gbm] object IncrementalEvalFunc {
 /**
   * trait for simple element-wise evaluation function
   */
-trait SimpleEvalFunc extends IncrementalEvalFunc {
+trait SimpleEvalFunc extends ScalarIncEvalFunc {
 
   protected var count = 0.0
   protected var avg = 0.0
@@ -86,7 +106,7 @@ trait SimpleEvalFunc extends IncrementalEvalFunc {
   /** compute the metric on each instance */
   def compute(label: Double, score: Double): Double
 
-  override def update(weight: Double, label: Double, score: Double): Unit = {
+  override def update(weight: Double, label: Double, rawScore: Double, score: Double): Unit = {
     if (weight > 0) {
       count += weight
       val diff = compute(label, score) - avg
@@ -94,7 +114,7 @@ trait SimpleEvalFunc extends IncrementalEvalFunc {
     }
   }
 
-  override def merge(other: IncrementalEvalFunc): Unit = {
+  override def merge(other: IncEvalFunc): Unit = {
     val o = other.asInstanceOf[SimpleEvalFunc]
     if (o.count > 0) {
       count += o.count
@@ -163,7 +183,7 @@ class MAEEval extends SimpleEvalFunc {
 /**
   * R2 score
   */
-class R2Eval extends IncrementalEvalFunc {
+class R2Eval extends ScalarIncEvalFunc {
 
   protected var count = 0.0
   private var avgLabel = 0.0
@@ -171,7 +191,7 @@ class R2Eval extends IncrementalEvalFunc {
   private var avgError2 = 0.0
 
   /** update the internal statistics aggregator */
-  override def update(weight: Double, label: Double, score: Double): Unit = {
+  override def update(weight: Double, label: Double, rawScore: Double, score: Double): Unit = {
     if (weight > 0) {
       count += weight
 
@@ -187,7 +207,7 @@ class R2Eval extends IncrementalEvalFunc {
   }
 
   /** merge the internal aggregators */
-  override def merge(other: IncrementalEvalFunc): Unit = {
+  override def merge(other: IncEvalFunc): Unit = {
     val o = other.asInstanceOf[R2Eval]
     if (o.count > 0) {
       count += o.count
@@ -283,7 +303,7 @@ class ErrorEval(val threshold: Double) extends SimpleEvalFunc {
   *
   * @param numBins number of bins for approximate computation
   */
-class AUCEval(val numBins: Int) extends IncrementalEvalFunc {
+class AUCEval(val numBins: Int) extends ScalarIncEvalFunc {
   require(numBins >= 16)
 
   def this() = this(1 << 16)
@@ -291,7 +311,7 @@ class AUCEval(val numBins: Int) extends IncrementalEvalFunc {
   private val histPos = Array.ofDim[Double](numBins)
   private val histNeg = Array.ofDim[Double](numBins)
 
-  override def update(weight: Double, label: Double, score: Double): Unit = {
+  override def update(weight: Double, label: Double, rawScore: Double, score: Double): Unit = {
     require(label == 0 || label == 1)
 
     // probability of positive class
@@ -306,7 +326,7 @@ class AUCEval(val numBins: Int) extends IncrementalEvalFunc {
     }
   }
 
-  override def merge(other: IncrementalEvalFunc): Unit = {
+  override def merge(other: IncEvalFunc): Unit = {
     val o = other.asInstanceOf[AUCEval]
     require(numBins == o.numBins)
     var i = 0

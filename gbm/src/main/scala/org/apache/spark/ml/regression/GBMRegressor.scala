@@ -43,18 +43,6 @@ trait GBMRegressionParams extends GBMParams {
   def getEvaluateFunc: Array[String] = $(evaluateFunc)
 
   setDefault(evaluateFunc -> Array(GBMRegressor.RMSEEval, GBMRegressor.MSEEval, GBMRegressor.MAEEval, GBMRegressor.R2Eval))
-
-  /**
-    * Delta in huber loss for robust regression
-    * (default = 1.35)
-    */
-  final val huberDelta: DoubleParam =
-    new DoubleParam(this, "huberDelta", "Delta in huber loss for robust regression",
-      ParamValidators.gt(1.0))
-
-  def getHuberDelta: Double = $(huberDelta)
-
-  setDefault(huberDelta -> 1.35)
 }
 
 
@@ -63,8 +51,6 @@ class GBMRegressor(override val uid: String) extends
   with GBMRegressionParams with DefaultParamsWritable with Logging {
 
   def this() = this(Identifiable.randomUID("gbmr"))
-
-  def setHuberDelta(value: Double): this.type = set(huberDelta, value)
 
   def setLeafCol(value: String): this.type = set(leafCol, value)
 
@@ -86,7 +72,7 @@ class GBMRegressor(override val uid: String) extends
 
   def setMaxLeaves(value: Int): this.type = set(maxLeaves, value)
 
-  def setBaseScore(value: Double): this.type = set(baseScore, value)
+  def setBaseScore(value: Array[Double]): this.type = set(baseScore, value)
 
   def setMinNodeHess(value: Double): this.type = set(minNodeHess, value)
 
@@ -157,58 +143,35 @@ class GBMRegressor(override val uid: String) extends
 
   private[ml] def fit(dataset: Dataset[_],
                       testDataset: Option[Dataset[_]]): GBMRegressionModel = {
-    require($(maxDrop) >= $(minDrop))
-
     transformSchema(dataset.schema, logging = true)
+
+    require($(maxDrop) >= $(minDrop))
 
     val instr = Instrumentation.create(this, dataset)
     instr.logParams(params: _*)
 
-    val w = if (isDefined(weightCol) && $(weightCol).nonEmpty) {
-      col($(weightCol)).cast(DoubleType)
-    } else {
-      lit(1.0)
-    }
-
-    val data = dataset.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol)))
-      .rdd.map { row =>
-      (row.getDouble(0), row.getDouble(1), row.getAs[Vector](2))
-    }
-
-    val test = testDataset.map { data =>
-      data.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol)))
-        .rdd.map { row =>
-        (row.getDouble(0), row.getDouble(1), row.getAs[Vector](2))
-      }
-    }
-
     val objFunc: ObjFunc =
       $(objectiveFunc) match {
-        case GBMRegressor.SquareObj =>
-          new SquareObj
-        case GBMRegressor.HuberObj =>
-          new HuberObj($(huberDelta))
+        case GBMRegressor.SquareObj => new SquareObj
       }
 
     val evalFunc: Array[EvalFunc] =
       $(evaluateFunc).map {
-        case GBMRegressor.MAEEval =>
-          new MAEEval
-        case GBMRegressor.MSEEval =>
-          new MSEEval
-        case GBMRegressor.RMSEEval =>
-          new RMSEEval
-        case GBMRegressor.R2Eval =>
-          new R2Eval
-      }.map(_.asInstanceOf[EvalFunc])
+        case GBMRegressor.MAEEval => new MAEEval
+        case GBMRegressor.MSEEval => new MSEEval
+        case GBMRegressor.RMSEEval => new RMSEEval
+        case GBMRegressor.R2Eval => new R2Eval
+      }
 
     val callBackFunc = mutable.ArrayBuffer.empty[CallbackFunc]
     if ($(earlyStopIters) >= 1) {
       callBackFunc.append(new EarlyStop($(earlyStopIters)))
     }
+
     if ($(modelCheckpointInterval) >= 1 && $(modelCheckpointPath).nonEmpty) {
       val mockModel = copyValues(new GBMRegressionModel(uid, null).setParent(this))
-      callBackFunc.append(new RegressionModelCheckpoint($(modelCheckpointInterval), $(modelCheckpointPath), mockModel))
+      callBackFunc.append(
+        new RegressionModelCheckpoint($(modelCheckpointInterval), $(modelCheckpointPath), mockModel))
     }
 
     val initialModel =
@@ -223,6 +186,20 @@ class GBMRegressor(override val uid: String) extends
         None
       }
 
+    val w = if (isDefined(weightCol) && $(weightCol).nonEmpty) {
+      col($(weightCol)).cast(DoubleType)
+    } else {
+      lit(1.0)
+    }
+
+    val baseScore_ = if ($(baseScore).nonEmpty) {
+      require($(baseScore).length == 1)
+      $(baseScore)
+    } else {
+      val average = dataset.select(avg(col($(labelCol)) * w)).first.getDouble(0)
+      Array(average)
+    }
+
     val gbm = new GBM
     gbm.setMaxIter($(maxIter))
       .setMaxDepth($(maxDepth))
@@ -230,12 +207,12 @@ class GBMRegressor(override val uid: String) extends
       .setMaxBins($(maxBins))
       .setMinGain($(minGain))
       .setMinNodeHess($(minNodeHess))
-      .setBaseScore($(baseScore))
+      .setBaseScore(baseScore_)
       .setStepSize($(stepSize))
       .setRegAlpha($(regAlpha))
       .setRegLambda($(regLambda))
-      .setObjectiveFunc(objFunc)
-      .setEvaluateFunc(evalFunc)
+      .setObjFunc(objFunc)
+      .setEvalFunc(evalFunc)
       .setCallbackFunc(callBackFunc.toArray)
       .setCatCols($(catCols).toSet)
       .setRankCols($(rankCols).toSet)
@@ -258,6 +235,16 @@ class GBMRegressor(override val uid: String) extends
       .setEnableSamplePartitions($(enableSamplePartitions))
       .setInitialModel(initialModel)
 
+
+
+    val data = dataset.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol))).rdd
+      .map { row => (row.getDouble(0), Array(row.getDouble(1)), row.getAs[Vector](2)) }
+
+    val test = testDataset.map { data =>
+      data.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol))).rdd
+        .map { row => (row.getDouble(0), Array(row.getDouble(1)), row.getAs[Vector](2)) }
+    }
+
     val gbmModel = gbm.fit(data, test)
 
     val model = new GBMRegressionModel(uid, gbmModel)
@@ -278,11 +265,8 @@ object GBMRegressor extends DefaultParamsReadable[GBMRegressor] {
   /** String name for SquareObj */
   private[regression] val SquareObj: String = "square"
 
-  /** String name for HuberObj */
-  private[regression] val HuberObj: String = "huber"
-
   /** Set of objective functions that GBMRegressor supports */
-  private[regression] val supportedObjs = Set(SquareObj, HuberObj)
+  private[regression] val supportedObjs = Set(SquareObj)
 
   /** String name for RMSEEval */
   private[regression] val RMSEEval: String = "rmse"
@@ -334,7 +318,7 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
   }
 
   override def predict(features: Vector): Double = {
-    model.predict(features, $(firstTrees))
+    model.predict(features, $(firstTrees))(0)
   }
 
   def featureImportances: Vector = {
@@ -354,7 +338,7 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
 
   def leaf(dataset: Dataset[_]): DataFrame = {
     if ($(leafCol).nonEmpty) {
-      val leafUDF = udf { (features: Any) =>
+      val leafUDF = udf { features: Any =>
         leaf(features.asInstanceOf[Vector])
       }
       dataset.withColumn($(leafCol), leafUDF(col($(featuresCol))))

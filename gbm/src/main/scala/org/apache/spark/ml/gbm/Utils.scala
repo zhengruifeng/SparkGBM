@@ -1,11 +1,8 @@
 package org.apache.spark.ml.gbm
 
-import java.{util => ju}
-
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.reflect.{ClassTag, classTag}
 import scala.util.{Failure, Success}
 
 import org.apache.hadoop.fs.Path
@@ -16,6 +13,41 @@ import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.unsafe.hash.Murmur3_x86_32
+
+
+trait ColumSelector extends Serializable {
+  def contains[C](index: C)
+                 (implicit inc: Integral[C]): Boolean
+
+  override def equals(other: Any): Boolean = {
+    (this, other) match {
+      case (HashSelector(m1, s1), HashSelector(m2, s2)) =>
+        m1 == m2 && s1 == s2
+
+      case _ => false
+    }
+  }
+}
+
+case class TotalSelector() extends ColumSelector {
+  override def contains[C](index: C)
+                          (implicit inc: Integral[C]): Boolean = true
+
+  override def toString: String = "TotalSelector"
+}
+
+case class HashSelector(maximum: Int,
+                        seed: Int) extends ColumSelector {
+  require(maximum >= 0)
+
+  override def contains[C](index: C)
+                          (implicit inc: Integral[C]): Boolean = {
+    Murmur3_x86_32.hashLong(inc.toLong(index), seed).abs < maximum
+  }
+
+  override def toString: String = s"HashSelector(maximum: $maximum, seed: $seed)"
+}
 
 
 /**
@@ -83,7 +115,8 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     updateCount += 1
 
     // Handle checkpointing (after persisting)
-    if (checkpointInterval != -1 && (updateCount % checkpointInterval) == 0
+    if (checkpointInterval != -1 &&
+      (updateCount % checkpointInterval) == 0
       && sc.getCheckpointDir.nonEmpty) {
       // Add new checkpoint before removing old checkpoints.
       checkpoint(data)
@@ -169,9 +202,9 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
 private[gbm] object Utils extends Logging {
 
   def getTypeByRange(value: Int): String = {
-    if (value <= Byte.MaxValue) {
+    if (value < Byte.MaxValue) {
       "Byte"
-    } else if (value <= Short.MaxValue) {
+    } else if (value < Short.MaxValue) {
       "Short"
     } else {
       "Int"
@@ -233,33 +266,6 @@ private[gbm] object Utils extends Logging {
 
 
   /**
-    * helper function to obtain a binary search function
-    */
-  def makeBinarySearch[K: Ordering : ClassTag]: (Array[K], K) => Int = {
-    // For primitive keys, we can use the natural ordering. Otherwise, use the Ordering comparator.
-    classTag[K] match {
-      case ClassTag.Float =>
-        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Float]], x.asInstanceOf[Float])
-      case ClassTag.Double =>
-        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Double]], x.asInstanceOf[Double])
-      case ClassTag.Byte =>
-        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Byte]], x.asInstanceOf[Byte])
-      case ClassTag.Char =>
-        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Char]], x.asInstanceOf[Char])
-      case ClassTag.Short =>
-        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Short]], x.asInstanceOf[Short])
-      case ClassTag.Int =>
-        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Int]], x.asInstanceOf[Int])
-      case ClassTag.Long =>
-        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[Long]], x.asInstanceOf[Long])
-      case _ =>
-        val comparator = implicitly[Ordering[K]].asInstanceOf[java.util.Comparator[Any]]
-        (l, x) => ju.Arrays.binarySearch(l.asInstanceOf[Array[AnyRef]], x, comparator)
-    }
-  }
-
-
-  /**
     * helper function to save dataframes
     */
   def saveDataFrames(dataframes: Array[DataFrame],
@@ -292,7 +298,7 @@ private[gbm] object Utils extends Logging {
       sc.getConf.registerKryoClasses(Array(
 
         classOf[BoostConfig],
-        classOf[TreeConfig],
+        classOf[BaseConfig],
 
         classOf[ColDiscretizer],
         classOf[Array[ColDiscretizer]],
@@ -321,35 +327,35 @@ private[gbm] object Utils extends Logging {
         classOf[TreeModel],
         classOf[GBMModel],
 
-        classOf[GBMVector[Byte, Byte]],
-        classOf[GBMVector[Byte, Short]],
-        classOf[GBMVector[Byte, Int]],
-        classOf[GBMVector[Short, Byte]],
-        classOf[GBMVector[Short, Short]],
-        classOf[GBMVector[Short, Int]],
-        classOf[GBMVector[Int, Byte]],
-        classOf[GBMVector[Int, Short]],
-        classOf[GBMVector[Int, Int]],
+        classOf[KVVector[Byte, Byte]],
+        classOf[KVVector[Byte, Short]],
+        classOf[KVVector[Byte, Int]],
+        classOf[KVVector[Short, Byte]],
+        classOf[KVVector[Short, Short]],
+        classOf[KVVector[Short, Int]],
+        classOf[KVVector[Int, Byte]],
+        classOf[KVVector[Int, Short]],
+        classOf[KVVector[Int, Int]],
 
-        classOf[DenseGBMVector[Byte, Byte]],
-        classOf[DenseGBMVector[Byte, Short]],
-        classOf[DenseGBMVector[Byte, Int]],
-        classOf[DenseGBMVector[Short, Byte]],
-        classOf[DenseGBMVector[Short, Short]],
-        classOf[DenseGBMVector[Short, Int]],
-        classOf[DenseGBMVector[Int, Byte]],
-        classOf[DenseGBMVector[Int, Short]],
-        classOf[DenseGBMVector[Int, Int]],
+        classOf[DenseKVVector[Byte, Byte]],
+        classOf[DenseKVVector[Byte, Short]],
+        classOf[DenseKVVector[Byte, Int]],
+        classOf[DenseKVVector[Short, Byte]],
+        classOf[DenseKVVector[Short, Short]],
+        classOf[DenseKVVector[Short, Int]],
+        classOf[DenseKVVector[Int, Byte]],
+        classOf[DenseKVVector[Int, Short]],
+        classOf[DenseKVVector[Int, Int]],
 
-        classOf[DenseGBMVector[Byte, Byte]],
-        classOf[DenseGBMVector[Byte, Short]],
-        classOf[DenseGBMVector[Byte, Int]],
-        classOf[DenseGBMVector[Short, Byte]],
-        classOf[DenseGBMVector[Short, Short]],
-        classOf[DenseGBMVector[Short, Int]],
-        classOf[DenseGBMVector[Int, Byte]],
-        classOf[DenseGBMVector[Int, Short]],
-        classOf[DenseGBMVector[Int, Int]]))
+        classOf[DenseKVVector[Byte, Byte]],
+        classOf[DenseKVVector[Byte, Short]],
+        classOf[DenseKVVector[Byte, Int]],
+        classOf[DenseKVVector[Short, Byte]],
+        classOf[DenseKVVector[Short, Short]],
+        classOf[DenseKVVector[Short, Int]],
+        classOf[DenseKVVector[Int, Byte]],
+        classOf[DenseKVVector[Int, Short]],
+        classOf[DenseKVVector[Int, Int]]))
 
       kryoRegistered = true
     }

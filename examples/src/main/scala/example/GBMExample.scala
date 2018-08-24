@@ -25,29 +25,35 @@ object GBMExample {
       .load("data/housing_scale")
       .select("label", "features")
       .rdd.map { row =>
-      (1.0, row.getDouble(0), row.getAs[Vector](1))
+      (1.0, Array(row.getDouble(0)), row.getAs[Vector](1))
     }
+
+    val (sum, count) = rdd.map(t => (t._2.head, 1L))
+      .treeReduce(f = {
+        case ((sum1, count1), (sum2, count2)) => (sum1 + sum2, count1 + count2)
+      })
+    val avg = sum / count
 
     val Array(train, test) = rdd.randomSplit(Array(0.8, 0.2), seed = 123456)
 
     /** User defined objective function */
-    val obj = new ObjFunc {
-      override def compute(label: Double,
-                           score: Double): (Double, Double) = (score - label, 1.0)
+    val obj = new ScalarObjFunc {
+      override def compute(label: Double, score: Double): (Double, Double) = (score - label, 1.0)
 
       override def name: String = "Another Square"
     }
 
     /** User defined evaluation function for R2 */
-    val r2Eval = new BatchEvalFunc {
-      override def compute(data: RDD[(Double, Double, Double)]): Double = {
-        /** ignore weight */
-        new RegressionMetrics(data.map(t => (t._3, t._2))).r2
-      }
-
+    val r2Eval = new ScalarEvalFunc {
       override def isLargerBetter: Boolean = true
 
       override def name: String = "R2 (no weight)"
+
+      // (weight, label, raw, score)
+      override def computeImpl(data: RDD[(Double, Double, Double, Double)]): Double = {
+        /** ignore weight */
+        new RegressionMetrics(data.map(t => (t._4, t._2))).r2
+      }
     }
 
     /** User defined evaluation function for MAE */
@@ -91,16 +97,17 @@ object GBMExample {
       .setStepSize(0.2)
       .setMinNodeHess(1e-2)
       .setNumericalBinType("depth")
-      .setObjectiveFunc(obj)
-      .setEvaluateFunc(Array(r2Eval, maeEval, new R2Eval))
+      .setObjFunc(obj)
+      .setEvalFunc(Array(r2Eval, maeEval, new R2Eval))
       .setCallbackFunc(Array(lrUpdater, recoder))
+      .setBaseScore(Array(avg))
+      .setBaseModelParallelism(3)
 
     /** train with validation */
     val model = gbm.fit(train, test)
 
-    recoder.testMetricsRecoder.zipWithIndex.foreach { case (metrics, iter) =>
-      println(s"iter $iter, test metrics $metrics")
-    }
+    recoder.testMetricsRecoder.zipWithIndex
+      .foreach { case (metrics, iter) => println(s"iter $iter, test metrics $metrics") }
 
     /** model save and load */
     val path = s"/tmp/SparkGBM/model-${System.currentTimeMillis}"
@@ -112,14 +119,14 @@ object GBMExample {
     /** label and score */
     val trainResult = train.map {
       case (_, label, features) =>
-        (label, model.predict(features))
+        (label.head, model.predict(features).head)
     }
     val trainR2 = new RegressionMetrics(trainResult).r2
     println(s"R2 on train data $trainR2")
 
     val testResult = test.map {
       case (_, label, features) =>
-        (label, model.predict(features))
+        (label.head, model.predict(features).head)
     }
     val testR2 = new RegressionMetrics(testResult).r2
     println(s"R2 on test data $testR2")

@@ -353,8 +353,6 @@ private[gbm] object Tree extends Serializable with Logging {
                                 cb: ClassTag[B], inb: Integral[B],
                                 ch: ClassTag[H], nuh: Numeric[H], fdh: NumericExt[H]): Map[(T, N), Split] = {
     val sc = nodeHists.sparkContext
-    val accNZ = sc.doubleAccumulator("NZ")
-    val accSplit = sc.longAccumulator("Split")
 
     // column sampling by level
     val sampled = if (boostConf.getColSampleByLevel == 1) {
@@ -363,32 +361,40 @@ private[gbm] object Tree extends Serializable with Logging {
       nodeHists.sample(false, boostConf.getColSampleByLevel, seed)
     }
 
-    val splits = sampled.mapPartitions { iter =>
-      val splits = mutable.OpenHashMap.empty[(T, N), Split]
-      iter.foreach { case ((treeId, nodeId, colId), hist) =>
-        accNZ.add(hist.nnz.toDouble / hist.len)
-        val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
-        if (split.nonEmpty) {
-          accSplit.add(1L)
-          val prevSplit = splits.get((treeId, nodeId))
-          if (prevSplit.isEmpty || prevSplit.get.gain < split.get.gain) {
-            splits.update((treeId, nodeId), split.get)
+    val (splits, numTrials, numSplits, nz) =
+      sampled.mapPartitions { iter =>
+        val splits = mutable.OpenHashMap.empty[(T, N), Split]
+        var trialCnt = 0L
+        var splitCnt = 0L
+        var nzAvg = 0.0
+
+        iter.foreach { case ((treeId, nodeId, colId), hist) =>
+          trialCnt += 1
+          nzAvg += (hist.nnz.toDouble / hist.len - nzAvg) / trialCnt
+          val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
+          if (split.nonEmpty) {
+            splitCnt += 1
+            val prevSplit = splits.get((treeId, nodeId))
+            if (prevSplit.isEmpty || prevSplit.get.gain < split.get.gain) {
+              splits.update((treeId, nodeId), split.get)
+            }
           }
         }
-      }
-      Iterator.single(splits.toArray)
+        Iterator.single((splits.toArray, trialCnt, splitCnt, nzAvg))
 
-    }.treeReduce(f = {
-      case (splits1, splits2) =>
-        (splits1 ++ splits2).groupBy(_._1)
-          .mapValues(_.map(_._2).maxBy(_.gain)).toArray
-    }, boostConf.getAggregationDepth)
-      .toMap
+      }.treeReduce(f = {
+        case ((splits1, histCnt1, splitCnt1, nzAvg1), (splits2, histCnt2, splitCnt2, nzAvg2)) =>
+          val splits = (splits1 ++ splits2).groupBy(_._1)
+            .mapValues(_.map(_._2).maxBy(_.gain)).toArray
+          val nzAvg = nzAvg1 + (nzAvg2 - nzAvg1) * histCnt2 / (histCnt1 + histCnt2)
+          (splits, histCnt1 + histCnt2, splitCnt1 + splitCnt2, nzAvg)
+      }, boostConf.getAggregationDepth)
 
-    logInfo(s"${accNZ.count} trials -> ${accSplit.value} splits -> ${splits.size} best splits")
-    logInfo(s"Sparsity of histogram: ${1 - accNZ.avg}")
 
-    splits
+    logInfo(s"$numTrials trials -> $numSplits splits -> ${splits.length} best splits")
+    logInfo(s"Sparsity of histogram: ${1 - nz}")
+
+    splits.toMap
   }
 }
 

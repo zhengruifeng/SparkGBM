@@ -28,7 +28,7 @@ private[gbm] object Tree extends Serializable with Logging {
     val histsCheckpointer = new Checkpointer[((T, N, C), KVVector[B, H])](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
 
-    val logPrefix = s"Iter ${baseConf.iteration}:"
+    val logPrefix = s"Iteration ${baseConf.iteration}:"
     logInfo(s"$logPrefix trees building start")
 
     val splitRNG = new Random(boostConf.getSeed)
@@ -361,17 +361,25 @@ private[gbm] object Tree extends Serializable with Logging {
       nodeHists.sample(false, boostConf.getColSampleByLevel, seed)
     }
 
-    val (splits, numTrials, numSplits, nz) =
+    val (splits, numTrials, numSplits, numDenses, nz) =
       sampled.mapPartitions { iter =>
         val splits = mutable.OpenHashMap.empty[(T, N), Split]
         var trialCnt = 0L
         var splitCnt = 0L
+        var denseCnt = 0L
         var nzAvg = 0.0
 
         iter.foreach { case ((treeId, nodeId, colId), hist) =>
           trialCnt += 1
+
+          if (hist.isDense) {
+            denseCnt += 1
+          }
+
           nzAvg += (hist.nnz.toDouble / hist.len - nzAvg) / trialCnt
+
           val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
+
           if (split.nonEmpty) {
             splitCnt += 1
             val prevSplit = splits.get((treeId, nodeId))
@@ -380,19 +388,19 @@ private[gbm] object Tree extends Serializable with Logging {
             }
           }
         }
-        Iterator.single((splits.toArray, trialCnt, splitCnt, nzAvg))
+        Iterator.single((splits.toArray, trialCnt, splitCnt, denseCnt, nzAvg))
 
       }.treeReduce(f = {
-        case ((splits1, histCnt1, splitCnt1, nzAvg1), (splits2, histCnt2, splitCnt2, nzAvg2)) =>
+        case ((splits1, histCnt1, splitCnt1, denseCnt1, nzAvg1), (splits2, histCnt2, splitCnt2, denseCnt2, nzAvg2)) =>
           val splits = (splits1 ++ splits2).groupBy(_._1)
             .mapValues(_.map(_._2).maxBy(_.gain)).toArray
           val nzAvg = nzAvg1 + (nzAvg2 - nzAvg1) * histCnt2 / (histCnt1 + histCnt2)
-          (splits, histCnt1 + histCnt2, splitCnt1 + splitCnt2, nzAvg)
+          (splits, histCnt1 + histCnt2, splitCnt1 + splitCnt2, denseCnt1 + denseCnt2, nzAvg)
       }, boostConf.getAggregationDepth)
 
 
     logInfo(s"$numTrials trials -> $numSplits splits -> ${splits.length} best splits")
-    logInfo(s"Sparsity of histogram: ${1 - nz}")
+    logInfo(s"Share of sparse histograms: ${1 - numDenses.toDouble / numTrials}, sparsity of histogram: ${1 - nz}")
 
     splits.toMap
   }

@@ -29,6 +29,8 @@ class GBMModel(val obj: ObjFunc,
   /** feature importance of whole trees */
   lazy val importance: Vector = computeImportance(numTrees)
 
+  lazy val baseScore: Array[Double] = obj.transform(rawBase)
+
   def numCols: Int = discretizer.colDiscretizers.length
 
   def numTrees: Int = trees.length

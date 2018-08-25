@@ -403,10 +403,11 @@ class GBM extends Logging with Serializable {
 
     val validation = test.nonEmpty
 
-    val discretizer = if (initialModel.isDefined) {
-      require(numCols == initialModel.get.discretizer.colDiscretizers.length)
-      logWarning(s"Discretizer is already provided by the initial model, related params" +
-        s" (maxBins,catCols,rankCols,numericalBinType) will be ignored")
+    val discretizer = if (initialModel.nonEmpty) {
+      val initDiscretizer = initialModel.get.discretizer
+      require(numCols == initialModel.get.discretizer.numCols)
+      logWarning(s"Discretizer is already provided in the initial model, related params are ignored: " +
+        s"maxBins,catCols,rankCols,numericalBinType,zeroAsMissing")
       initialModel.get.discretizer
 
     } else {
@@ -417,30 +418,41 @@ class GBM extends Logging with Serializable {
       Discretizer.fit(data.map(_._3), numCols, boostConf.getCatCols, boostConf.getRankCols,
         maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
     }
-    logInfo(s"Bins: ${discretizer.numBins.mkString(",")}")
-    logInfo(s"Maximum bins: ${discretizer.numBins.max}")
-    logInfo(s"Average bins: ${discretizer.numBins.sum.toDouble / discretizer.numBins.length}")
+    logInfo(s"Bins: ${discretizer.numBins.mkString(",")}, " +
+      s"Min: ${discretizer.numBins.min}, Max: ${discretizer.numBins.max}, " +
+      s"Avg: ${discretizer.numBins.sum.toDouble / discretizer.numCols}")
     logInfo(s"Sparsity of train data: ${discretizer.sparsity}")
 
 
-    if (boostConf.getBaseScore.isEmpty) {
-      val (weight, sum) = data.map { case (weight, label, _) =>
-        (weight, label.map(_ * weight))
+    if (initialModel.nonEmpty) {
+      val baseScore_ = initialModel.get.baseScore
+      logWarning(s"BaseScore is already provided in the initial model, related param is overridden: " +
+        s"${boostConf.getBaseScore.mkString(",")} -> ${baseScore_.mkString(",")}")
+      boostConf.setBaseScore(baseScore_)
+
+    } else if (boostConf.getBaseScore.isEmpty) {
+
+      val (_, avgLabel) = data.map { case (weight, label, _) =>
+        (weight, label)
       }.treeReduce(f = {
-        case ((weight1, sum1), (weight2, sum2)) =>
-          require(sum1.length == sum2.length)
-          Iterator.range(0, sum1.length).foreach(i => sum1(i) += sum2(i))
-          (weight1 + weight2, sum1)
+        case ((w1, avg1), (w2, avg2)) =>
+          require(avg1.length == avg2.length)
+          val w = w1 + w2
+          avg1.indices.foreach { i => avg1(i) += (avg2(i) - avg1(i)) * w2 / w }
+          (w, avg1)
       }, depth = boostConf.getAggregationDepth)
 
-      boostConf.setBaseScore(sum.map(_ / weight))
+      logInfo(s"Basescore is not provided, assign it to average label value " +
+        s"${boostConf.getBaseScore.mkString(",")}")
+      boostConf.setBaseScore(avgLabel)
     }
 
+    val rawBase = boostConf.computeRawBaseScore
+    logInfo(s"base score vector: ${boostConf.getBaseScore.mkString(",")}, raw base vector: ${rawBase.mkString(",")}")
 
     boostConf
       .setNumCols(numCols)
-      .setRawSize(boostConf.computeRawBaseScore.length)
-    logInfo(s"Raw base vector: ${boostConf.computeRawBaseScore.mkString(",")}")
+      .setRawSize(rawBase.length)
 
     GBM.boost(data, test.getOrElse(sc.emptyRDD), boostConf, validation, discretizer, initialModel)
   }
@@ -473,24 +485,24 @@ private[gbm] object GBM extends Logging {
 
     boostConf.getFloatType match {
       case SinglePrecision =>
-        boostWithFloatType[Double](data, test, boostConf, validation, discretizer, initialModel)
+        boost1[Double](data, test, boostConf, validation, discretizer, initialModel)
 
       case DoublePrecision =>
-        boostWithFloatType[Double](data, test, boostConf, validation, discretizer, initialModel)
+        boost1[Double](data, test, boostConf, validation, discretizer, initialModel)
     }
   }
 
 
   /**
-    * train a GBM model, with the given type of bins and column indices, dataset contains (weight, label, vec)
+    * train a GBM model, dataset contains (weight, label, vec)
     */
-  def boostWithFloatType[H](data: RDD[(Double, Array[Double], Vector)],
-                            test: RDD[(Double, Array[Double], Vector)],
-                            boostConf: BoostConfig,
-                            validation: Boolean,
-                            discretizer: Discretizer,
-                            initialModel: Option[GBMModel])
-                           (implicit ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
+  def boost1[H](data: RDD[(Double, Array[Double], Vector)],
+                test: RDD[(Double, Array[Double], Vector)],
+                boostConf: BoostConfig,
+                validation: Boolean,
+                discretizer: Discretizer,
+                initialModel: Option[GBMModel])
+               (implicit ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
     logInfo(s"DataType of RealValue: ${boostConf.getFloatType.capitalize}")
 
     val data2 = data.map { case (weight, label, vec) =>
@@ -510,47 +522,47 @@ private[gbm] object GBM extends Logging {
 
     (columnIndexType, binType) match {
       case ("Byte", "Byte") =>
-        boostWithBinType[Byte, Byte, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Byte, Byte, H](data2, test2, boostConf, validation, discretizer, initialModel)
 
       case ("Byte", "Short") =>
-        boostWithBinType[Byte, Short, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Byte, Short, H](data2, test2, boostConf, validation, discretizer, initialModel)
 
       case ("Byte", "Int") =>
-        boostWithBinType[Byte, Int, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Byte, Int, H](data2, test2, boostConf, validation, discretizer, initialModel)
 
       case ("Short", "Byte") =>
-        boostWithBinType[Short, Byte, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Short, Byte, H](data2, test2, boostConf, validation, discretizer, initialModel)
 
       case ("Short", "Short") =>
-        boostWithBinType[Short, Short, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Short, Short, H](data2, test2, boostConf, validation, discretizer, initialModel)
 
       case ("Short", "Int") =>
-        boostWithBinType[Short, Int, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Short, Int, H](data2, test2, boostConf, validation, discretizer, initialModel)
 
       case ("Int", "Byte") =>
-        boostWithBinType[Int, Byte, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Int, Byte, H](data2, test2, boostConf, validation, discretizer, initialModel)
 
       case ("Int", "Short") =>
-        boostWithBinType[Int, Short, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Int, Short, H](data2, test2, boostConf, validation, discretizer, initialModel)
 
       case ("Int", "Int") =>
-        boostWithBinType[Int, Int, H](data2, test2, boostConf, validation, discretizer, initialModel)
+        boost2[Int, Int, H](data2, test2, boostConf, validation, discretizer, initialModel)
     }
   }
 
 
   /**
-    * train a GBM model, with the given type of bins and column indices, dataset contains (weight, label, vec)
+    * train a GBM model, dataset contains (weight, label, vec)
     */
-  def boostWithBinType[C, B, H](data: RDD[(H, Array[H], Vector)],
-                                test: RDD[(H, Array[H], Vector)],
-                                boostConf: BoostConfig,
-                                validation: Boolean,
-                                discretizer: Discretizer,
-                                initialModel: Option[GBMModel])
-                               (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
+  def boost2[C, B, H](data: RDD[(H, Array[H], Vector)],
+                      test: RDD[(H, Array[H], Vector)],
+                      boostConf: BoostConfig,
+                      validation: Boolean,
+                      discretizer: Discretizer,
+                      initialModel: Option[GBMModel])
+                     (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
     val binData = data.map { case (weight, label, vec) =>
       (weight, label, discretizer.transformToGBMVector[C, B](vec))
     }
@@ -597,28 +609,28 @@ private[gbm] object GBM extends Logging {
       logInfo(s"${test.count} instances in test data")
     }
 
-    val weightBuff = mutable.ArrayBuffer.empty[H]
-    val treeBuff = mutable.ArrayBuffer.empty[TreeModel]
-
+    val weightsBuff = mutable.ArrayBuffer.empty[H]
+    val treesBuff = mutable.ArrayBuffer.empty[TreeModel]
     if (initialModel.isDefined) {
-      weightBuff.appendAll(initialModel.get.weights.map(w => neh.fromDouble(w)))
-      treeBuff.appendAll(initialModel.get.trees)
+      weightsBuff.appendAll(initialModel.get.weights.map(w => neh.fromDouble(w)))
+      treesBuff.appendAll(initialModel.get.trees)
     }
 
+
+    // raw scores and checkpointers
+    var trainRawScores = computeRawScores[C, B, H](data, treesBuff.toArray, weightsBuff.toArray, boostConf)
     val trainRawScoresCheckpointer = new Checkpointer[(Array[H], Array[H])](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
-
-    var trainRawScores = computeRawScores[C, B, H](data, treeBuff.toArray, weightBuff.toArray, boostConf)
     trainRawScoresCheckpointer.update(trainRawScores)
 
+    var testRawScores = sc.emptyRDD[(Array[H], Array[H])]
     val testRawScoresCheckpointer = new Checkpointer[(Array[H], Array[H])](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
-
-    var testRawScores = sc.emptyRDD[(Array[H], Array[H])]
     if (validation && boostConf.getEvalFunc.nonEmpty) {
-      testRawScores = computeRawScores[C, B, H](test, treeBuff.toArray, weightBuff.toArray, boostConf)
+      testRawScores = computeRawScores[C, B, H](test, treesBuff.toArray, weightsBuff.toArray, boostConf)
       testRawScoresCheckpointer.update(testRawScores)
     }
+
 
     // metrics history recoder
     val trainMetricsHistory = mutable.ArrayBuffer.empty[Map[String, Double]]
@@ -633,8 +645,8 @@ private[gbm] object GBM extends Logging {
     var finished = false
 
     while (!finished && iter < boostConf.getMaxIter) {
-      val numTrees = treeBuff.length
-      val logPrefix = s"Iteration $iter: Tree $numTrees:"
+      val numTrees = treesBuff.length
+      val logPrefix = s"Iteration $iter:"
 
       // drop out
       if (boostConf.getBoostType == Dart) {
@@ -650,7 +662,7 @@ private[gbm] object GBM extends Logging {
       // build trees
       logInfo(s"$logPrefix start")
       val start = System.nanoTime
-      val trees = buildTrees[C, B, H](data, trainRawScores, weightBuff.toArray, boostConf, iter, dropped.toSet)
+      val trees = buildTrees[C, B, H](data, trainRawScores, weightsBuff.toArray, boostConf, iter, dropped.toSet)
       logInfo(s"$logPrefix finish, duration: ${(System.nanoTime - start) / 1e9} sec")
 
       if (trees.forall(_.isEmpty)) {
@@ -660,13 +672,13 @@ private[gbm] object GBM extends Logging {
 
       } else {
         // update base model buffer
-        updateTreeBuffer(weightBuff, treeBuff, trees, dropped.toSet, boostConf)
+        updateTreeBuffer(weightsBuff, treesBuff, trees, dropped.toSet, boostConf)
 
         // whether to keep the weights of previous trees
         val keepWeights = boostConf.getBoostType != Dart || dropped.isEmpty
 
         // update train data predictions
-        trainRawScores = updateRawScores[C, B, H](data, trainRawScores, trees, weightBuff.toArray, boostConf, keepWeights)
+        trainRawScores = updateRawScores[C, B, H](data, trainRawScores, trees, weightsBuff.toArray, boostConf, keepWeights)
         trainRawScoresCheckpointer.update(trainRawScores)
 
 
@@ -684,7 +696,7 @@ private[gbm] object GBM extends Logging {
 
         if (validation && boostConf.getEvalFunc.nonEmpty) {
           // update test data predictions
-          testRawScores = updateRawScores[C, B, H](test, testRawScores, trees, weightBuff.toArray, boostConf, keepWeights)
+          testRawScores = updateRawScores[C, B, H](test, testRawScores, trees, weightsBuff.toArray, boostConf, keepWeights)
           testRawScoresCheckpointer.update(testRawScores)
 
           // evaluate on test data
@@ -696,9 +708,8 @@ private[gbm] object GBM extends Logging {
         // callback
         if (boostConf.getCallbackFunc.nonEmpty) {
           // using cloning to avoid model modification
-          val snapshot = new GBMModel(boostConf.getObjFunc,
-            new Discretizer(discretizer.colDiscretizers.clone(), discretizer.zeroAsMissing, discretizer.sparsity),
-            rawBase.clone(), treeBuff.toArray.clone(), weightBuff.toArray.map(nuh.toDouble).clone())
+          val snapshot = new GBMModel(boostConf.getObjFunc, discretizer.clone(),
+            rawBase.clone(), treesBuff.toArray.clone(), weightsBuff.toArray.map(nuh.toDouble).clone())
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
@@ -711,6 +722,7 @@ private[gbm] object GBM extends Logging {
         }
       }
 
+      logInfo(s"$logPrefix finished, ${treesBuff.length} trees")
       iter += 1
     }
 
@@ -729,7 +741,7 @@ private[gbm] object GBM extends Logging {
     }
 
     new GBMModel(boostConf.getObjFunc, discretizer, rawBase.clone(),
-      treeBuff.toArray, weightBuff.toArray.map(nuh.toDouble))
+      treesBuff.toArray, weightsBuff.toArray.map(nuh.toDouble))
   }
 
 
@@ -824,31 +836,31 @@ private[gbm] object GBM extends Logging {
 
     (treeIdType, nodeIdType) match {
       case ("Byte", "Byte") =>
-        buildTreesImpl[Byte, Byte, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Byte, Byte, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
 
       case ("Byte", "Short") =>
-        buildTreesImpl[Byte, Short, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Byte, Short, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
 
       case ("Byte", "Int") =>
-        buildTreesImpl[Byte, Int, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Byte, Int, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
 
       case ("Short", "Byte") =>
-        buildTreesImpl[Short, Byte, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Short, Byte, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
 
       case ("Short", "Short") =>
-        buildTreesImpl[Short, Short, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Short, Short, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
 
       case ("Short", "Int") =>
-        buildTreesImpl[Short, Int, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Short, Int, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
 
       case ("Int", "Byte") =>
-        buildTreesImpl[Int, Byte, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Int, Byte, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
 
       case ("Int", "Short") =>
-        buildTreesImpl[Int, Short, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Int, Short, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
 
       case ("Int", "Int") =>
-        buildTreesImpl[Int, Int, C, B, H](instances, rawScores, weights, boostConfig, iteration, numTrees, dropped)
+        buildTreesImpl[Int, Int, C, B, H](instances, rawScores, weights, boostConfig, iteration, dropped)
     }
   }
 
@@ -861,7 +873,6 @@ private[gbm] object GBM extends Logging {
     * @param weights     weights of trees
     * @param boostConfig boosting configuration
     * @param iteration   current iteration
-    * @param numTrees    current number of trees
     * @param dropped     indices of trees which are selected to drop during building of current tree
     * @return new trees
     */
@@ -870,7 +881,6 @@ private[gbm] object GBM extends Logging {
                                     weights: Array[H],
                                     boostConfig: BoostConfig,
                                     iteration: Int,
-                                    numTrees: Int,
                                     dropped: Set[Int])
                                    (implicit ct: ClassTag[T], int: Integral[T],
                                     cn: ClassTag[N], inn: Integral[N],
@@ -879,8 +889,8 @@ private[gbm] object GBM extends Logging {
                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     import nuh._
 
-    val numBaseModels = numTrees / boostConfig.getRawSize
-    require(numTrees % boostConfig.getRawSize == 0)
+    val numBaseModels = boostConfig.getBaseModelParallelism
+    val numTrees = numBaseModels * boostConfig.getRawSize
 
     val rawBase = boostConfig.computeRawBaseScore.map(neh.fromDouble)
 
@@ -966,12 +976,6 @@ private[gbm] object GBM extends Logging {
 
     val data = instances.zip(gradients)
       .map { case ((_, _, bins), (treeIds, gradSeq, hessSeq)) => (bins, treeIds, gradSeq, hessSeq) }
-
-//    instances.zip(gradients).zip(rawScores).collect().foreach { case (((weight, label, bins), (treeIds, gradSeq, hessSeq)), (rawSum, rawSeq)) =>
-//      val raw = computeRaw(rawSum, rawSeq).map(nuh.toDouble)
-//      val str = s"Iter: $iteration, weight: $weight, label: ${label.mkString(",")}, raw: ${raw.mkString(",")}, bins: $bins, treeIds: ${treeIds.mkString(",")}, grad: ${gradSeq.mkString(",")}, hess: ${hessSeq.mkString(",")}"
-//      logInfo(str)
-//    }
 
     val trees = Tree.train[T, N, C, B, H](data, boostConfig, baseConfig)
     gradients.unpersist(false)

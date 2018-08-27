@@ -112,69 +112,75 @@ Besides all the functions in DataFrame-based APIs, RDD-based APIs also support u
 
     import org.apache.spark.ml.gbm._
     
-    // User defined objective function
-    val obj = new ObjFunc {
-      override def compute(label: Double,
-                           score: Double): (Double, Double) = (score - label, 1.0)
-      override def name: String = "Another Square"
-    }
-
-    // User defined evaluation function for R2
-    val r2Eval = new BatchEvalFunc {
-      override def compute(data: RDD[(Double, Double, Double)]): Double = {
-        // ignore weight
-        new RegressionMetrics(data.map(t => (t._3, t._2))).r2
+     /** User defined objective function */
+      val obj = new ScalarObjFunc {
+          override def compute(label: Double, score: Double): (Double, Double) = (score - label, 1.0)
+    
+          override def name: String = "Another Square"
       }
+    
+       /** User defined evaluation function for R2 */
+       val r2Eval = new ScalarEvalFunc {
+          override def isLargerBetter: Boolean = true
+    
+          override def name: String = "R2 (no weight)"
+    
+          // (weight, label, raw, score)
+          override def computeImpl(data: RDD[(Double, Double, Double, Double)]): Double = {
+            /** ignore weight */
+            new RegressionMetrics(data.map(t => (t._4, t._2))).r2
+          }
+       }
+    
+       /** User defined evaluation function for MAE */
+       val maeEval = new SimpleEvalFunc {
+          override def compute(label: Double,
+                               score: Double): Double = (label - score).abs
+    
+          override def isLargerBetter: Boolean = false
+    
+          override def name: String = "Another MAE"
+       }
+    
+       /** User defined callback function */
+       val lrUpdater = new CallbackFunc {
+          override def compute(spark: SparkSession,
+                               boostConfig: BoostConfig,
+                               model: GBMModel,
+                               trainMetrics: Array[Map[String, Double]],
+                               testMetrics: Array[Map[String, Double]]): Boolean = {
+           /** learning rate decay */
+           if (boostConfig.getStepSize > 0.01) {
+              boostConfig.updateStepSize(boostConfig.getStepSize * 0.95)
+           }
+    
+           println(s"Round ${model.numTrees}: train metrics: ${trainMetrics.last}")
+           if (testMetrics.nonEmpty) {
+              println(s"Round ${model.numTrees}: test metrics: ${testMetrics.last}")
+           }
+           false
+          }
+    
+          override def name: String = "Learning Rate Updater"
+       }
+    
+       val recoder = new MetricRecoder
+    
+       val gbm = new GBM
+       gbm.setMaxIter(15)
+          .setMaxDepth(5)
+          .setStepSize(0.2)
+          .setMinNodeHess(1e-2)
+          .setNumericalBinType("depth")
+          .setObjFunc(obj)
+          .setEvalFunc(Array(r2Eval, maeEval, new R2Eval))
+          .setCallbackFunc(Array(lrUpdater, recoder))
+          .setBaseScore(Array(avg))
+          .setBaseModelParallelism(3)
+    
+       /** train with validation */
+       val model = gbm.fit(train, test)
 
-      override def isLargerBetter: Boolean = true
-
-      override def name: String = "R2 (no weight)"
-    }
-
-    // User defined evaluation function for MAE
-    val maeEval = new SimpleEvalFunc {
-      override def compute(label: Double,
-                           score: Double): Double = (label - score).abs
-
-      override def isLargerBetter: Boolean = false
-
-      override def name: String = "Another MAE"
-    }
-
-    // User defined callback function
-    val lrUpdater = new CallbackFunc {
-      override def compute(spark: SparkSession,
-                           boostConfig: BoostConfig,
-                           model: GBMModel,
-                           trainMetrics: Array[Map[String, Double]],
-                           testMetrics: Array[Map[String, Double]]): Boolean = {
-        // learning rate decay
-        if (boostConfig.getStepSize > 0.01) {
-          boostConfig.updateStepSize(boostConfig.getStepSize * 0.95)
-        }
-
-        println(s"Round ${model.numTrees}: train metrics: ${trainMetrics.last}")
-        if (testMetrics.nonEmpty) {
-          println(s"Round ${model.numTrees}: test metrics: ${testMetrics.last}")
-        }
-        false
-      }
-
-      override def name: String = "Learning Rate Updater"
-    }
-
-
-    val gbm = new GBM
-    gbm.setMaxIter(20)
-      .setMaxDepth(5)
-      .setStepSize(0.2)
-      .setNumericalBinType("depth")
-      .setObjectiveFunc(obj)
-      .setEvaluateFunc(Array(r2Eval, maeEval))
-      .setCallbackFunc(Array(lrUpdater))
-
-    // train with validation
-    val model = gbm.fit(train, test)
     
 
 

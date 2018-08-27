@@ -1,5 +1,7 @@
 package org.apache.spark.ml.gbm
 
+import java.{util => ju}
+
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -52,6 +54,26 @@ case class HashSelector(maximum: Int,
   }
 
   override def toString: String = s"HashSelector(maximum: $maximum, seed: $seed)"
+}
+
+case class SetSelector(array: Array[Int]) extends ColumSelector {
+  require(array.nonEmpty)
+
+  override def contains[C](index: C)(implicit inc: Integral[C]): Boolean = {
+    ju.Arrays.binarySearch(array, inc.toInt(index)) >= 0
+  }
+
+  override def equals(other: Any): Boolean = {
+    other match {
+      case SetSelector(array2) =>
+        array2.length == array.length &&
+          Iterator.range(0, array.length).forall(i => array(i) == array2(i))
+
+      case _ => false
+    }
+  }
+
+  override def toString: String = s"SetSelector(set: ${array.mkString("[", ",", "]")})"
 }
 
 
@@ -336,6 +358,7 @@ private[gbm] object Utils extends Logging {
         classOf[ColumSelector],
         classOf[TotalSelector],
         classOf[HashSelector],
+        classOf[SetSelector],
 
         classOf[ObjFunc],
         classOf[ScalarObjFunc],

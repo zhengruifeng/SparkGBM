@@ -921,15 +921,26 @@ private[gbm] object GBM extends Logging {
         (weightedGrad, weightedHess)
       }
 
+
     val baseConfig = if (boostConfig.getColSampleByTree == 1) {
       new BaseConfig(iteration, numTrees, Array.empty)
+
+    } else if (boostConfig.getNumCols * boostConfig.getColSampleByTree > 32) {
+      val rng = new Random(boostConfig.getSeed.toInt + iteration)
+      val maximum = (Int.MaxValue * boostConfig.getColSampleByTree).ceil.toInt
+      val selectors: Array[ColumSelector] = Array.range(0, numBaseModels).flatMap { i =>
+        val seed = rng.nextInt
+        Iterator.fill(boostConfig.getRawSize)(HashSelector(maximum, seed))
+      }
+      new BaseConfig(iteration, numTrees, selectors)
+
     } else {
-      val maximum = (Int.MaxValue * boostConfig.getColSampleByTree).toInt
-      val selectors: Array[ColumSelector] =
-        Array.range(0, numBaseModels).flatMap { i =>
-          Iterator.fill(boostConfig.getRawSize)(
-            HashSelector(maximum, boostConfig.getSeed.toInt + iteration + i))
-        }
+      val rng = new Random(boostConfig.getSeed.toInt + iteration)
+      val numSelected = (boostConfig.getNumCols * boostConfig.getColSampleByTree).ceil.toInt
+      val selectors: Array[ColumSelector] = Array.range(0, numBaseModels).flatMap { i =>
+        val selected = rng.shuffle(Seq.range(0, boostConfig.getNumCols)).take(numSelected)
+        Iterator.fill(boostConfig.getRawSize)(SetSelector(selected.toArray.sorted))
+      }
       new BaseConfig(iteration, numTrees, selectors)
     }
 
@@ -946,6 +957,7 @@ private[gbm] object GBM extends Logging {
       }
 
     } else {
+
       instances.zip(rawScores).mapPartitionsWithIndex { case (partId, iter) =>
         val sampleRNGs = Array.tabulate(numBaseModels)(i => new XORShiftRandom(boostConfig.getSeed + partId + i))
 
@@ -1008,13 +1020,25 @@ private[gbm] object GBM extends Logging {
     val rawBase = boostConfig.computeRawBaseScore.map(neh.fromDouble)
     require(boostConfig.getRawSize == rawBase.length)
 
-    instances.map { case (_, _, bins) =>
-      val rawSum = rawBase.clone()
-      val rawSeq = trees.map { tree => neh.fromDouble(tree.predict(bins.apply)) }
-      Iterator.range(0, rawSeq.length)
-        .foreach { i => rawSum(i % boostConfig.getRawSize) += rawSeq(i) * weights(i) }
+    boostConfig.getBoostType match {
+      case GBTree =>
+        instances.map { case (_, _, bins) =>
+          val rawSum = rawBase.clone()
+          Iterator.range(0, trees.length).foreach { i =>
+            val p = neh.fromDouble(trees(i).predict(bins.apply))
+            rawSum(i % boostConfig.getRawSize) += p * weights(i)
+          }
+          (rawSum, Array.empty[H])
+        }
 
-      (rawSum, rawSeq)
+      case Dart =>
+        instances.map { case (_, _, bins) =>
+          val rawSum = rawBase.clone()
+          val rawSeq = trees.map { tree => neh.fromDouble(tree.predict(bins.apply)) }
+          Iterator.range(0, rawSeq.length)
+            .foreach { i => rawSum(i % boostConfig.getRawSize) += rawSeq(i) * weights(i) }
+          (rawSum, rawSeq)
+        }
     }
   }
 
@@ -1024,7 +1048,7 @@ private[gbm] object GBM extends Logging {
     *
     * @param instances   instances containing (weight, label, bins)
     * @param rawScores   previous predictions
-    * @param forest      array of trees (new built)
+    * @param newTrees    array of trees (new built)
     * @param weights     array of weights (total = old + new)
     * @param boostConfig boosting configuration
     * @param keepWeights whether to keep the weights of previous trees
@@ -1032,7 +1056,7 @@ private[gbm] object GBM extends Logging {
     */
   def updateRawScores[C, B, H](instances: RDD[(H, Array[H], KVVector[C, B])],
                                rawScores: RDD[(Array[H], Array[H])],
-                               forest: Array[TreeModel],
+                               newTrees: Array[TreeModel],
                                weights: Array[H],
                                boostConfig: BoostConfig,
                                keepWeights: Boolean)
@@ -1041,36 +1065,50 @@ private[gbm] object GBM extends Logging {
                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(Array[H], Array[H])] = {
     import nuh._
 
-    require(forest.length % boostConfig.getRawSize == 0)
+    require(newTrees.length % boostConfig.getRawSize == 0)
+    require(weights.length % boostConfig.getRawSize == 0)
 
-    if (keepWeights) {
-      instances.zip(rawScores).map { case ((_, _, bins), (rawSum, rawSeq)) =>
-        val newRawSeq = rawSeq ++ forest.map { tree => neh.fromDouble(tree.predict(bins.apply)) }
-        require(rawSum.length == boostConfig.getRawSize)
-        require(newRawSeq.length == weights.length)
+    boostConfig.getBoostType match {
+      case GBTree =>
+        instances.zip(rawScores).map { case ((_, _, bins), (rawSum, rawSeq)) =>
+          require(rawSum.length == boostConfig.getRawSize)
+          require(rawSeq.isEmpty)
 
-        Iterator.range(rawSeq.length, newRawSeq.length)
-          .foreach { i => rawSum(i % boostConfig.getRawSize) += newRawSeq(i) * weights(i) }
+          Iterator.range(0, newTrees.length).foreach { i =>
+            val p = neh.fromDouble(newTrees(i).predict(bins.apply))
+            rawSum(i % boostConfig.getRawSize) += p * weights(i)
+          }
+          (rawSum, rawSeq)
+        }
 
-        (rawSum, newRawSeq)
-      }
+      case Dart if keepWeights =>
+        instances.zip(rawScores).map { case ((_, _, bins), (rawSum, rawSeq)) =>
+          require(rawSum.length == boostConfig.getRawSize)
 
-    } else {
-      val rawBase = boostConfig.computeRawBaseScore.map(neh.fromDouble)
-      require(boostConfig.getRawSize == rawBase.length)
+          val newRawSeq = rawSeq ++ newTrees.map { tree => neh.fromDouble(tree.predict(bins.apply)) }
+          require(newRawSeq.length == weights.length)
 
-      instances.zip(rawScores).map { case ((_, _, bins), (rawSum, rawSeq)) =>
-        val newRawSeq = rawSeq ++ forest.map { tree => neh.fromDouble(tree.predict(bins.apply)) }
-        require(rawSum.length == boostConfig.getRawSize)
-        require(newRawSeq.length == weights.length)
+          Iterator.range(rawSeq.length, newRawSeq.length)
+            .foreach { i => rawSum(i % boostConfig.getRawSize) += newRawSeq(i) * weights(i) }
+          (rawSum, newRawSeq)
+        }
 
-        Iterator.range(0, boostConfig.getRawSize)
-          .foreach { i => rawSum(i) = rawBase(i) }
-        Iterator.range(0, newRawSeq.length)
-          .foreach { i => rawSum(i % boostConfig.getRawSize) += newRawSeq(i) * weights(i) }
+      case Dart =>
+        val rawBase = boostConfig.computeRawBaseScore.map(neh.fromDouble)
+        require(boostConfig.getRawSize == rawBase.length)
 
-        (rawSum, newRawSeq)
-      }
+        instances.zip(rawScores).map { case ((_, _, bins), (rawSum, rawSeq)) =>
+          require(rawSum.length == boostConfig.getRawSize)
+
+          val newRawSeq = rawSeq ++ newTrees.map { tree => neh.fromDouble(tree.predict(bins.apply)) }
+          require(newRawSeq.length == weights.length)
+
+          Array.copy(rawBase, 0, rawSum, 0, boostConfig.getRawSize)
+          Iterator.range(0, newRawSeq.length)
+            .foreach { i => rawSum(i % boostConfig.getRawSize) += newRawSeq(i) * weights(i) }
+
+          (rawSum, newRawSeq)
+        }
     }
   }
 

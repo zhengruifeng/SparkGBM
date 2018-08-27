@@ -388,6 +388,7 @@ private[gbm] object Tree extends Serializable with Logging {
             }
           }
         }
+
         Iterator.single((splits.toArray, trialCnt, splitCnt, denseCnt, nzAvg))
 
       }.treeReduce(f = {

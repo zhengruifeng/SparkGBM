@@ -8,6 +8,18 @@ import org.apache.spark.storage.StorageLevel
 
 class BoostConfig extends Logging with Serializable {
 
+  /** boosting type */
+  private var boostType: String = "gbtree"
+
+  private[gbm] def setBoostType(value: String): this.type = {
+    require(value == "gbtree" || value == "dart")
+    boostType = value
+    this
+  }
+
+  def getBoostType: String = boostType
+
+
   /** maximum number of iterations */
   private var maxIter: Int = 20
 
@@ -244,23 +256,6 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def getStorageLevel: StorageLevel = storageLevel
-
-
-  /** boosting type */
-  private var boostType: String = "gbtree"
-
-  private[gbm] def setBoostType(value: String): this.type = {
-    require(value == "gbtree" || value == "dart")
-    boostType = value
-    this
-  }
-
-  def updateBoostType(value: String): this.type = {
-    logInfo(s"boostType was changed from $boostType to $value")
-    setBoostType(value)
-  }
-
-  def getBoostType: String = boostType
 
 
   /** dropout rate */

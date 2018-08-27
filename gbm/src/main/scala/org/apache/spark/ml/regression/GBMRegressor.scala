@@ -132,6 +132,8 @@ class GBMRegressor(override val uid: String) extends
 
   def setEnableSamplePartitions(value: Boolean): this.type = set(enableSamplePartitions, value)
 
+  def setBaseModelParallelism(value: Int): this.type = set(baseModelParallelism, value)
+
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)
   }

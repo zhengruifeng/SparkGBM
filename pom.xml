@@ -6,7 +6,7 @@
 
     <groupId>com.foxmail.ruifengz</groupId>
     <artifactId>SparkGBM</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2</version>
 
     <packaging>pom</packaging>
     <name>SparkGBM Parent POM</name>

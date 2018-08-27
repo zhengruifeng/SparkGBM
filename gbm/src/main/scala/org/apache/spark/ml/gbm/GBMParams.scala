@@ -486,5 +486,20 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getEnableSamplePartitions: Boolean = $(enableSamplePartitions)
 
   setDefault(enableSamplePartitions -> false)
+
+
+  /**
+    * Number of base models in one round.
+    * (default = 1)
+    *
+    * @group param
+    */
+  final val baseModelParallelism: IntParam =
+    new IntParam(this, "baseModelParallelism", "Number of base models in one round.",
+      ParamValidators.gt(0))
+
+  def getBaseModelParallelism: Int = $(baseModelParallelism)
+
+  setDefault(baseModelParallelism -> 1)
 }
 

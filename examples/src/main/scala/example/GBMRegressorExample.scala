@@ -5,7 +5,7 @@ import org.apache.spark.ml.regression._
 import org.apache.spark.ml.evaluation.RegressionEvaluator
 
 /**
-  * spark-submit --class example.GBMRegressorExample --jars gbm/target/gbm-0.0.1.jar examples/target/examples-0.0.1.jar 2>log
+  * spark-submit --class example.GBMRegressorExample --jars gbm/target/gbm-0.0.2.jar examples/target/examples-0.0.2.jar 2>log
   */
 object GBMRegressorExample {
 
@@ -30,6 +30,7 @@ object GBMRegressorExample {
       .setMaxIter(100)
       .setDropRate(0.1)
       .setDropSkip(0.5)
+      .setBaseModelParallelism(3)
       .setCheckpointInterval(10)
       .setSeed(System.currentTimeMillis)
 

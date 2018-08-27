@@ -1,7 +1,9 @@
 package org.apache.spark.ml.classification
 
 import scala.collection.mutable
+
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.linalg._

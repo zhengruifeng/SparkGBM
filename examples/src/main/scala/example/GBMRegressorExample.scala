@@ -27,10 +27,9 @@ object GBMRegressorExample {
     val gbmr = new GBMRegressor
     gbmr.setBoostType("dart")
       .setStepSize(0.1)
-      .setMaxIter(100)
+      .setMaxIter(20)
       .setDropRate(0.1)
       .setDropSkip(0.5)
-      .setBaseModelParallelism(3)
       .setCheckpointInterval(10)
       .setSeed(System.currentTimeMillis)
 

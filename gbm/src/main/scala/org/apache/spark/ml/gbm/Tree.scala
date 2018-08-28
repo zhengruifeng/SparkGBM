@@ -71,7 +71,7 @@ private[gbm] object Tree extends Serializable with Logging {
       prevSplits.clear()
 
       // find best splits
-      val splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, splitRNG.nextLong)
+      val splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, depth, splitRNG.nextLong)
 
       if (splits.isEmpty) {
         logInfo(s"$logPrefix Depth $depth: no more splits found, trees building finished")
@@ -346,6 +346,7 @@ private[gbm] object Tree extends Serializable with Logging {
   def findSplits[T, N, C, B, H](nodeHists: RDD[((T, N, C), KVVector[B, H])],
                                 boostConf: BoostConfig,
                                 baseConf: BaseConfig,
+                                depth: Int,
                                 seed: Long)
                                (implicit ct: ClassTag[T], int: Integral[T],
                                 cn: ClassTag[N], inn: Integral[N],
@@ -398,8 +399,8 @@ private[gbm] object Tree extends Serializable with Logging {
       }, boostConf.getAggregationDepth)
 
 
-    logInfo(s"$numTrials trials -> $numSplits splits -> ${splits.length} best splits")
-    logInfo(s"Share of sparse histograms: ${1 - numDenses / numTrials}, sparsity of histogram: ${1 - nnz / sum}")
+    logInfo(s"Depth $depth: $numTrials trials -> $numSplits splits -> ${splits.length} best splits")
+    logInfo(s"Depth $depth: Fraction of sparse histograms: ${1 - numDenses / numTrials}, sparsity of histogram: ${1 - nnz / sum}")
 
     splits.toMap
   }

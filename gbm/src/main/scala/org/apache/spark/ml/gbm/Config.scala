@@ -511,10 +511,10 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** Double precision */
-  private var floatType: String = "Double"
+  private var floatType: String = "float"
 
   private[gbm] def setFloatType(value: String): this.type = {
-    require(value == "Double" || value == "double")
+    require(value == "float" || value == "double")
     floatType = value
     this
   }

@@ -235,6 +235,7 @@ class GBMRegressor(override val uid: String) extends
       .setZeroAsMissing($(zeroAsMissing))
       .setParallelism($(parallelism))
       .setEnableSamplePartitions($(enableSamplePartitions))
+      .setBaseModelParallelism($(baseModelParallelism))
       .setInitialModel(initialModel)
 
 

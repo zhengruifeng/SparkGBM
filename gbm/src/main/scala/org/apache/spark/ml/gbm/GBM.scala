@@ -467,7 +467,7 @@ private[gbm] object GBM extends Logging {
   val Width = "width"
   val Depth = "depth"
 
-  val SinglePrecision = "Double"
+  val SinglePrecision = "float"
   val DoublePrecision = "double"
 
 
@@ -503,8 +503,6 @@ private[gbm] object GBM extends Logging {
                 discretizer: Discretizer,
                 initialModel: Option[GBMModel])
                (implicit ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
-    logInfo(s"DataType of RealValue: ${boostConf.getFloatType.capitalize}")
-
     val data2 = data.map { case (weight, label, vec) =>
       (neh.fromDouble(weight), label.map(neh.fromDouble), vec)
     }
@@ -991,6 +989,8 @@ private[gbm] object GBM extends Logging {
 
     val trees = Tree.train[T, N, C, B, H](data, boostConfig, baseConfig)
     gradients.unpersist(false)
+
+    System.gc()
 
     trees
   }

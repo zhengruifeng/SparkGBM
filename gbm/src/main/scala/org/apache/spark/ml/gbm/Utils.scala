@@ -142,8 +142,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     updateCount += 1
 
     // Handle checkpointing (after persisting)
-    if (checkpointInterval != -1 &&
-      (updateCount % checkpointInterval) == 0
+    if (checkpointInterval != -1 && updateCount % checkpointInterval == 0
       && sc.getCheckpointDir.nonEmpty) {
       // Add new checkpoint before removing old checkpoints.
       checkpoint(data)
@@ -216,10 +215,10 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
 
       }.onComplete {
         case Success(v) =>
-          logInfo(s"successfully remove old checkpoint file: $file, duration $v seconds")
+          logInfo(s"Successfully remove old checkpoint file: $file, duration $v seconds")
 
         case Failure(t) =>
-          logWarning(s"fail to remove old checkpoint file: $file, ${t.toString}")
+          logWarning(s"Fail to remove old checkpoint file: $file, ${t.toString}")
       }
     }
   }
@@ -229,9 +228,9 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
 private[gbm] object Utils extends Logging {
 
   def getTypeByRange(value: Int): String = {
-    if (value < Byte.MaxValue) {
+    if (value <= Byte.MaxValue) {
       "Byte"
-    } else if (value < Short.MaxValue) {
+    } else if (value <= Short.MaxValue) {
       "Short"
     } else {
       "Int"

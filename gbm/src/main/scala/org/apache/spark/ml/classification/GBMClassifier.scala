@@ -266,6 +266,7 @@ class GBMClassifier(override val uid: String)
       .setZeroAsMissing($(zeroAsMissing))
       .setParallelism($(parallelism))
       .setEnableSamplePartitions($(enableSamplePartitions))
+      .setBaseModelParallelism($(baseModelParallelism))
       .setInitialModel(initialModel)
 
     val transLabel = if ($(objectiveFunc) == GBMClassifier.LogisticObj) {

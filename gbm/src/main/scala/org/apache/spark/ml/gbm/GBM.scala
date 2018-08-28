@@ -923,9 +923,8 @@ private[gbm] object GBM extends Logging {
         val score = boostConfig.getObjFunc.transform(raw)
         val (grad, hess) = boostConfig.getObjFunc.compute(label.map(nuh.toDouble), score)
         require(grad.length == boostConfig.getRawSize && hess.length == boostConfig.getRawSize)
-        val weightedGrad = grad.map(v => neh.fromDouble(v) * weight)
-        val weightedHess = hess.map(v => neh.fromDouble(v) * weight)
-        (weightedGrad, weightedHess)
+        grad.zip(hess).flatMap { case (g, h) => Iterator.apply(g, h) }
+          .map(v => neh.fromDouble(v) * weight)
       }
 
 
@@ -957,10 +956,8 @@ private[gbm] object GBM extends Logging {
       val treeIds = Array.range(0, numTrees).map(int.fromInt)
 
       instances.zip(rawScores).map { case ((weight, label, _), rawSeq) =>
-        val (weightedGrad, weightedHess) = computeGradHess(weight, label, rawSeq)
-        val gradSeq = Array.range(0, numBaseModels).flatMap(_ => weightedGrad)
-        val hessSeq = Array.range(0, numBaseModels).flatMap(_ => weightedHess)
-        (treeIds, gradSeq, hessSeq)
+        val gradHess = computeGradHess(weight, label, rawSeq)
+        (treeIds, gradHess)
       }
 
     } else {
@@ -978,14 +975,11 @@ private[gbm] object GBM extends Logging {
           }
 
           if (treeIds.nonEmpty) {
-            val (weightedGrad, weightedHess) = computeGradHess(weight, label, rawSeq)
-            val n = treeIds.length / boostConfig.getRawSize
-            val gradSeq = Array.range(0, n).flatMap(_ => weightedGrad)
-            val hessSeq = Array.range(0, n).flatMap(_ => weightedHess)
-            (treeIds, gradSeq, hessSeq)
+            val gradHess = computeGradHess(weight, label, rawSeq)
+            (treeIds, gradHess)
 
           } else {
-            (Array.empty[T], Array.empty[H], Array.empty[H])
+            (Array.empty[T], Array.empty[H])
           }
         }
       }
@@ -994,7 +988,23 @@ private[gbm] object GBM extends Logging {
     gradients.persist(boostConfig.getStorageLevel)
 
     val data = instances.zip(gradients)
-      .map { case ((_, _, bins), (treeIds, gradSeq, hessSeq)) => (bins, treeIds, gradSeq, hessSeq) }
+      .map { case ((_, _, bins), (treeIds, gradHess)) =>
+        if (treeIds.nonEmpty) {
+          require(gradHess.length % 2 == 0)
+          val l = gradHess.length >> 1
+          val gradSeq = Array.ofDim[H](treeIds.length)
+          val hessSeq = Array.ofDim[H](treeIds.length)
+
+          Iterator.range(0, treeIds.length).foreach { i =>
+            val j = (i % l) << 1
+            gradSeq(i) = gradHess(j)
+            hessSeq(i) = gradHess(j + 1)
+          }
+          (bins, treeIds, gradSeq, hessSeq)
+        } else {
+          (bins, treeIds, Array.empty[H], Array.empty[H])
+        }
+      }
 
     val trees = Tree.train[T, N, C, B, H](data, boostConfig, baseConfig)
     gradients.unpersist(false)

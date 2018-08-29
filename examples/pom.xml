@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.foxmail.ruifengz</groupId>
-        <artifactId>spark-gbm</artifactId>
+        <groupId>com.ruifengz.gbm</groupId>
+        <artifactId>SparkGBM</artifactId>
         <version>2.3.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
@@ -20,10 +20,9 @@
     <packaging>jar</packaging>
 
 
-
     <dependencies>
         <dependency>
-            <groupId>com.foxmail.ruifengz</groupId>
+            <groupId>com.ruifengz.gbm</groupId>
             <artifactId>spark-gbm</artifactId>
             <version>2.3.0</version>
             <scope>provided</scope>

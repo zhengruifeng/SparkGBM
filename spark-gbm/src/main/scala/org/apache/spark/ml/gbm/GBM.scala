@@ -736,7 +736,7 @@ private[gbm] object GBM extends Logging {
         }
       }
 
-      logInfo(s"$logPrefix finished, ${treesBuff.length} trees")
+      logInfo(s"$logPrefix finished, ${treesBuff.length} trees now")
       iter += 1
     }
 
@@ -849,7 +849,7 @@ private[gbm] object GBM extends Logging {
                           cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                           ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val numTrees = boostConfig.getBaseModelParallelism * boostConfig.getRawSize
-    logInfo(s"Iteration $iteration: Starting to create $numTrees trees")
+    logInfo(s"Iteration $iteration: Starting to create next $numTrees trees")
 
     val treeIdType = Utils.getTypeByRange(numTrees)
     logInfo(s"DataType of TreeId: $treeIdType")

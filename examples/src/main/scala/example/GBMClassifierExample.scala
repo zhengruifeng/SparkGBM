@@ -6,7 +6,7 @@ import org.apache.spark.ml.classification._
 import org.apache.spark.ml.evaluation.BinaryClassificationEvaluator
 
 /**
-  * spark-submit --class example.GBMClassifierExample --jars gbm/target/gbm-0.0.2.jar examples/target/examples-0.0.2.jar 2>log
+  * spark-submit --class example.GBMClassifierExample --jars spark-gbm/target/spark-gbm-2.3.0.jar examples/target/examples-2.3.0.jar 2>log
   */
 object GBMClassifierExample {
 

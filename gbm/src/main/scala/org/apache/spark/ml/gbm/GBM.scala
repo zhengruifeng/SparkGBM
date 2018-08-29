@@ -927,6 +927,61 @@ private[gbm] object GBM extends Logging {
           .map(v => neh.fromDouble(v) * weight)
       }
 
+    // base model indices and grad-hess values in a compact format
+    val gradients = if (boostConfig.getSubSample == 1) {
+      instances.zip(rawScores).map { case ((weight, label, _), rawSeq) =>
+        val gradHess = computeGradHess(weight, label, rawSeq)
+        (Array.empty[T], gradHess)
+      }
+
+    } else {
+      instances.zip(rawScores).mapPartitionsWithIndex { case (partId, iter) =>
+        val sampleRNGs = Array.tabulate(numBaseModels)(i =>
+          new XORShiftRandom(boostConfig.getSeed + iteration + partId + i))
+
+        iter.map { case ((weight, label, _), rawSeq) =>
+          val baseIds = Array.range(0, numBaseModels).filter { i =>
+            sampleRNGs(i).nextDouble < boostConfig.getSubSample
+          }.map(int.fromInt)
+
+          if (baseIds.nonEmpty) {
+            val gradHess = computeGradHess(weight, label, rawSeq)
+            (baseIds, gradHess)
+          } else {
+            (Array.empty[T], Array.empty[H])
+          }
+        }
+      }
+    }
+
+    gradients.persist(boostConfig.getStorageLevel)
+
+    val data = if (boostConfig.getSubSample == 1) {
+      val allTreeIds = Array.range(0, numTrees).map(int.fromInt)
+      instances.zip(gradients).map { case ((_, _, bins), (_, gradHess)) =>
+        (bins, allTreeIds, gradHess)
+      }
+
+    } else if (boostConfig.getRawSize == 1) {
+      // In case prediction values are scalar, then baseIds == treeIds
+      instances.zip(gradients).map { case ((_, _, bins), (baseIds, gradHess)) =>
+        (bins, baseIds, gradHess)
+      }
+
+    } else {
+      instances.zip(gradients).map { case ((_, _, bins), (baseIds, gradHess)) =>
+        if (baseIds.nonEmpty) {
+          val treeIds = baseIds.flatMap { i =>
+            val start = boostConfig.getRawSize * int.toInt(i)
+            Iterator.range(start, start + boostConfig.getRawSize).map(int.fromInt)
+          }
+          (bins, treeIds, gradHess)
+
+        } else {
+          (bins, Array.empty[T], Array.empty[H])
+        }
+      }
+    }
 
     val baseConfig = if (boostConfig.getColSampleByTree == 1) {
       new BaseConfig(iteration, numTrees, Array.empty)
@@ -952,61 +1007,7 @@ private[gbm] object GBM extends Logging {
 
     logInfo(s"Column Selectors: ${Array.range(0, numTrees).map(baseConfig.getSelector).mkString(",")}")
 
-    val gradients = if (boostConfig.getSubSample == 1) {
-      val treeIds = Array.range(0, numTrees).map(int.fromInt)
-
-      instances.zip(rawScores).map { case ((weight, label, _), rawSeq) =>
-        val gradHess = computeGradHess(weight, label, rawSeq)
-        (treeIds, gradHess)
-      }
-
-    } else {
-
-      instances.zip(rawScores).mapPartitionsWithIndex { case (partId, iter) =>
-        val sampleRNGs = Array.tabulate(numBaseModels)(i => new XORShiftRandom(boostConfig.getSeed + partId + i))
-
-        iter.map { case ((weight, label, _), rawSeq) =>
-          val treeIds = Array.range(0, numBaseModels).flatMap { i =>
-            if (sampleRNGs(i).nextDouble < boostConfig.getSubSample) {
-              Iterator.range(boostConfig.getRawSize * i, boostConfig.getRawSize * (i + 1)).map(int.fromInt)
-            } else {
-              Iterator.empty
-            }
-          }
-
-          if (treeIds.nonEmpty) {
-            val gradHess = computeGradHess(weight, label, rawSeq)
-            (treeIds, gradHess)
-
-          } else {
-            (Array.empty[T], Array.empty[H])
-          }
-        }
-      }
-    }
-
-    gradients.persist(boostConfig.getStorageLevel)
-
-    val data = instances.zip(gradients)
-      .map { case ((_, _, bins), (treeIds, gradHess)) =>
-        if (treeIds.nonEmpty) {
-          require(gradHess.length % 2 == 0)
-          val l = gradHess.length >> 1
-          val gradSeq = Array.ofDim[H](treeIds.length)
-          val hessSeq = Array.ofDim[H](treeIds.length)
-
-          Iterator.range(0, treeIds.length).foreach { i =>
-            val j = (i % l) << 1
-            gradSeq(i) = gradHess(j)
-            hessSeq(i) = gradHess(j + 1)
-          }
-          (bins, treeIds, gradSeq, hessSeq)
-        } else {
-          (bins, treeIds, Array.empty[H], Array.empty[H])
-        }
-      }
-
-    val trees = Tree.train[T, N, C, B, H](data, boostConfig, baseConfig)
+    val trees = Tree.train[T, N, C, B, H](data.filter(_._2.nonEmpty), boostConfig, baseConfig)
     gradients.unpersist(false)
 
     System.gc()

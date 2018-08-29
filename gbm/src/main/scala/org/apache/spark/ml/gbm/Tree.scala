@@ -10,7 +10,16 @@ import org.apache.spark.rdd.RDD
 
 private[gbm] object Tree extends Serializable with Logging {
 
-  def train[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H], Array[H])],
+
+  /**
+    *
+    * @param data      instances containing (bins, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
+    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] -> {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
+    * @param boostConf boosting configure
+    * @param baseConf  trees-building configure
+    * @return tree models
+    */
+  def train[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
                            boostConf: BoostConfig,
                            baseConf: BaseConfig)
                           (implicit ct: ClassTag[T], int: Integral[T],
@@ -48,11 +57,12 @@ private[gbm] object Tree extends Serializable with Logging {
       logInfo(s"$logPrefix Depth $depth: splitting start")
 
       if (inn.equiv(minNodeId, inn.one)) {
-        nodeIds = data.map { case (_, treeIds, _, _) => Array.fill(treeIds.length)(inn.one) }
+        nodeIds = data.map { case (_, treeIds, _) => Array.fill(treeIds.length)(inn.one) }
       } else {
+
         nodeIds = updateNodeIds[T, N, C, B, H](data, nodeIds, prevSplits.toMap)
+        nodesCheckpointer.update(nodeIds)
       }
-      nodesCheckpointer.update(nodeIds)
 
       if (inn.equiv(minNodeId, inn.one)) {
         // direct compute the histogram of roots
@@ -174,12 +184,12 @@ private[gbm] object Tree extends Serializable with Logging {
   /**
     * update nodeIds
     *
-    * @param data    instances containing (bins, treeIds, grad, hess)
+    * @param data    instances containing (bins, treeIds, grad-hess)
     * @param nodeIds previous nodeIds
     * @param splits  splits found in the last round
     * @return updated nodeIds
     */
-  def updateNodeIds[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H], Array[H])],
+  def updateNodeIds[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
                                    nodeIds: RDD[Array[N]],
                                    splits: Map[(T, N), Split])
                                   (implicit ct: ClassTag[T], int: Integral[T],
@@ -187,7 +197,7 @@ private[gbm] object Tree extends Serializable with Logging {
                                    cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                    cb: ClassTag[B], inb: Integral[B],
                                    ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[Array[N]] = {
-    data.zip(nodeIds).map { case ((bins, treeIds, _, _), nodeIds) =>
+    data.zip(nodeIds).map { case ((bins, treeIds, _), nodeIds) =>
       treeIds.zip(nodeIds).map { case (treeId, nodeId) =>
         val split = splits.get((treeId, nodeId))
         if (split.nonEmpty) {
@@ -208,11 +218,11 @@ private[gbm] object Tree extends Serializable with Logging {
   /**
     * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
     *
-    * @param data instances appended with nodeId, containing ((grad, hess, bins), nodeId)
+    * @param data instances appended with nodeId, containing ((bins, treeIds, grad-hess), nodeIds)
     * @param f    function to filter nodeIds
     * @return histogram data containing (treeId, nodeId, columnId, histogram)
     */
-  def computeHistograms[T, N, C, B, H](data: RDD[((KVVector[C, B], Array[T], Array[H], Array[H]), Array[N])],
+  def computeHistograms[T, N, C, B, H](data: RDD[((KVVector[C, B], Array[T], Array[H]), Array[N])],
                                        boostConf: BoostConfig,
                                        baseConf: BaseConfig,
                                        f: N => Boolean)
@@ -229,14 +239,16 @@ private[gbm] object Tree extends Serializable with Logging {
     data.mapPartitions { iter =>
       val histSums = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
-      iter.flatMap { case ((bins, treeIds, gradSeq, hessSeq), nodeIds) =>
+      iter.flatMap { case ((bins, treeIds, gradHess), nodeIds) =>
+        val gradSize = gradHess.length >> 1
         Iterator.range(0, treeIds.length)
           .filter(i => f(nodeIds(i)))
           .flatMap { i =>
             val treeId = treeIds(i)
             val nodeId = nodeIds(i)
-            val grad = gradSeq(i)
-            val hess = hessSeq(i)
+            val indexGrad = (i % gradSize) << 1
+            val grad = gradHess(indexGrad)
+            val hess = gradHess(indexGrad + 1)
 
             val (g, h) = histSums.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
             histSums.update((treeId, nodeId), (nuh.plus(g, grad), nuh.plus(h, hess)))

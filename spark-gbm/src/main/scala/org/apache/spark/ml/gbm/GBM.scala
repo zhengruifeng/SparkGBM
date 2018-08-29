@@ -726,7 +726,7 @@ private[gbm] object GBM extends Logging {
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
-            if (callback.compute(spark, boostConf, snapshot,
+            if (callback.compute(spark, boostConf, snapshot, iter,
               trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
               logInfo(s"$logPrefix callback ${callback.name} stop training")

@@ -71,6 +71,7 @@ object GBMExample {
       override def compute(spark: SparkSession,
                            boostConfig: BoostConfig,
                            model: GBMModel,
+                           iteration: Int,
                            trainMetrics: Array[Map[String, Double]],
                            testMetrics: Array[Map[String, Double]]): Boolean = {
         /** learning rate decay */

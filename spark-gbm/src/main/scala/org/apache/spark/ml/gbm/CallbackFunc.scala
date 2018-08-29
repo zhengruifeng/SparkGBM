@@ -30,6 +30,7 @@ trait CallbackFunc extends Logging with Serializable {
   def compute(spark: SparkSession,
               boostConfig: BoostConfig,
               model: GBMModel,
+              iteration: Int,
               trainMetrics: Array[Map[String, Double]],
               testMetrics: Array[Map[String, Double]]): Boolean
 
@@ -50,6 +51,7 @@ class EarlyStop(val iters: Int) extends CallbackFunc {
   override def compute(spark: SparkSession,
                        boostConfig: BoostConfig,
                        model: GBMModel,
+                       iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     var stop = false
@@ -90,6 +92,7 @@ class MetricRecoder extends CallbackFunc {
   override def compute(spark: SparkSession,
                        boostConfig: BoostConfig,
                        model: GBMModel,
+                       iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     trainMetricsRecoder.clear()
@@ -118,10 +121,11 @@ class ModelCheckpoint(val interval: Int,
   override def compute(spark: SparkSession,
                        boostConfig: BoostConfig,
                        model: GBMModel,
+                       iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
 
-    if (model.numTrees % interval == 0) {
+    if (iteration % interval == 0) {
       Future {
         val start = System.nanoTime
         val currentPath = new Path(path, s"model-${model.numTrees}").toString
@@ -159,9 +163,10 @@ class ClassificationModelCheckpoint(val interval: Int,
   override def compute(spark: SparkSession,
                        boostConfig: BoostConfig,
                        model: GBMModel,
+                       iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
-    if (model.numTrees % interval == 0) {
+    if (iteration % interval == 0) {
       Future {
         val start = System.nanoTime
 
@@ -184,7 +189,7 @@ class ClassificationModelCheckpoint(val interval: Int,
           logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration: $v sec")
 
         case Failure(t) =>
-          logWarning(s"fail to checkpoint model, ${t.toString}")
+          logWarning(s"Fail to checkpoint model, ${t.toString}")
       }
     }
 
@@ -210,9 +215,10 @@ class RegressionModelCheckpoint(val interval: Int,
   override def compute(spark: SparkSession,
                        boostConfig: BoostConfig,
                        model: GBMModel,
+                       iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
-    if (model.numTrees % interval == 0) {
+    if (iteration % interval == 0) {
       Future {
         val start = System.nanoTime
 
@@ -235,7 +241,7 @@ class RegressionModelCheckpoint(val interval: Int,
           logInfo(s"Model checkpoint finish, ${model.numTrees} trees, duration: $v sec")
 
         case Failure(t) =>
-          logWarning(s"fail to checkpoint model, ${t.toString}")
+          logWarning(s"Fail to checkpoint model, ${t.toString}")
       }
     }
 

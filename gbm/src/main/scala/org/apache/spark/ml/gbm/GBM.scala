@@ -1029,8 +1029,6 @@ private[gbm] object GBM extends Logging {
 
     gradients.unpersist(false)
 
-    System.gc()
-
     trees
   }
 

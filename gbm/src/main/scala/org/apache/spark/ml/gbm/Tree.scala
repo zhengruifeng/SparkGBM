@@ -4,7 +4,6 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
 
-import org.apache.spark.Partitioner
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 
@@ -423,7 +422,8 @@ private[gbm] object Tree extends Serializable with Logging {
 
 
     logInfo(s"Depth $depth: $numTrials trials -> $numSplits splits -> ${splits.length} best splits")
-    logInfo(s"Depth $depth: Fraction of sparse histograms: ${1 - numDenses / numTrials}, sparsity of histogram: ${1 - nnz / sum}")
+    logInfo(s"Depth $depth: Fraction of sparse histograms: ${1 - numDenses / numTrials}, " +
+      s"sparsity of histogram: ${1 - nnz / sum}")
 
     splits.toMap
   }

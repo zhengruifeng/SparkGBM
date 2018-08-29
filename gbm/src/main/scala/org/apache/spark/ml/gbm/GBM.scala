@@ -599,10 +599,12 @@ private[gbm] object GBM extends Logging {
 
     val rawBase = boostConf.computeRawBaseScore
 
+    data.setName("Train Dataset (Discretized)")
     data.persist(boostConf.getStorageLevel)
     logInfo(s"${data.count} instances in train data")
 
     if (validation) {
+      test.setName("Test Dataset (Discretized)")
       test.persist(boostConf.getStorageLevel)
       logInfo(s"${test.count} instances in test data")
     }
@@ -617,6 +619,7 @@ private[gbm] object GBM extends Logging {
 
     // raw scores and checkpointers
     var trainRawScores = computeRawScores[C, B, H](data, treesBuff.toArray, weightsBuff.toArray, boostConf)
+    trainRawScores.setName("Train Raw Scores (Initial)")
     val trainRawScoresCheckpointer = new Checkpointer[Array[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
     trainRawScoresCheckpointer.update(trainRawScores)
@@ -626,6 +629,7 @@ private[gbm] object GBM extends Logging {
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
     if (validation && boostConf.getEvalFunc.nonEmpty) {
       testRawScores = computeRawScores[C, B, H](test, treesBuff.toArray, weightsBuff.toArray, boostConf)
+      testRawScores.setName("Test Raw Scores (Initial)")
       testRawScoresCheckpointer.update(testRawScores)
     }
 
@@ -677,6 +681,7 @@ private[gbm] object GBM extends Logging {
 
         // update train data predictions
         trainRawScores = updateRawScores[C, B, H](data, trainRawScores, trees, weightsBuff.toArray, boostConf, keepWeights)
+        trainRawScores.setName(s"Train Raw Scores (Iteration $iter)")
         trainRawScoresCheckpointer.update(trainRawScores)
 
 
@@ -695,6 +700,7 @@ private[gbm] object GBM extends Logging {
         if (validation && boostConf.getEvalFunc.nonEmpty) {
           // update test data predictions
           testRawScores = updateRawScores[C, B, H](test, testRawScores, trees, weightsBuff.toArray, boostConf, keepWeights)
+          testRawScores.setName(s"Test Raw Scores (Iteration $iter)")
           testRawScoresCheckpointer.update(testRawScores)
 
           // evaluate on test data
@@ -954,6 +960,8 @@ private[gbm] object GBM extends Logging {
       }
     }
 
+    gradients.setName(s"Gradients (Iteration $iteration)")
+
     gradients.persist(boostConfig.getStorageLevel)
 
     val data = if (boostConfig.getSubSample == 1) {
@@ -1008,6 +1016,7 @@ private[gbm] object GBM extends Logging {
     logInfo(s"Column Selectors: ${Array.range(0, numTrees).map(baseConfig.getSelector).mkString(",")}")
 
     val trees = Tree.train[T, N, C, B, H](data.filter(_._2.nonEmpty), boostConfig, baseConfig)
+
     gradients.unpersist(false)
 
     System.gc()

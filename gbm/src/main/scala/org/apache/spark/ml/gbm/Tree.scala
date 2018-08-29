@@ -58,16 +58,16 @@ private[gbm] object Tree extends Serializable with Logging {
 
       if (inn.equiv(minNodeId, inn.one)) {
         nodeIds = data.map { case (_, treeIds, _) => Array.fill(treeIds.length)(inn.one) }
+        nodeIds.setName(s"NodeIds (Iteration ${baseConf.iteration}, depth $depth)")
       } else {
-
         nodeIds = updateNodeIds[T, N, C, B, H](data, nodeIds, prevSplits.toMap)
+        nodeIds.setName(s"NodeIds (Iteration ${baseConf.iteration}, depth $depth)")
         nodesCheckpointer.update(nodeIds)
       }
 
       if (inn.equiv(minNodeId, inn.one)) {
         // direct compute the histogram of roots
         hists = computeHistograms[T, N, C, B, H](data.zip(nodeIds), boostConf, baseConf, (n: N) => true)
-
       } else {
         // compute the histogram of right leaves
         val rightHists = computeHistograms[T, N, C, B, H](data.zip(nodeIds), boostConf, baseConf,
@@ -76,6 +76,7 @@ private[gbm] object Tree extends Serializable with Logging {
         // compute the histogram of both left leaves and right leaves by subtraction
         hists = subtractHistograms[T, N, C, B, H](hists, rightHists, boostConf)
       }
+      hists.setName(s"Histograms (Iteration ${baseConf.iteration}, depth $depth)")
       histsCheckpointer.update(hists)
 
       prevSplits.clear()

@@ -132,7 +132,9 @@ class GBMClassifier(override val uid: String)
 
   def setZeroAsMissing(value: Boolean): this.type = set(zeroAsMissing, value)
 
-  def setReduceParallelism(value: Int): this.type = set(reduceParallelism, value)
+  def setReduceParallelism(value: Double): this.type = set(reduceParallelism, value)
+
+  def setTrialParallelism(value: Double): this.type = set(trialParallelism, value)
 
   def setEnableSamplePartitions(value: Boolean): this.type = set(enableSamplePartitions, value)
 
@@ -265,6 +267,7 @@ class GBMClassifier(override val uid: String)
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setReduceParallelism($(reduceParallelism))
+      .setTrialParallelism($(trialParallelism))
       .setEnableSamplePartitions($(enableSamplePartitions))
       .setBaseModelParallelism($(baseModelParallelism))
       .setInitialModel(initialModel)

@@ -4,6 +4,7 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
 
+import org.apache.spark.Partitioner
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 
@@ -233,7 +234,7 @@ private[gbm] object Tree extends Serializable with Logging {
                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
     val sc = data.sparkContext
-    val parallelism = boostConf.getRealReduceParallelism(sc.defaultParallelism)
+    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
     import PairRDDFunctions._
 
@@ -319,13 +320,13 @@ private[gbm] object Tree extends Serializable with Logging {
                                         cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
     val sc = nodeHists.sparkContext
-    val parallelism = boostConf.getRealReduceParallelism(sc.defaultParallelism)
+    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
-    val threshold = neh.fromFloat(boostConf.getMinNodeHess.toFloat * 2)
+    val threshold = neh.fromDouble(boostConf.getMinNodeHess * 2)
 
-    rightHists.map { case ((treeId, rightNodeId, colId), parentHist) =>
+    rightHists.map { case ((treeId, rightNodeId, colId), rightHist) =>
       val parentNodeId = inn.quot(rightNodeId, inn.fromInt(2))
-      ((treeId, parentNodeId, colId), parentHist)
+      ((treeId, parentNodeId, colId), rightHist)
 
     }.join(nodeHists, parallelism)
 
@@ -375,8 +376,17 @@ private[gbm] object Tree extends Serializable with Logging {
       nodeHists.sample(false, boostConf.getColSampleByLevel, seed)
     }
 
+    val parallelism = boostConf.getRealParallelism(boostConf.getTrialParallelism, sc.defaultParallelism)
+    val repartitioned = if (sampled.getNumPartitions == parallelism) {
+      sampled
+    } else if (parallelism % sampled.getNumPartitions == 0) {
+      sampled.coalesce(parallelism, false)
+    } else {
+      sampled.coalesce(parallelism, true)
+    }
+
     val (splits, Array(numTrials, numSplits, numDenses, sum, nnz)) =
-      sampled.mapPartitions { iter =>
+      repartitioned.mapPartitions { iter =>
         val splits = mutable.OpenHashMap.empty[(T, N), Split]
 
         // numTrials, numSplits, numDenseHist, sumHistLen, nnz

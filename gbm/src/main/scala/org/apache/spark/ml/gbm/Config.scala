@@ -360,27 +360,45 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** parallelism of histogram computation */
-  private var reduceParallelism: Int = -1
+  private var reduceParallelism: Double = -1.0
 
-  private[gbm] def setReduceParallelism(value: Int): this.type = {
-    require(value != 0)
+  private[gbm] def setReduceParallelism(value: Double): this.type = {
+    require(value != 0 && !value.isNaN && !value.isInfinity)
     reduceParallelism = value
     this
   }
 
-  def updateReduceParallelism(value: Int): this.type = {
-    logInfo(s"parallelism was changed from $reduceParallelism to $value")
+  def updateReduceParallelism(value: Double): this.type = {
+    logInfo(s"reduceParallelism was changed from $reduceParallelism to $value")
     setReduceParallelism(value)
   }
 
-  def getReduceParallelism: Int = reduceParallelism
+  def getReduceParallelism: Double = reduceParallelism
 
-  private[gbm] def getRealReduceParallelism(value: Int): Int = {
-    require(value > 0)
-    if (reduceParallelism > 0) {
-      reduceParallelism
+
+  /** parallelism of split searching */
+  private var trialParallelism: Double = -1.0
+
+  private[gbm] def setTrialParallelism(value: Double): this.type = {
+    require(value != 0 && !value.isNaN && !value.isInfinity)
+    trialParallelism = value
+    this
+  }
+
+  def updateTrialParallelism(value: Double): this.type = {
+    logInfo(s"trialParallelism was changed from $trialParallelism to $value")
+    setTrialParallelism(value)
+  }
+
+  def getTrialParallelism: Double = trialParallelism
+
+
+  private[gbm] def getRealParallelism(value: Double, base: Int): Int = {
+    require(base > 0)
+    if (value > 0) {
+      value.ceil.toInt
     } else {
-      reduceParallelism.abs * value
+      (value.abs * base).ceil.toInt
     }
   }
 

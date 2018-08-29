@@ -233,14 +233,24 @@ class GBM extends Logging with Serializable {
   def getSeed: Long = boostConf.getSeed
 
 
-  /** parallelism of histogram subtraction */
-  def setReduceParallelism(value: Int): this.type = {
-    require(value != 0)
+  /** parallelism of histogram computation */
+  def setReduceParallelism(value: Double): this.type = {
+    require(value != 0 && !value.isNaN && !value.isInfinity)
     boostConf.setReduceParallelism(value)
     this
   }
 
-  def getReduceParallelism: Int = boostConf.getReduceParallelism
+  def getReduceParallelism: Double = boostConf.getReduceParallelism
+
+
+  /** parallelism of split searching */
+  def setTrialParallelism(value: Double): this.type = {
+    require(value != 0 && !value.isNaN && !value.isInfinity)
+    boostConf.setTrialParallelism(value)
+    this
+  }
+
+  def getTrialParallelism: Double = boostConf.getTrialParallelism
 
 
   /** boosting type */

@@ -465,13 +465,28 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val reduceParallelism: IntParam =
-    new IntParam(this, "reduceParallelism", "Parallelism of histogram computation. If negative, means times of defaultParallelism of Spark.",
-      (value: Int) => value != 0)
+  final val reduceParallelism: DoubleParam =
+    new DoubleParam(this, "reduceParallelism", "Parallelism of histogram computation. If negative, means times of defaultParallelism of Spark.",
+      (value: Double) => value != 0 && !value.isNaN && !value.isInfinity)
 
-  def getReduceParallelism: Int = $(reduceParallelism)
+  def getReduceParallelism: Double = $(reduceParallelism)
 
-  setDefault(reduceParallelism -> -1)
+  setDefault(reduceParallelism -> -1.0)
+
+
+  /**
+    * Parallelism of split searching. If negative, means times of defaultParallelism of Spark.
+    * (default = -1)
+    *
+    * @group param
+    */
+  final val trialParallelism: DoubleParam =
+    new DoubleParam(this, "trialParallelism", "Parallelism of split searching. If negative, means times of defaultParallelism of Spark.",
+      (value: Double) => value != 0 && !value.isNaN && !value.isInfinity)
+
+  def getTrialParallelism: Double = $(trialParallelism)
+
+  setDefault(trialParallelism -> -1.0)
 
 
   /**

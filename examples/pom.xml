@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <artifactId>SparkGBM</artifactId>
         <groupId>com.foxmail.ruifengz</groupId>
+        <artifactId>spark-gbm</artifactId>
         <version>2.3.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>

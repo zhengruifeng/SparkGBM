@@ -414,7 +414,6 @@ class GBM extends Logging with Serializable {
     val validation = test.nonEmpty
 
     val discretizer = if (initialModel.nonEmpty) {
-      val initDiscretizer = initialModel.get.discretizer
       require(numCols == initialModel.get.discretizer.numCols)
       logWarning(s"Discretizer is already provided in the initial model, related params are ignored: " +
         s"maxBins,catCols,rankCols,numericalBinType,zeroAsMissing")
@@ -945,12 +944,14 @@ private[gbm] object GBM extends Logging {
 
     // base model indices and grad-hess values in a compact format
     val gradients = if (boostConfig.getSubSample == 1) {
+      val emptyTArray = Array.empty[T]
       instances.zip(rawScores).map { case ((weight, label, _), rawSeq) =>
         val gradHess = computeGradHess(weight, label, rawSeq)
-        (Array.empty[T], gradHess)
+        (emptyTArray, gradHess)
       }
 
     } else {
+      val emptyTuple = (Array.empty[T], Array.empty[H])
       instances.zip(rawScores).mapPartitionsWithIndex { case (partId, iter) =>
         val sampleRNGs = Array.tabulate(numBaseModels)(i =>
           new XORShiftRandom(boostConfig.getSeed + iteration + partId + i))
@@ -964,7 +965,7 @@ private[gbm] object GBM extends Logging {
             val gradHess = computeGradHess(weight, label, rawSeq)
             (baseIds, gradHess)
           } else {
-            (Array.empty[T], Array.empty[H])
+            emptyTuple
           }
         }
       }
@@ -987,6 +988,8 @@ private[gbm] object GBM extends Logging {
       }
 
     } else {
+      val emptyTArray = Array.empty[T]
+      val emptyHArray = Array.empty[H]
       instances.zip(gradients).map { case ((_, _, bins), (baseIds, gradHess)) =>
         if (baseIds.nonEmpty) {
           val treeIds = baseIds.flatMap { i =>
@@ -996,7 +999,7 @@ private[gbm] object GBM extends Logging {
           (bins, treeIds, gradHess)
 
         } else {
-          (bins, Array.empty[T], Array.empty[H])
+          (bins, emptyTArray, emptyHArray)
         }
       }
     }

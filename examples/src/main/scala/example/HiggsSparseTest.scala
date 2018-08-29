@@ -61,7 +61,7 @@ object HiggsSparseTest {
       .setModelCheckpointPath(modelCheckpointPath)
       .setPredictionCol("prediction")
       .setZeroAsMissing(true)
-      .setParallelism(-2)
+      .setReduceParallelism(-2)
 
     val gbmcModel = gbmc.fit(train)
 

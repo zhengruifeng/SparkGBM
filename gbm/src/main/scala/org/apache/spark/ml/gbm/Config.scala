@@ -359,28 +359,28 @@ class BoostConfig extends Logging with Serializable {
   def getEnableSamplePartitions: Boolean = enableSamplePartitions
 
 
-  /** parallelism of histogram computation and leaves splitting */
-  private var parallelism: Int = -1
+  /** parallelism of histogram computation */
+  private var reduceParallelism: Int = -1
 
-  private[gbm] def setParallelism(value: Int): this.type = {
+  private[gbm] def setReduceParallelism(value: Int): this.type = {
     require(value != 0)
-    parallelism = value
+    reduceParallelism = value
     this
   }
 
-  def updateParallelism(value: Long): this.type = {
-    logInfo(s"parallelism was changed from $parallelism to $value")
-    setSeed(value)
+  def updateReduceParallelism(value: Int): this.type = {
+    logInfo(s"parallelism was changed from $reduceParallelism to $value")
+    setReduceParallelism(value)
   }
 
-  def getParallelism: Int = parallelism
+  def getReduceParallelism: Int = reduceParallelism
 
-  private[gbm] def getRealParallelism(value: Int): Int = {
+  private[gbm] def getRealReduceParallelism(value: Int): Int = {
     require(value > 0)
-    if (parallelism > 0) {
-      parallelism
+    if (reduceParallelism > 0) {
+      reduceParallelism
     } else {
-      parallelism.abs * value
+      reduceParallelism.abs * value
     }
   }
 

@@ -233,7 +233,7 @@ private[gbm] object Tree extends Serializable with Logging {
                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
     val sc = data.sparkContext
-    val parallelism = boostConf.getRealParallelism(sc.defaultParallelism)
+    val parallelism = boostConf.getRealReduceParallelism(sc.defaultParallelism)
 
     import PairRDDFunctions._
 
@@ -319,7 +319,7 @@ private[gbm] object Tree extends Serializable with Logging {
                                         cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
     val sc = nodeHists.sparkContext
-    val parallelism = boostConf.getRealParallelism(sc.defaultParallelism)
+    val parallelism = boostConf.getRealReduceParallelism(sc.defaultParallelism)
 
     val threshold = neh.fromFloat(boostConf.getMinNodeHess.toFloat * 2)
 

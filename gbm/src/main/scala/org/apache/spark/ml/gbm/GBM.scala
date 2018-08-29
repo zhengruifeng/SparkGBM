@@ -1164,6 +1164,7 @@ private[gbm] object GBM extends Logging {
 
     // persist if there are batch evaluators
     if (boostConfig.getBatchEvalFunc.nonEmpty) {
+      scores.setName(s"Evaluation Dataset (weight, label, raw, score)")
       scores.persist(boostConfig.getStorageLevel)
     }
 

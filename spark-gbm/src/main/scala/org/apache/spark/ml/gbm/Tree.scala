@@ -1,9 +1,12 @@
 package org.apache.spark.ml.gbm
 
+import java.{util => ju}
+
 import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
 
+import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 
@@ -51,6 +54,9 @@ private[gbm] object Tree extends Serializable with Logging {
     var minNodeId = inn.one
     var depth = 0
 
+    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
+    var treeIds = Array.range(0, baseConf.numTrees)
+
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
       val start = System.nanoTime
 
@@ -65,16 +71,27 @@ private[gbm] object Tree extends Serializable with Logging {
         nodesCheckpointer.update(nodeIds)
       }
 
+      val partitioner = if (treeIds.length * boostConf.getNumCols *
+        boostConf.getColSampleByTree * boostConf.getColSampleByLevel < parallelism * 4) {
+        // partitioning only by treeId-colId tends to cause imbalance
+        new HashPartitioner(parallelism)
+      } else {
+        new HistogramPratitioner[T, C](parallelism, boostConf.getNumCols, treeIds)
+      }
+      logInfo(s"$logPrefix Depth $depth: partitioner $partitioner")
+
+      //      val partitioner = new HashPartitioner(parallelism)
+
       if (inn.equiv(minNodeId, inn.one)) {
         // direct compute the histogram of roots
-        hists = computeHistograms[T, N, C, B, H](data.zip(nodeIds), boostConf, baseConf, (n: N) => true)
+        hists = computeHistograms[T, N, C, B, H](data.zip(nodeIds), boostConf, baseConf, (n: N) => true, partitioner)
       } else {
         // compute the histogram of right leaves
         val rightHists = computeHistograms[T, N, C, B, H](data.zip(nodeIds), boostConf, baseConf,
-          (n: N) => inn.gteq(n, minNodeId) && inn.equiv(inn.rem(n, inn.fromInt(2)), inn.one))
+          (n: N) => inn.gteq(n, minNodeId) && inn.equiv(inn.rem(n, inn.fromInt(2)), inn.one), partitioner)
 
         // compute the histogram of both left leaves and right leaves by subtraction
-        hists = subtractHistograms[T, N, C, B, H](hists, rightHists, boostConf)
+        hists = subtractHistograms[T, N, C, B, H](hists, rightHists, boostConf, partitioner)
       }
       hists.setName(s"Histograms (Iteration ${baseConf.iteration}, depth $depth)")
       histsCheckpointer.update(hists)
@@ -122,6 +139,8 @@ private[gbm] object Tree extends Serializable with Logging {
         }
 
         updateTrees[T, N](roots, minNodeId, prevSplits.toMap)
+
+        treeIds = prevSplits.keys.map(_._1).map(int.toInt).toArray.distinct.sorted
 
         logInfo(s"$logPrefix Depth $depth: splitting finished, $numFinished trees building finished," +
           s" ${prevSplits.size} leaves split, total gain=${prevSplits.values.map(_.gain).sum}," +
@@ -226,15 +245,13 @@ private[gbm] object Tree extends Serializable with Logging {
   def computeHistograms[T, N, C, B, H](data: RDD[((KVVector[C, B], Array[T], Array[H]), Array[N])],
                                        boostConf: BoostConfig,
                                        baseConf: BaseConfig,
-                                       f: N => Boolean)
+                                       f: N => Boolean,
+                                       partitioner: Partitioner)
                                       (implicit ct: ClassTag[T], int: Integral[T],
                                        cn: ClassTag[N], inn: Integral[N],
                                        cc: ClassTag[C], inc: Integral[C],
                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
-    val sc = data.sparkContext
-    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
-
     import PairRDDFunctions._
 
     data.mapPartitions { iter =>
@@ -299,7 +316,7 @@ private[gbm] object Tree extends Serializable with Logging {
         .minus(inb.one, nzHessSum)
         .compressed
 
-    }.reduceByKey(_ plus _, parallelism)
+    }.reduceByKey(partitioner, _ plus _)
   }
 
 
@@ -312,40 +329,53 @@ private[gbm] object Tree extends Serializable with Logging {
     */
   def subtractHistograms[T, N, C, B, H](nodeHists: RDD[((T, N, C), KVVector[B, H])],
                                         rightHists: RDD[((T, N, C), KVVector[B, H])],
-                                        boostConf: BoostConfig)
+                                        boostConf: BoostConfig,
+                                        partitioner: Partitioner)
                                        (implicit ct: ClassTag[T], int: Integral[T],
                                         cn: ClassTag[N], inn: Integral[N],
                                         cc: ClassTag[C], inc: Integral[C],
                                         cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
-    val sc = nodeHists.sparkContext
-    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
-
     val threshold = neh.fromDouble(boostConf.getMinNodeHess * 2)
 
-    rightHists.map { case ((treeId, rightNodeId, colId), rightHist) =>
-      val parentNodeId = inn.quot(rightNodeId, inn.fromInt(2))
-      ((treeId, parentNodeId, colId), rightHist)
+    // Only if the partitioner is a HistogramPratitioner, we can preserves the
+    // partitioning after changing the nodeId in key
+    val preservesPartitioning1 =
+      rightHists.partitioner.nonEmpty &&
+        rightHists.partitioner.get.isInstanceOf[HistogramPratitioner[_, _]]
 
-    }.join(nodeHists, parallelism)
+    val preservesPartitioning2 = partitioner.isInstanceOf[HistogramPratitioner[_, _]]
 
-      .flatMap { case ((treeId, parentNodeId, colId), (rightHist, parentHist)) =>
-        require(rightHist.len <= parentHist.len)
-        val leftNodeId = inn.plus(parentNodeId, parentNodeId)
-        val rightNodeId = inn.plus(leftNodeId, inn.one)
-        val leftHist = parentHist.minus(rightHist)
+    rightHists.mapPartitions(f = { iter =>
+      iter.map { case ((treeId, rightNodeId, colId), rightHist) =>
+        val parentNodeId = inn.quot(rightNodeId, inn.fromInt(2))
+        ((treeId, parentNodeId, colId), rightHist)
+      }
+    }, preservesPartitioning1)
 
-        ((treeId, leftNodeId, colId), leftHist) ::
-          ((treeId, rightNodeId, colId), rightHist) :: Nil
+      .join(nodeHists, partitioner)
 
-      }.filter { case (_, hist) =>
-      // leaves with hess less than minNodeHess * 2 can not grow furthermore
-      val hessSum = hist.activeIter.filter { case (b, _) =>
-        inb.equiv(inb.rem(b, inb.fromInt(2)), inb.one)
-      }.map(_._2).sum
+      .mapPartitions(f = { iter =>
 
-      nuh.gteq(hessSum, threshold) && hist.nnz > 2
-    }
+        iter.flatMap { case ((treeId, parentNodeId, colId), (rightHist, parentHist)) =>
+          require(rightHist.len <= parentHist.len)
+          val leftNodeId = inn.plus(parentNodeId, parentNodeId)
+          val rightNodeId = inn.plus(leftNodeId, inn.one)
+          val leftHist = parentHist.minus(rightHist)
+
+          ((treeId, leftNodeId, colId), leftHist) ::
+            ((treeId, rightNodeId, colId), rightHist) :: Nil
+
+        }.filter { case (_, hist) =>
+          // leaves with hess less than minNodeHess * 2 can not grow furthermore
+          val hessSum = hist.activeIter.filter { case (b, _) =>
+            inb.equiv(inb.rem(b, inb.fromInt(2)), inb.one)
+          }.map(_._2).sum
+
+          nuh.gteq(hessSum, threshold) && hist.nnz > 2
+        }
+
+      }, preservesPartitioning2)
   }
 
 
@@ -378,7 +408,7 @@ private[gbm] object Tree extends Serializable with Logging {
     val parallelism = boostConf.getRealParallelism(boostConf.getTrialParallelism, sc.defaultParallelism)
     val repartitioned = if (sampled.getNumPartitions == parallelism) {
       sampled
-    } else if (parallelism % sampled.getNumPartitions == 0) {
+    } else if (sampled.getNumPartitions % parallelism == 0) {
       sampled.coalesce(parallelism, false)
     } else {
       sampled.coalesce(parallelism, true)
@@ -430,6 +460,52 @@ private[gbm] object Tree extends Serializable with Logging {
 }
 
 
+/**
+  * Partitioner that ignore nodeId in key (treeId, nodeId, colId), this will avoid unnecessary shuffle
+  * in histogram subtraction and reduce communication cost in following split-searching.
+  */
+class HistogramPratitioner[T, C](val numPartitions: Int,
+                                 val numCols: Int,
+                                 val treeIds: Array[Int])
+                                (implicit ct: ClassTag[T], int: Integral[T],
+                                 cc: ClassTag[C], inc: Integral[C]) extends Partitioner {
+  require(numPartitions > 0)
+  require(numCols > 0)
+  require(treeIds.nonEmpty)
+  require(treeIds.forall(_ >= 0))
+  require(Iterator.range(0, treeIds.length - 1).forall(i => treeIds(i) < treeIds(i + 1)))
+
+  private val hash = numPartitions * (numCols + treeIds.sum + treeIds.min + treeIds.max)
+
+  private val treeInterval = numPartitions.toDouble / treeIds.length
+
+  override def getPartition(key: Any): Int = key match {
+    case null => 0
+
+    case (treeId: T, _, colId: C) =>
+      val i = ju.Arrays.binarySearch(treeIds, int.toInt(treeId))
+      require(i >= 0)
+      val p = (i + inc.toDouble(colId) / numCols) * treeInterval
+      math.min(numPartitions - 1, p.toInt)
+  }
+
+  override def equals(other: Any): Boolean = other match {
+    case h: HistogramPratitioner[_, _] =>
+      numPartitions == h.numPartitions && numCols == h.numCols &&
+        treeIds.length == h.treeIds.length &&
+        Iterator.range(0, treeIds.length).forall(i => treeIds(i) == h.treeIds(i))
+
+    case _ =>
+      false
+  }
+
+  override def hashCode: Int = hash
+
+  override def toString: String = {
+    s"HistogramPratitioner(numPartitions=$numPartitions, numCols=$numCols, " +
+      s"treeIds=${treeIds.mkString("[", ",", "]")})"
+  }
+}
 
 
 

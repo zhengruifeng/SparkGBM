@@ -631,7 +631,9 @@ private[gbm] object GBM extends Logging {
     trainRawScores.setName("Train Raw Scores (Initial)")
     val trainRawScoresCheckpointer = new Checkpointer[Array[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
-    trainRawScoresCheckpointer.update(trainRawScores)
+    if (treesBuff.nonEmpty) {
+      trainRawScoresCheckpointer.update(trainRawScores)
+    }
 
     var testRawScores = sc.emptyRDD[Array[H]]
     val testRawScoresCheckpointer = new Checkpointer[Array[H]](sc,
@@ -639,7 +641,9 @@ private[gbm] object GBM extends Logging {
     if (validation && boostConf.getEvalFunc.nonEmpty) {
       testRawScores = computeRawScores[C, B, H](test, treesBuff.toArray, weightsBuff.toArray, boostConf)
       testRawScores.setName("Test Raw Scores (Initial)")
-      testRawScoresCheckpointer.update(testRawScores)
+      if (treesBuff.nonEmpty) {
+        testRawScoresCheckpointer.update(testRawScores)
+      }
     }
 
 
@@ -726,7 +730,7 @@ private[gbm] object GBM extends Logging {
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
-            if (callback.compute(spark, boostConf, snapshot, iter,
+            if (callback.compute(spark, boostConf, snapshot, iter + 1,
               trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
               logInfo(s"$logPrefix callback ${callback.name} stop training")

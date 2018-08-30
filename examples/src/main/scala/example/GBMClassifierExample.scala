@@ -16,7 +16,7 @@ object GBMClassifierExample {
       .appName("GBMClassifierExample")
       .getOrCreate
 
-    spark.sparkContext.setLogLevel("INFO")
+    spark.sparkContext.setLogLevel("DEBUG")
 
     val train = spark.read.format("libsvm").load("data/a9a")
       .select(((col("label") + 1) / 2).cast("int").as("label"), col("features"))
@@ -49,6 +49,7 @@ object GBMClassifierExample {
       .setModelCheckpointInterval(4)
       .setModelCheckpointPath(modelCheckpointPath)
       .setZeroAsMissing(true)
+      .setReduceParallelism(8)
 
     /** train with validation */
     val model = gbmc.fit(train, test)

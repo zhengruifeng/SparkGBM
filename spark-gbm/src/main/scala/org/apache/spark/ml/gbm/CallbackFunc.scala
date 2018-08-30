@@ -170,7 +170,7 @@ class ClassificationModelCheckpoint(val interval: Int,
       Future {
         val start = System.nanoTime
 
-        val currentPath = new Path(path, s"model-${model.numTrees}").toString
+        val currentPath = new Path(path, s"model-$iteration").toString
 
         DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
 
@@ -222,7 +222,7 @@ class RegressionModelCheckpoint(val interval: Int,
       Future {
         val start = System.nanoTime
 
-        val currentPath = new Path(path, s"model-${model.numTrees}").toString
+        val currentPath = new Path(path, s"model-$iteration").toString
 
         DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
 

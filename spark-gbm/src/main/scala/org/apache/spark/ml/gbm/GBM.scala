@@ -748,13 +748,11 @@ private[gbm] object GBM extends Logging {
     }
 
     data.unpersist(blocking = false)
-    trainRawScoresCheckpointer.unpersistDataSet()
-    trainRawScoresCheckpointer.deleteAllCheckpoints()
+    trainRawScoresCheckpointer.cleanup()
 
     if (validation) {
       test.unpersist(blocking = false)
-      testRawScoresCheckpointer.unpersistDataSet()
-      testRawScoresCheckpointer.deleteAllCheckpoints()
+      testRawScoresCheckpointer.cleanup()
     }
 
     new GBMModel(boostConf.getObjFunc, discretizer, rawBase.clone(),

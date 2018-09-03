@@ -12,25 +12,98 @@ import org.apache.spark.rdd._
 import org.apache.spark.util.random.XORShiftRandom
 
 
+private[gbm] class PartitionSelectedRDDPartition[T](val idx: Int,
+                                                    val prev: Partition)
+  extends Partition with Serializable {
+
+  override val index: Int = idx
+}
+
+
+private[gbm] class PartitionSelectedRDD[T: ClassTag](@transient val parent: RDD[T],
+                                                     val partIds: Array[Int]) extends RDD[T](parent) {
+  require(partIds.forall(p => p >= 0 && p < parent.getNumPartitions))
+
+  override def compute(split: Partition, context: TaskContext): Iterator[T] = {
+    val part = split.asInstanceOf[PartitionSelectedRDDPartition[T]]
+    firstParent[T].iterator(part.prev, context)
+  }
+
+  override protected def getPartitions: Array[Partition] = {
+    partIds.zipWithIndex.map { case (partId, i) =>
+      val partition = firstParent[T].partitions(partId)
+      new PartitionSelectedRDDPartition(i, partition)
+    }
+  }
+
+  override def getPreferredLocations(split: Partition): Seq[String] =
+    firstParent[T].preferredLocations(split.asInstanceOf[PartitionSelectedRDDPartition[T]].prev)
+
+  override def getDependencies: Seq[Dependency[_]] = Seq(
+    new NarrowDependency(parent) {
+      def getParents(id: Int): Seq[Int] = Seq(partIds(id))
+    })
+}
+
+
+private[gbm] class PartitionSampledRDDPartition[T](val idx: Int,
+                                                   val prev: Partition,
+                                                   val weight: Double,
+                                                   val seed: Long)
+  extends Partition with Serializable {
+
+  require(weight >= 0 && weight <= 1)
+
+  override val index: Int = idx
+}
+
+private[gbm] class PartitionSampledRDD[T: ClassTag](@transient val parent: RDD[T],
+                                                    val weights: Map[Int, Double],
+                                                    @transient private val seed: Long = System.nanoTime)
+  extends RDD[T](parent) {
+
+  require(weights.keys.forall(_ >= 0))
+  require(weights.values.forall(w => w >= 0 && w <= 1))
+
+  override def compute(split: Partition, context: TaskContext): Iterator[T] = {
+    val part = split.asInstanceOf[PartitionSampledRDDPartition[T]]
+
+    if (part.weight == 0) {
+      Iterator.empty
+    } else if (part.weight == 1) {
+      firstParent[T].iterator(part.prev, context)
+    } else {
+      val rng = new XORShiftRandom(part.seed)
+      firstParent[T].iterator(part.prev, context)
+        .filter(_ => rng.nextDouble < part.weight)
+    }
+  }
+
+  override def getPreferredLocations(split: Partition): Seq[String] =
+    firstParent[T].preferredLocations(split.asInstanceOf[PartitionSampledRDDPartition[T]].prev)
+
+  override protected def getPartitions: Array[Partition] = {
+    val rng = new XORShiftRandom(seed)
+    var idx = -1
+
+    firstParent[T].partitions
+      .filter(p => weights.contains(p.index))
+      .map { p =>
+        idx += 1
+        new PartitionSampledRDDPartition(idx, p, weights(p.index), rng.nextLong)
+      }
+  }
+}
+
+
 private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable {
 
-  def samplePartitions(weights: Map[Int, Double], seed: Long): RDD[T] = {
-    weights.foreach { case (pid, weight) =>
-      require(pid >= 0 && pid < self.getNumPartitions)
-      require(weight >= 0 && weight <= 1)
-    }
+  def selectPartitions(partIds: Array[Int]): RDD[T] = {
+    new PartitionSelectedRDD[T](self, partIds)
+  }
 
-    self.mapPartitionsWithIndex { case (pid, it) =>
-      val w = weights.getOrElse(pid, 0.0)
-      if (w == 1) {
-        it
-      } else if (w == 0) {
-        Iterator.empty
-      } else {
-        val rng = new XORShiftRandom(pid + seed)
-        it.filter(_ => rng.nextDouble < w)
-      }
-    }
+  def samplePartitions(weights: Map[Int, Double], seed: Long): RDD[T] = {
+    new PartitionSampledRDD[T](self, weights, seed)
   }
 
   def samplePartitions(fraction: Double, seed: Long): RDD[T] = {
@@ -48,15 +121,43 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
 
     val weights = mutable.OpenHashMap.empty[Int, Double]
 
-    shuffled.take(m).foreach { p =>
-      weights.update(p, 1.0)
-    }
+    shuffled.take(m).foreach { p => weights.update(p, 1.0) }
 
     if (r > 0) {
       weights.update(shuffled.last, r)
     }
 
     samplePartitions(weights.toMap, seed)
+  }
+
+  def extendPartitions(numPartitions: Int): RDD[T] = {
+    val prevNumPartitions = self.getNumPartitions
+    require(numPartitions >= prevNumPartitions)
+
+    if (numPartitions == prevNumPartitions) {
+      self
+
+    } else {
+      val n = numPartitions / prevNumPartitions
+      val r = numPartitions % prevNumPartitions
+      val partIds = Array.tabulate(numPartitions)(_ % prevNumPartitions)
+
+      selectPartitions(partIds)
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val i = partId / prevNumPartitions
+          val j = partId % prevNumPartitions
+
+          val k = if (j < r) {
+            n + 1
+          } else {
+            n
+          }
+
+          iter.zipWithIndex
+            .filter(_._2 % k == i)
+            .map(_._1)
+        }
+    }
   }
 }
 
@@ -75,8 +176,6 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def aggregatePartitionsByKey[U: ClassTag](zeroValue: U)
                                            (seqOp: (U, V) => U,
                                             combOp: (U, U) => U): RDD[(K, U)] = self.withScope {
-
-    // Serialize the zero value to a byte array so that we can get a new clone of it on each key
     val zeroBuffer = SparkEnv.get.serializer.newInstance().serialize(zeroValue)
     val zeroArray = new Array[Byte](zeroBuffer.limit)
     zeroBuffer.get(zeroArray)
@@ -84,20 +183,21 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     lazy val cachedSerializer = SparkEnv.get.serializer.newInstance()
     val createZero = () => cachedSerializer.deserialize[U](ByteBuffer.wrap(zeroArray))
 
-    // We will clean the combiner closure later in `combineByKey`
     val mergeValue = self.context.clean(seqOp)
 
     val createCombiner = (v: V) => mergeValue(createZero(), v)
     val mergeCombiners = combOp
 
-    require(mergeCombiners != null, "mergeCombiners must be defined") // required as of Spark 0.9.0
+    require(mergeCombiners != null, "mergeCombiners must be defined")
     if (kt.runtimeClass.isArray) {
       throw new SparkException("Cannot use map-side combining with array keys.")
     }
+
     val aggregator = new Aggregator[K, V, U](
       self.context.clean(createCombiner),
       self.context.clean(mergeValue),
       self.context.clean(mergeCombiners))
+
     self.mapPartitions(iter => {
       val context = TaskContext.get()
       new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))

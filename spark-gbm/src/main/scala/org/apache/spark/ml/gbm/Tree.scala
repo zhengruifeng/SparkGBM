@@ -157,10 +157,8 @@ private[gbm] object Tree extends Serializable with Logging {
       logInfo(s"$logPrefix trees building finished")
     }
 
-    nodesCheckpointer.deleteAllCheckpoints()
-    nodesCheckpointer.unpersistDataSet()
-    histsCheckpointer.deleteAllCheckpoints()
-    histsCheckpointer.unpersistDataSet()
+    nodesCheckpointer.cleanup()
+    histsCheckpointer.cleanup()
 
     roots.map(TreeModel.createModel)
   }
@@ -341,8 +339,8 @@ private[gbm] object Tree extends Serializable with Logging {
     // Only if the partitioner is a HistogramPratitioner, we can preserves the
     // partitioning after changing the nodeId in key
     val preservesPartitioning1 =
-      rightHists.partitioner.nonEmpty &&
-        rightHists.partitioner.get.isInstanceOf[HistogramPratitioner[_, _]]
+    rightHists.partitioner.nonEmpty &&
+      rightHists.partitioner.get.isInstanceOf[HistogramPratitioner[_, _]]
 
     val preservesPartitioning2 = partitioner.isInstanceOf[HistogramPratitioner[_, _]]
 
@@ -406,12 +404,14 @@ private[gbm] object Tree extends Serializable with Logging {
     }
 
     val parallelism = boostConf.getRealParallelism(boostConf.getTrialParallelism, sc.defaultParallelism)
-    val repartitioned = if (sampled.getNumPartitions == parallelism) {
+    val repartitioned = if (parallelism == sampled.getNumPartitions) {
       sampled
-    } else if (sampled.getNumPartitions % parallelism == 0) {
+    } else if (parallelism < sampled.getNumPartitions) {
       sampled.coalesce(parallelism, false)
     } else {
-      sampled.coalesce(parallelism, true)
+      import RDDFunctions._
+      sampled.extendPartitions(parallelism)
+//      sampled.sortByKey(true, parallelism)
     }
 
     val (splits, Array(numTrials, numSplits, numDenses, sum, nnz)) =

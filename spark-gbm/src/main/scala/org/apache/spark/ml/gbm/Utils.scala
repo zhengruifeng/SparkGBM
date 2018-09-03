@@ -117,6 +117,8 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   require(storageLevel != StorageLevel.NONE)
   require(maxPersisted > 1)
 
+  private val reliableCheckpoint = sc.getCheckpointDir.nonEmpty
+
   /** FIFO queue of past checkpointed Datasets */
   private val checkpointQueue = mutable.Queue.empty[RDD[T]]
 
@@ -134,66 +136,45 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     * @param data New Dataset created from previous Datasets in the lineage.
     */
   def update(data: RDD[T]): Unit = {
-    persist(data)
+    if (!reliableCheckpoint) {
+      // localCheckpoint don't work if data is persisted and materialized
+      require(data.getStorageLevel == StorageLevel.NONE)
+    }
+
+    data.persist(storageLevel)
     persistedQueue.enqueue(data)
     while (persistedQueue.length > maxPersisted) {
-      unpersist(persistedQueue.dequeue)
+      persistedQueue.dequeue.unpersist(false)
     }
     updateCount += 1
 
-    // Handle checkpointing (after persisting)
-    if (checkpointInterval != -1 && updateCount % checkpointInterval == 0
-      && sc.getCheckpointDir.nonEmpty) {
-      // Add new checkpoint before removing old checkpoints.
-      checkpoint(data)
-      checkpointQueue.enqueue(data)
-      // Remove checkpoints before the latest one.
-      var canDelete = true
-      while (checkpointQueue.length > 1 && canDelete) {
-        // Delete the oldest checkpoint only if the next checkpoint exists.
-        if (isCheckpointed(checkpointQueue.head)) {
-          removeCheckpointFile(checkpointQueue.dequeue)
-        } else {
-          canDelete = false
+
+    if (checkpointInterval != -1) {
+      if (!reliableCheckpoint) {
+        data.localCheckpoint()
+
+      } else if (updateCount % checkpointInterval == 0) {
+        data.checkpoint()
+        checkpointQueue.enqueue(data)
+        // Remove checkpoints before the latest one.
+        var canDelete = true
+        while (checkpointQueue.length > 1 && canDelete) {
+          // Delete the oldest checkpoint only if the next checkpoint exists.
+          if (checkpointQueue.head.isCheckpointed) {
+            removeCheckpointFile(checkpointQueue.dequeue)
+          } else {
+            canDelete = false
+          }
         }
       }
     }
   }
 
-  /** Checkpoint the Dataset */
-  protected def checkpoint(data: RDD[T]): Unit = {
-    data.checkpoint()
-  }
-
-  /** Return true iff the Dataset is checkpointed */
-  protected def isCheckpointed(data: RDD[T]): Boolean = {
-    data.isCheckpointed
-  }
-
-  /**
-    * Persist the Dataset.
-    * Note: This should handle checking the current [[StorageLevel]] of the Dataset.
-    */
-  protected def persist(data: RDD[T]): Unit = {
-    if (data.getStorageLevel == StorageLevel.NONE) {
-      data.persist(storageLevel)
-    }
-  }
-
-  /** Unpersist the Dataset */
-  protected def unpersist(data: RDD[T]): Unit = {
-    data.unpersist(blocking = false)
-  }
-
-  /** Call this to unpersist the Dataset. */
-  def unpersistDataSet(): Unit = {
+  def cleanup(): Unit = {
     while (persistedQueue.nonEmpty) {
-      unpersist(persistedQueue.dequeue)
+      persistedQueue.dequeue.unpersist(false)
     }
-  }
 
-  /** Call this at the end to delete any remaining checkpoint files. */
-  def deleteAllCheckpoints(): Unit = {
     while (checkpointQueue.nonEmpty) {
       removeCheckpointFile(checkpointQueue.dequeue)
     }
@@ -329,6 +310,7 @@ private[gbm] object Utils extends Logging {
 
         classOf[BoostConfig],
         classOf[BaseConfig],
+        classOf[HistogramPratitioner[Any, Any]],
 
         classOf[ColDiscretizer],
         classOf[Array[ColDiscretizer]],
@@ -385,6 +367,7 @@ private[gbm] object Utils extends Logging {
         classOf[ClassificationModelCheckpoint],
         classOf[RegressionModelCheckpoint],
 
+        classOf[KVVector[Any, Any]],
         classOf[KVVector[Byte, Byte]],
         classOf[KVVector[Byte, Short]],
         classOf[KVVector[Byte, Int]],
@@ -401,6 +384,7 @@ private[gbm] object Utils extends Logging {
         classOf[KVVector[Int, Float]],
         classOf[KVVector[Int, Double]],
 
+        classOf[DenseKVVector[Any, Any]],
         classOf[DenseKVVector[Byte, Byte]],
         classOf[DenseKVVector[Byte, Short]],
         classOf[DenseKVVector[Byte, Int]],
@@ -417,6 +401,7 @@ private[gbm] object Utils extends Logging {
         classOf[DenseKVVector[Int, Float]],
         classOf[DenseKVVector[Int, Double]],
 
+        classOf[SparseKVVector[Any, Any]],
         classOf[SparseKVVector[Byte, Byte]],
         classOf[SparseKVVector[Byte, Short]],
         classOf[SparseKVVector[Byte, Int]],

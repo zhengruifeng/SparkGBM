@@ -31,6 +31,8 @@ object GBMRegressorExample {
       .setDropRate(0.1)
       .setDropSkip(0.5)
       .setCheckpointInterval(10)
+      .setSampleBlocks(false)
+      .setBlockSize(2)
       .setSeed(System.currentTimeMillis)
 
     /** train without validation */

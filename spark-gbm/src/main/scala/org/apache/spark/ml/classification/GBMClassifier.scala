@@ -136,9 +136,11 @@ class GBMClassifier(override val uid: String)
 
   def setTrialParallelism(value: Double): this.type = set(trialParallelism, value)
 
-  def setEnableSamplePartitions(value: Boolean): this.type = set(enableSamplePartitions, value)
+  def setSampleBlocks(value: Boolean): this.type = set(sampleBlocks, value)
 
   def setBaseModelParallelism(value: Int): this.type = set(baseModelParallelism, value)
+
+  def setBlockSize(value: Int): this.type = set(blockSize, value)
 
   override def fit(dataset: Dataset[_]): GBMClassificationModel = {
     fit(dataset, None)
@@ -268,8 +270,9 @@ class GBMClassifier(override val uid: String)
       .setZeroAsMissing($(zeroAsMissing))
       .setReduceParallelism($(reduceParallelism))
       .setTrialParallelism($(trialParallelism))
-      .setEnableSamplePartitions($(enableSamplePartitions))
+      .setSampleBlocks($(sampleBlocks))
       .setBaseModelParallelism($(baseModelParallelism))
+      .setBlockSize($(blockSize))
       .setInitialModel(initialModel)
 
     val transLabel = if ($(objectiveFunc) == GBMClassifier.LogisticObj) {

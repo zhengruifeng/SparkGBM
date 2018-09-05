@@ -247,7 +247,7 @@ object GBMModel {
       }.collect().sortBy(_._1).unzip
 
     require(indice.length == indice.distinct.length)
-    require(indice.length == indice.max + 1)
+    require(indice.length == indice.fold(0)(math.max) + 1)
 
     var rawBase = Array.emptyDoubleArray
     var weights = Array.emptyDoubleArray

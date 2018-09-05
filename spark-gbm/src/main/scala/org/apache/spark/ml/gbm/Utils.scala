@@ -117,8 +117,6 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
   require(storageLevel != StorageLevel.NONE)
   require(maxPersisted > 1)
 
-  private val reliableCheckpoint = sc.getCheckpointDir.nonEmpty
-
   /** FIFO queue of past checkpointed Datasets */
   private val checkpointQueue = mutable.Queue.empty[RDD[T]]
 
@@ -136,11 +134,6 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     * @param data New Dataset created from previous Datasets in the lineage.
     */
   def update(data: RDD[T]): Unit = {
-    if (!reliableCheckpoint) {
-      // localCheckpoint don't work if data is persisted and materialized
-      require(data.getStorageLevel == StorageLevel.NONE)
-    }
-
     data.persist(storageLevel)
     persistedQueue.enqueue(data)
     while (persistedQueue.length > maxPersisted) {
@@ -148,23 +141,20 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     }
     updateCount += 1
 
-
-    if (checkpointInterval != -1) {
-      if (!reliableCheckpoint) {
-        data.localCheckpoint()
-
-      } else if (updateCount % checkpointInterval == 0) {
-        data.checkpoint()
-        checkpointQueue.enqueue(data)
-        // Remove checkpoints before the latest one.
-        var canDelete = true
-        while (checkpointQueue.length > 1 && canDelete) {
-          // Delete the oldest checkpoint only if the next checkpoint exists.
-          if (checkpointQueue.head.isCheckpointed) {
-            removeCheckpointFile(checkpointQueue.dequeue)
-          } else {
-            canDelete = false
-          }
+    // Handle checkpointing (after persisting)
+    if (checkpointInterval != -1 && updateCount % checkpointInterval == 0
+      && sc.getCheckpointDir.nonEmpty) {
+      // Add new checkpoint before removing old checkpoints.
+      data.checkpoint()
+      checkpointQueue.enqueue(data)
+      // Remove checkpoints before the latest one.
+      var canDelete = true
+      while (checkpointQueue.length > 1 && canDelete) {
+        // Delete the oldest checkpoint only if the next checkpoint exists.
+        if (checkpointQueue.head.isCheckpointed) {
+          removeCheckpointFile(checkpointQueue.dequeue)
+        } else {
+          canDelete = false
         }
       }
     }

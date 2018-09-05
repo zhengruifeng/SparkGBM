@@ -20,6 +20,18 @@ class BoostConfig extends Logging with Serializable {
   def getBoostType: String = boostType
 
 
+  /** size of block */
+  private var blockSize: Int = 4096
+
+  private[gbm] def setBlockSize(value: Int): this.type = {
+    require(value > 0)
+    blockSize = value
+    this
+  }
+
+  def getBlockSize: Int = blockSize
+
+
   /** maximum number of iterations */
   private var maxIter: Int = 20
 
@@ -343,20 +355,20 @@ class BoostConfig extends Logging with Serializable {
   def getAggregationDepth: Int = aggregationDepth
 
 
-  /** whether to sample partitions instead of instances if possible */
-  private var enableSamplePartitions: Boolean = false
+  /** whether to sample blocks instead of instances if possible */
+  private var sampleBlocks: Boolean = true
 
-  private[gbm] def setEnableSamplePartitions(value: Boolean): this.type = {
-    enableSamplePartitions = value
+  private[gbm] def setSampleBlocks(value: Boolean): this.type = {
+    sampleBlocks = value
     this
   }
 
-  def updateEnableSamplePartitions(value: Boolean): this.type = {
-    logInfo(s"enableSamplePartitions was changed from $enableSamplePartitions to $value")
-    setEnableSamplePartitions(value)
+  def updateSampleBlocks(value: Boolean): this.type = {
+    logInfo(s"sampleBlocks was changed from $sampleBlocks to $value")
+    setSampleBlocks(value)
   }
 
-  def getEnableSamplePartitions: Boolean = enableSamplePartitions
+  def getSampleBlocks: Boolean = sampleBlocks
 
 
   /** parallelism of histogram computation */

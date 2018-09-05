@@ -396,6 +396,128 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
 }
 
 
+class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](val numVecs: Int,
+                                                                                          val indices: Array[K],
+                                                                                          val values: Array[V],
+                                                                                          val steps: Array[Int],
+                                                                                          val vecLen: Int) extends Serializable {
+  require(vecLen > 0)
+
+  if (steps.nonEmpty) {
+    require(steps.length == numVecs)
+  }
+
+  private def getStep(i: Int): Int = {
+    if (steps.nonEmpty) {
+      steps(i)
+    } else {
+      vecLen
+    }
+  }
+
+  def iterator()
+              (implicit ck: ClassTag[K], cv: ClassTag[V]): Iterator[KVVector[K, V]] =
+
+    new Iterator[KVVector[K, V]]() {
+      var i = 0
+      var indexIdx = 0
+      var valueIdx = 0
+
+      val indexBuilder = mutable.ArrayBuilder.make[K]
+      val valueBuilder = mutable.ArrayBuilder.make[V]
+
+      val emptyVec = KVVector.sparse[K, V](vecLen, Array.empty[K], Array.empty[V])
+
+      override def hasNext: Boolean = i < numVecs
+
+      override def next(): KVVector[K, V] = {
+        val step = getStep(i)
+
+        if (step > 0) {
+          valueBuilder.clear()
+
+          var j = 0
+          while (j < step) {
+            valueBuilder += values(valueIdx + j)
+            j += 1
+          }
+
+          i += 1
+          indexIdx += step
+
+          KVVector.dense[K, V](valueBuilder.result())
+
+        } else if (step < 0) {
+          indexBuilder.clear()
+          valueBuilder.clear()
+
+          var j = 0
+          while (j < -step) {
+            indexBuilder += indices(indexIdx + j)
+            valueBuilder += values(valueIdx + j)
+            j += 1
+          }
+
+          i += 1
+          indexIdx -= step
+          valueIdx -= step
+
+          KVVector.sparse[K, V](vecLen, indexBuilder.result(), valueBuilder.result())
+
+        } else {
+
+          i += 1
+          emptyVec
+        }
+      }
+    }
+}
+
+object KVMatrix extends Serializable {
+
+  def build[K, V](iterator: Iterator[KVVector[K, V]])
+                 (implicit ck: ClassTag[K], cv: ClassTag[V]): KVMatrix[K, V] = {
+    val indexBuilder = mutable.ArrayBuilder.make[K]
+    val valueBuilder = mutable.ArrayBuilder.make[V]
+    val stepBuilder = mutable.ArrayBuilder.make[Int]
+
+    var allDense = true
+    var cnt = 0
+    var len = -1
+
+    iterator.foreach { vec =>
+      cnt += 1
+
+      require(vec.len > 0)
+      if (len < 0) {
+        len = vec.len
+      }
+      require(len == vec.len)
+
+      vec match {
+        case dv: DenseKVVector[K, V] =>
+          valueBuilder ++= dv.values
+          stepBuilder += dv.values.length
+
+        case sv: SparseKVVector[K, V] =>
+          allDense = false
+          indexBuilder ++= sv.indices
+          valueBuilder ++= sv.values
+          stepBuilder += -sv.values.length
+      }
+    }
+
+    val steps = if (allDense) {
+      Array.emptyIntArray
+    } else {
+      stepBuilder.result()
+    }
+
+    new KVMatrix[K, V](cnt, indexBuilder.result(), valueBuilder.result(), steps, len)
+  }
+}
+
+
 private trait NumericExt[K] extends Serializable {
 
   def emptyArray: Array[K]

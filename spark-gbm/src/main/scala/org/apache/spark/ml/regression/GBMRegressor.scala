@@ -132,9 +132,11 @@ class GBMRegressor(override val uid: String) extends
 
   def setTrialParallelism(value: Double): this.type = set(trialParallelism, value)
 
-  def setEnableSamplePartitions(value: Boolean): this.type = set(enableSamplePartitions, value)
+  def setSampleBlocks(value: Boolean): this.type = set(sampleBlocks, value)
 
   def setBaseModelParallelism(value: Int): this.type = set(baseModelParallelism, value)
+
+  def setBlockSize(value: Int): this.type = set(blockSize, value)
 
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)
@@ -237,8 +239,9 @@ class GBMRegressor(override val uid: String) extends
       .setZeroAsMissing($(zeroAsMissing))
       .setReduceParallelism($(reduceParallelism))
       .setTrialParallelism($(trialParallelism))
-      .setEnableSamplePartitions($(enableSamplePartitions))
+      .setSampleBlocks($(sampleBlocks))
       .setBaseModelParallelism($(baseModelParallelism))
+      .setBlockSize($(blockSize))
       .setInitialModel(initialModel)
 
 

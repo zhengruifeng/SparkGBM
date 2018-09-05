@@ -411,7 +411,6 @@ private[gbm] object Tree extends Serializable with Logging {
     } else {
       import RDDFunctions._
       sampled.extendPartitions(parallelism)
-//      sampled.sortByKey(true, parallelism)
     }
 
     val (splits, Array(numTrials, numSplits, numDenses, sum, nnz)) =

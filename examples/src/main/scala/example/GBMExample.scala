@@ -102,6 +102,7 @@ object GBMExample {
       .setCallbackFunc(Array(lrUpdater, recoder))
       .setBaseScore(Array(avg))
       .setBaseModelParallelism(3)
+      .setBlockSize(4)
 
     /** train with validation */
     val model = gbm.fit(train, test)

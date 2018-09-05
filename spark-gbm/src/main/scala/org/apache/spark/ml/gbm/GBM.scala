@@ -581,17 +581,7 @@ private[gbm] object GBM extends Logging {
                      (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
-    implicit def kryoEncoder[A](implicit ct: ClassTag[A]) =
-      org.apache.spark.sql.Encoders.kryo[A](ct)
-
-    implicit val KVVectorEncoder = kryoEncoder[(H, Array[H], KVVector[C, B])]
-
     val binData = data.map { case (weight, label, vec) => (weight, label, discretizer.transformToGBMVector[C, B](vec)) }
-
-    val spark  = SparkSession.builder().getOrCreate()
-
-    val count = spark.createDataset(binData).count()
-    logInfo(s"count of train dataset = $count")
 
     val binTest = test.map { case (weight, label, vec) => (weight, label, discretizer.transformToGBMVector[C, B](vec)) }
 
@@ -633,7 +623,6 @@ private[gbm] object GBM extends Logging {
         case (t1, t2) => (t1._1 + t2._1, t1._2 + t2._2)
       }, depth = boostConf.getAggregationDepth)
     logInfo(s"Train Data: $numInstances instances, $numBlocks blocks")
-
 
     val testBlocks = InstanceBlock.blockify[C, B, H](testInstances, boostConf.getBlockSize)
       .setName("Test Blocks")
@@ -1125,15 +1114,6 @@ private[gbm] object GBM extends Logging {
       }
     }
 
-
-    //    val a: RDD[(H, Array[H], KVVector[C, B])] = blocks.flatMap(_.iterator)
-
-    //    data.zip(a).collect().foreach { case ((bin, treeIds, grad), (weight, label, bin2)) =>
-    //      val str = s"Data for tree bin=$bin, bin2=$bin2, treeIds=${treeIds.mkString(",")}, weight=$weight, label=${label.mkString(",")}, grad=${grad.mkString(",")}"
-    //      println(str)
-    //    }
-
-
     val baseConfig = if (boostConf.getColSampleByTree == 1) {
       new BaseConfig(iteration, numTrees, Array.empty)
 
@@ -1158,7 +1138,7 @@ private[gbm] object GBM extends Logging {
 
     logInfo(s"Column Selectors: ${Array.range(0, numTrees).map(baseConfig.getSelector).mkString(",")}")
 
-    val trees = Tree.train[T, N, C, B, H](data.filter(_._2.nonEmpty), boostConf, baseConfig)
+    val trees = Tree.train[T, N, C, B, H](data, boostConf, baseConfig)
 
     persisted.foreach(_.unpersist(false))
     persisted.clear()
@@ -1336,7 +1316,7 @@ private[gbm] object GBM extends Logging {
             offset += step
           }
 
-          array
+          newArray
         }
     }
   }
@@ -1402,17 +1382,19 @@ private[gbm] object GBM extends Logging {
 }
 
 
-class InstanceBlock[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B, @spec(Byte, Short, Int, Long, Float, Double) H](val weights: Array[H],
-                                                                                                                          val labels: Array[H],
-                                                                                                                          val matrix: KVMatrix[C, B]) extends Serializable {
-  def size: Int = weights.length
+class InstanceBlock[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B, @spec(Float, Double) H](val weights: Array[H],
+                                                                                                  val labels: Array[H],
+                                                                                                  val matrix: KVMatrix[C, B]) extends Serializable {
+  def size: Int = matrix.numVecs
 
   require(labels.length % size == 0)
-  require(matrix.numVecs == size)
+  if (weights.nonEmpty) {
+    require(weights.length == size)
+  }
 
   def iterator()
-              (implicit cc: ClassTag[C], cb: ClassTag[B], ch: ClassTag[H]): Iterator[(H, Array[H], KVVector[C, B])] = {
-
+              (implicit cc: ClassTag[C], cb: ClassTag[B],
+               ch: ClassTag[H], nuh: Numeric[H]): Iterator[(H, Array[H], KVVector[C, B])] = {
     weightIterator.zip(labelIterator)
       .zip(vectorIterator)
       .map { case ((weight, label), vec) =>
@@ -1420,10 +1402,17 @@ class InstanceBlock[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B, @spec(
       }
   }
 
-  def weightIterator: Iterator[H] = weights.iterator
+  def weightIterator()
+                    (implicit nuh: Numeric[H]): Iterator[H] = {
+    if (weights.nonEmpty) {
+      weights.iterator
+    } else {
+      Iterator.fill(size)(nuh.one)
+    }
+  }
 
   def labelIterator: Iterator[Array[H]] = {
-    val g = labels.length / weights.length
+    val g = labels.length / size
     labels.grouped(g)
   }
 
@@ -1435,19 +1424,25 @@ class InstanceBlock[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B, @spec(
 object InstanceBlock extends Serializable {
 
   def blockify[C, B, H](instances: Seq[(H, Array[H], KVVector[C, B])])
-                       (implicit cc: ClassTag[C], cb: ClassTag[B], ch: ClassTag[H]): InstanceBlock[C, B, H] = {
+                       (implicit cc: ClassTag[C], cb: ClassTag[B],
+                        ch: ClassTag[H], nuh: Numeric[H]): InstanceBlock[C, B, H] = {
     val weights = instances.map(_._1).toArray
     val labels = instances.flatMap(_._2).toArray
     val matrix = KVMatrix.build[C, B](instances.iterator.map(_._3))
-    new InstanceBlock[C, B, H](weights, labels, matrix)
+
+    if (weights.forall(w => nuh.equiv(w, nuh.one))) {
+      new InstanceBlock[C, B, H](Array.empty[H], labels, matrix)
+    } else {
+      new InstanceBlock[C, B, H](weights, labels, matrix)
+    }
   }
 
 
   def blockify[C, B, H](data: RDD[(H, Array[H], KVVector[C, B])],
                         blockSize: Int)
-                       (implicit cc: ClassTag[C], cb: ClassTag[B], ch: ClassTag[H]): RDD[InstanceBlock[C, B, H]] = {
+                       (implicit cc: ClassTag[C], cb: ClassTag[B],
+                        ch: ClassTag[H], nuh: Numeric[H]): RDD[InstanceBlock[C, B, H]] = {
     require(blockSize > 0)
-
     data.mapPartitions {
       _.grouped(blockSize).map(blockify[C, B, H])
     }
@@ -1457,7 +1452,6 @@ object InstanceBlock extends Serializable {
 
 class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Array[V],
                                                                  val steps: Array[Int]) extends Serializable {
-
   def isEmpty: Boolean = size == 0
 
   def size: Int = steps.length

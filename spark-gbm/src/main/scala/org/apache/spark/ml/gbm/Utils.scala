@@ -300,6 +300,7 @@ private[gbm] object Utils extends Logging {
 
         classOf[BoostConfig],
         classOf[BaseConfig],
+
         classOf[HistogramPratitioner[Any, Any]],
 
         classOf[ColDiscretizer],
@@ -406,7 +407,46 @@ private[gbm] object Utils extends Logging {
         classOf[SparseKVVector[Int, Short]],
         classOf[SparseKVVector[Int, Int]],
         classOf[SparseKVVector[Int, Float]],
-        classOf[SparseKVVector[Int, Double]]))
+        classOf[SparseKVVector[Int, Double]],
+
+        classOf[ArrayBlock[Any]],
+        classOf[ArrayBlock[Byte]],
+        classOf[ArrayBlock[Short]],
+        classOf[ArrayBlock[Int]],
+        classOf[ArrayBlock[Long]],
+        classOf[ArrayBlock[Float]],
+        classOf[ArrayBlock[Double]],
+
+        classOf[KVMatrix[Any, Any]],
+        classOf[KVMatrix[Byte, Byte]],
+        classOf[KVMatrix[Byte, Short]],
+        classOf[KVMatrix[Byte, Int]],
+        classOf[KVMatrix[Short, Byte]],
+        classOf[KVMatrix[Short, Short]],
+        classOf[KVMatrix[Short, Int]],
+        classOf[KVMatrix[Int, Byte]],
+        classOf[KVMatrix[Int, Short]],
+        classOf[KVMatrix[Int, Int]],
+
+        classOf[InstanceBlock[Any, Any, Any]],
+        classOf[InstanceBlock[Byte, Byte, Float]],
+        classOf[InstanceBlock[Byte, Byte, Double]],
+        classOf[InstanceBlock[Byte, Short, Float]],
+        classOf[InstanceBlock[Byte, Short, Double]],
+        classOf[InstanceBlock[Byte, Int, Float]],
+        classOf[InstanceBlock[Byte, Int, Double]],
+        classOf[InstanceBlock[Short, Byte, Float]],
+        classOf[InstanceBlock[Short, Byte, Double]],
+        classOf[InstanceBlock[Short, Short, Float]],
+        classOf[InstanceBlock[Short, Short, Double]],
+        classOf[InstanceBlock[Short, Int, Float]],
+        classOf[InstanceBlock[Short, Int, Double]],
+        classOf[InstanceBlock[Int, Byte, Float]],
+        classOf[InstanceBlock[Int, Byte, Double]],
+        classOf[InstanceBlock[Int, Short, Float]],
+        classOf[InstanceBlock[Int, Short, Double]],
+        classOf[InstanceBlock[Int, Int, Float]],
+        classOf[InstanceBlock[Int, Int, Double]]))
 
       kryoRegistered = true
     }

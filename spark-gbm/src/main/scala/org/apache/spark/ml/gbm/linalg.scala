@@ -396,18 +396,18 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
 }
 
 
-class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](val numVecs: Int,
-                                                                                          val indices: Array[K],
-                                                                                          val values: Array[V],
-                                                                                          val steps: Array[Int],
-                                                                                          val vecLen: Int) extends Serializable {
+class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val numVecs: Int,
+                                                                     val indices: Array[K],
+                                                                     val values: Array[V],
+                                                                     val steps: Array[Int],
+                                                                     val vecLen: Int) extends Serializable {
   require(vecLen > 0)
 
   if (steps.nonEmpty) {
     require(steps.length == numVecs)
   }
 
-  private def getStep(i: Int): Int = {
+  def getStep(i: Int): Int = {
     if (steps.nonEmpty) {
       steps(i)
     } else {
@@ -443,7 +443,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, D
           }
 
           i += 1
-          indexIdx += step
+          valueIdx += step
 
           KVVector.dense[K, V](valueBuilder.result())
 

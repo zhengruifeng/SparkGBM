@@ -139,9 +139,7 @@ object KVVector {
 
 class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](val values: Array[V]) extends KVVector[K, V] {
 
-  override def len: Int = {
-    values.length
-  }
+  override def len: Int = values.length
 
   override def negate()
                      (implicit cv: ClassTag[V],
@@ -184,42 +182,39 @@ class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Flo
 
   override def slice(sorted: Array[Int])
                     (implicit ck: ClassTag[K], ink: Integral[K],
-                     cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+                     cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] =
     KVVector.dense(sorted.map(values))
-  }
+
 
   override def toArray()
                       (implicit ink: Integral[K],
-                       cv: ClassTag[V], nuv: Numeric[V]): Array[V] = {
-    values
-  }
+                       cv: ClassTag[V], nuv: Numeric[V]): Array[V] = values
+
 
   override def totalIter()
                         (implicit ink: Integral[K],
-                         nuv: Numeric[V]): Iterator[(K, V)] = {
+                         nuv: Numeric[V]): Iterator[(K, V)] =
     values.iterator
       .zipWithIndex.map { case (v, i) => (ink.fromInt(i), v) }
-  }
+
 
   override def activeIter()
                          (implicit ink: Integral[K],
-                          nuv: Numeric[V]): Iterator[(K, V)] = {
+                          nuv: Numeric[V]): Iterator[(K, V)] =
     totalIter.filter(t => t._2 != nuv.zero)
-  }
+
 
   def reverseActiveIter()
                        (implicit ink: Integral[K],
-                        nuv: Numeric[V]): Iterator[(K, V)] = {
+                        nuv: Numeric[V]): Iterator[(K, V)] =
     values.reverseIterator
       .zipWithIndex
       .map { case (v, i) => (ink.fromInt(len - 1 - i), v) }
       .filter(t => t._2 != nuv.zero)
-  }
 
   override def nnz()
-                  (implicit nuv: Numeric[V]): Int = {
+                  (implicit nuv: Numeric[V]): Int =
     values.count(_ != nuv.zero)
-  }
 
   override def toDense()
                       (implicit ink: Integral[K],
@@ -357,28 +352,24 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
 
   override def activeIter()
                          (implicit ink: Integral[K],
-                          nuv: Numeric[V]): Iterator[(K, V)] = {
+                          nuv: Numeric[V]): Iterator[(K, V)] =
     indices.iterator.zip(values.iterator)
       .filter(t => t._2 != nuv.zero)
-  }
 
   def reverseActiveIter()
                        (implicit ink: Integral[K],
-                        nuv: Numeric[V]): Iterator[(K, V)] = {
+                        nuv: Numeric[V]): Iterator[(K, V)] =
     indices.reverseIterator.zip(values.reverseIterator)
       .filter(t => t._2 != nuv.zero)
-  }
 
   override def nnz()
-                  (implicit nuv: Numeric[V]): Int = {
+                  (implicit nuv: Numeric[V]): Int =
     values.count(_ != nuv.zero)
-  }
 
   override def toDense()
                       (implicit ink: Integral[K],
-                       cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+                       cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] =
     KVVector.dense[K, V](toArray)
-  }
 
   override def toSparse()
                        (implicit ck: ClassTag[K], ink: Integral[K],
@@ -407,9 +398,15 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
 
 private trait NumericExt[K] extends Serializable {
 
+  def emptyArray: Array[K]
+
   def fromFloat(value: Float): K
 
   def fromDouble(value: Double): K
+
+  def fromDouble(array: Array[Double]): Array[K]
+
+  def toDouble(array: Array[K]): Array[Double]
 
   def search(array: Array[K], value: K): Int
 
@@ -418,9 +415,15 @@ private trait NumericExt[K] extends Serializable {
 
 private object ByteNumericExt extends NumericExt[Byte] {
 
+  override def emptyArray: Array[Byte] = Array.emptyByteArray
+
   override def fromFloat(value: Float): Byte = value.toByte
 
   override def fromDouble(value: Double): Byte = value.toByte
+
+  override def fromDouble(array: Array[Double]): Array[Byte] = array.map(_.toByte)
+
+  override def toDouble(array: Array[Byte]): Array[Double] = array.map(_.toDouble)
 
   override def search(array: Array[Byte], value: Byte): Int = ju.Arrays.binarySearch(array, value)
 
@@ -429,9 +432,15 @@ private object ByteNumericExt extends NumericExt[Byte] {
 
 private object ShortNumericExt extends NumericExt[Short] {
 
+  override def emptyArray: Array[Short] = Array.emptyShortArray
+
   override def fromFloat(value: Float): Short = value.toShort
 
   override def fromDouble(value: Double): Short = value.toShort
+
+  override def fromDouble(array: Array[Double]): Array[Short] = array.map(_.toShort)
+
+  override def toDouble(array: Array[Short]): Array[Double] = array.map(_.toDouble)
 
   override def search(array: Array[Short], value: Short): Int = ju.Arrays.binarySearch(array, value)
 
@@ -440,9 +449,15 @@ private object ShortNumericExt extends NumericExt[Short] {
 
 private object IntNumericExt extends NumericExt[Int] {
 
+  override def emptyArray: Array[Int] = Array.emptyIntArray
+
   override def fromFloat(value: Float): Int = value.toInt
 
   override def fromDouble(value: Double): Int = value.toInt
+
+  override def fromDouble(array: Array[Double]): Array[Int] = array.map(_.toInt)
+
+  override def toDouble(array: Array[Int]): Array[Double] = array.map(_.toDouble)
 
   override def search(array: Array[Int], value: Int): Int = ju.Arrays.binarySearch(array, value)
 
@@ -451,9 +466,15 @@ private object IntNumericExt extends NumericExt[Int] {
 
 private object LongNumericExt extends NumericExt[Long] {
 
+  override def emptyArray: Array[Long] = Array.emptyLongArray
+
   override def fromFloat(value: Float): Long = value.toLong
 
   override def fromDouble(value: Double): Long = value.toLong
+
+  override def fromDouble(array: Array[Double]): Array[Long] = array.map(_.toLong)
+
+  override def toDouble(array: Array[Long]): Array[Double] = array.map(_.toDouble)
 
   override def search(array: Array[Long], value: Long): Int = ju.Arrays.binarySearch(array, value)
 
@@ -462,9 +483,15 @@ private object LongNumericExt extends NumericExt[Long] {
 
 private object FloatNumericExt extends NumericExt[Float] {
 
+  override def emptyArray: Array[Float] = Array.emptyFloatArray
+
   override def fromFloat(value: Float): Float = value
 
   override def fromDouble(value: Double): Float = value.toFloat
+
+  override def fromDouble(array: Array[Double]): Array[Float] = array.map(_.toFloat)
+
+  override def toDouble(array: Array[Float]): Array[Double] = array.map(_.toDouble)
 
   override def search(array: Array[Float], value: Float): Int = ju.Arrays.binarySearch(array, value)
 
@@ -473,9 +500,15 @@ private object FloatNumericExt extends NumericExt[Float] {
 
 private object DoubleNumericExt extends NumericExt[Double] {
 
+  override def emptyArray: Array[Double] = Array.emptyDoubleArray
+
   override def fromFloat(value: Float): Double = value.toDouble
 
   override def fromDouble(value: Double): Double = value
+
+  override def fromDouble(array: Array[Double]): Array[Double] = array
+
+  override def toDouble(array: Array[Double]): Array[Double] = array
 
   override def search(array: Array[Double], value: Double): Int = ju.Arrays.binarySearch(array, value)
 

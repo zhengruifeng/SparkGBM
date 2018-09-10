@@ -1171,39 +1171,53 @@ private[gbm] object GBM extends Logging {
     val rawSize = boostConf.getRawSize
     require(rawSize == rawBase.length)
 
-    boostConf.getBoostType match {
-      case GBTree =>
-        blocks.map { block =>
-          val iter = block.vectorIterator.map { bins =>
-            val raw = rawBase.clone()
-            var j = 0
-            while (j < trees.length) {
-              val p = neh.fromDouble(trees(j).predict(bins.apply))
-              raw(j % rawSize) += p * weights(j)
-              j += 1
+    if (trees.nonEmpty) {
+      boostConf.getBoostType match {
+        case GBTree =>
+          blocks.map { block =>
+            val iter = block.vectorIterator.map { bins =>
+              val raw = rawBase.clone()
+              var j = 0
+              while (j < trees.length) {
+                val p = neh.fromDouble(trees(j).predict(bins.apply))
+                raw(j % rawSize) += p * weights(j)
+                j += 1
+              }
+              raw
             }
-            raw
+
+            ArrayBlock.build[H](iter)
           }
 
-          ArrayBlock.build[H](iter)
-        }
+        case Dart =>
+          blocks.map { block =>
+            val iter = block.vectorIterator.map { bins =>
+              val raw = rawBase.clone() ++ trees.map(tree => neh.fromDouble(tree.predict(bins.apply)))
 
-      case Dart =>
-        blocks.map { block =>
-          val iter = block.vectorIterator.map { bins =>
-            val raw = rawBase.clone() ++ trees.map(tree => neh.fromDouble(tree.predict(bins.apply)))
-
-            var j = 0
-            while (j < trees.length) {
-              val p = raw(rawSize + j)
-              raw(j % rawSize) += p * weights(j)
-              j += 1
+              var j = 0
+              while (j < trees.length) {
+                val p = raw(rawSize + j)
+                raw(j % rawSize) += p * weights(j)
+                j += 1
+              }
+              raw
             }
-            raw
-          }
 
-          ArrayBlock.build[H](iter)
+            ArrayBlock.build[H](iter)
+          }
+      }
+
+    } else {
+      blocks.mapPartitions { iter =>
+        val defaultRawBlock = ArrayBlock.fill[H](rawBase, boostConf.getBlockSize)
+        iter.map { block =>
+          if (block.size == defaultRawBlock.size) {
+            defaultRawBlock
+          } else {
+            ArrayBlock.build[H](Iterator.range(0, block.size).map(_ => rawBase))
+          }
         }
+      }
     }
   }
 
@@ -1275,16 +1289,16 @@ private[gbm] object GBM extends Logging {
                 var j = 0
                 while (j < newTrees.length) {
                   val p = newRaw(rawSize + treeOffset + j)
-                  raw(j % rawSize) += p * weights(treeOffset + j)
+                  newRaw(j % rawSize) += p * weights(treeOffset + j)
                   j += 1
                 }
 
               } else {
-                var j = 0
                 Array.copy(rawBase, 0, newRaw, 0, rawSize)
+                var j = 0
                 while (j < weights.length) {
                   val p = newRaw(rawSize + j)
-                  raw(j % rawSize) += p * weights(j)
+                  newRaw(j % rawSize) += p * weights(j)
                   j += 1
                 }
               }
@@ -1360,7 +1374,7 @@ private[gbm] object GBM extends Logging {
 class InstanceBlock[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B, @spec(Float, Double) H](val weights: Array[H],
                                                                                                   val labels: Array[H],
                                                                                                   val matrix: KVMatrix[C, B]) extends Serializable {
-  def size: Int = matrix.numVecs
+  def size: Int = matrix.size
 
   require(labels.length % size == 0)
   if (weights.nonEmpty) {

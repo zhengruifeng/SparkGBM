@@ -396,16 +396,30 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
 }
 
 
-class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val numVecs: Int,
-                                                                     val indices: Array[K],
-                                                                     val values: Array[V],
-                                                                     val steps: Array[Int],
-                                                                     val vecLen: Int) extends Serializable {
-  require(vecLen > 0)
+class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](
+                                                                      val indices: Array[K],
+                                                                      val values: Array[V],
+                                                                      val steps: Array[Int],
+                                                                      val vecLen: Int) extends Serializable {
+  require(vecLen >= 0)
 
   if (steps.nonEmpty) {
-    require(steps.length == numVecs)
+    require(steps.length == size)
+  } else if (vecLen > 0) {
+    require(values.length % vecLen == 0)
   }
+
+
+  def size: Int = {
+    if (steps.nonEmpty) {
+      steps.length
+    } else if (vecLen > 0) {
+      values.length / vecLen
+    } else {
+      0
+    }
+  }
+
 
   def getStep(i: Int): Int = {
     if (steps.nonEmpty) {
@@ -416,7 +430,9 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val numVecs
   }
 
   def iterator()
-              (implicit ck: ClassTag[K], cv: ClassTag[V]): Iterator[KVVector[K, V]] =
+              (implicit ck: ClassTag[K], cv: ClassTag[V]): Iterator[KVVector[K, V]] = {
+
+    val size_ = size
 
     new Iterator[KVVector[K, V]]() {
       var i = 0
@@ -428,7 +444,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val numVecs
 
       val emptyVec = KVVector.sparse[K, V](vecLen, Array.empty[K], Array.empty[V])
 
-      override def hasNext: Boolean = i < numVecs
+      override def hasNext: Boolean = i < size_
 
       override def next(): KVVector[K, V] = {
         val step = getStep(i)
@@ -471,6 +487,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val numVecs
         }
       }
     }
+  }
 }
 
 object KVMatrix extends Serializable {
@@ -482,12 +499,9 @@ object KVMatrix extends Serializable {
     val stepBuilder = mutable.ArrayBuilder.make[Int]
 
     var allDense = true
-    var cnt = 0
     var len = -1
 
     iterator.foreach { vec =>
-      cnt += 1
-
       require(vec.len > 0)
       if (len < 0) {
         len = vec.len
@@ -513,7 +527,7 @@ object KVMatrix extends Serializable {
       stepBuilder.result()
     }
 
-    new KVMatrix[K, V](cnt, indexBuilder.result(), valueBuilder.result(), steps, len)
+    new KVMatrix[K, V](indexBuilder.result(), valueBuilder.result(), steps, len)
   }
 }
 
@@ -604,6 +618,12 @@ object ArrayBlock extends Serializable {
     } else {
       new ArrayBlock[V](values, steps, 0)
     }
+  }
+
+  def fill[V](array: Array[V], n: Int)
+             (implicit cv: ClassTag[V]): ArrayBlock[V] = {
+    val iter = Iterator.range(0, n).map(_ => array)
+    build[V](iter)
   }
 }
 

@@ -1274,7 +1274,7 @@ private[gbm] object GBM extends Logging {
     * update prediction of instances, containing the final score and the predictions of each tree.
     *
     * @param blocks      instances containing (weight, label, bins)
-    * @param rawScores   previous predictions (may be blockfied)
+    * @param rawBlocks   previous predictions (may be blockfied)
     * @param newTrees    array of trees (new built)
     * @param weights     array of weights (total = old ++ new)
     * @param boostConf   boosting configuration
@@ -1282,7 +1282,7 @@ private[gbm] object GBM extends Logging {
     * @return RDD containing final score and the predictions of each tree
     */
   def updateRawBlocks[C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
-                               rawScores: RDD[ArrayBlock[H]],
+                               rawBlocks: RDD[ArrayBlock[H]],
                                newTrees: Array[TreeModel],
                                weights: Array[H],
                                boostConf: BoostConfig,
@@ -1303,7 +1303,7 @@ private[gbm] object GBM extends Logging {
         val rawBase = neh.fromDouble(boostConf.computeRawBaseScore)
         require(rawSize == rawBase.length)
 
-        blocks.zip(rawScores).map { case (block, rawBlock) =>
+        blocks.zip(rawBlocks).map { case (block, rawBlock) =>
           require(rawBlock.size == block.size)
 
           val iter = block.vectorIterator
@@ -1337,7 +1337,7 @@ private[gbm] object GBM extends Logging {
         }
 
       case _ =>
-        blocks.zip(rawScores).map { case (block, rawBlock) =>
+        blocks.zip(rawBlocks).map { case (block, rawBlock) =>
           require(rawBlock.size == block.size)
 
           val iter = block.vectorIterator

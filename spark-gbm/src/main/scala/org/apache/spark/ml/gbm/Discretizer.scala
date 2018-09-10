@@ -121,13 +121,13 @@ private[gbm] object Discretizer extends Logging {
     }
 
     val (count, aggregated) =
-      vectors.mapPartitions { it =>
+      vectors.mapPartitions { iter =>
         var cnt = 0L
         val aggs = emptyAggs
         val nans = mutable.OpenHashMap.empty[Int, Long]
 
         // only absorb non-zero values
-        it.foreach { vec =>
+        iter.foreach { vec =>
           require(vec.size == numCols)
 
           Utils.getActiveIter(vec).foreach { case (i, v) =>
@@ -178,7 +178,7 @@ private[gbm] object Discretizer extends Logging {
 
 
   /**
-    * Implementation of training a discretizer, by the weay, compute the avg of labels.
+    * Implementation of training a discretizer, by the way, compute the avg of labels.
     */
   private[gbm] def fit2(instances: RDD[(Double, Array[Double], Vector)],
                         numCols: Int,
@@ -208,7 +208,7 @@ private[gbm] object Discretizer extends Logging {
     }
 
     val (_, labelAvg, count, aggregated) =
-      instances.mapPartitions { it =>
+      instances.mapPartitions { iter =>
         var cnt = 0L
         val aggs = emptyAggs
         val nans = mutable.OpenHashMap.empty[Int, Long]
@@ -217,7 +217,7 @@ private[gbm] object Discretizer extends Logging {
         var weightSum = 0.0
 
         // only absorb non-zero values
-        it.foreach { case (weight, label, vec) =>
+        iter.foreach { case (weight, label, vec) =>
           require(vec.size == numCols)
 
           // update avg of label
@@ -257,7 +257,12 @@ private[gbm] object Discretizer extends Logging {
         }
         nans.clear()
 
-        Iterator.single((weightSum, labelAvg, cnt, aggs))
+
+        if (cnt > 0) {
+          Iterator.single((weightSum, labelAvg, cnt, aggs))
+        } else {
+          Iterator.empty
+        }
 
       }.treeReduce(
         f = {

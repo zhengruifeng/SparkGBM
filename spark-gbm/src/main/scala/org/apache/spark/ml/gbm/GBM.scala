@@ -404,6 +404,8 @@ class GBM extends Logging with Serializable {
                       test: Option[RDD[(Double, Array[Double], Vector)]]): GBMModel = {
     if (getBoostType == GBM.Dart) {
       require(getMaxDrop >= getMinDrop)
+    } else if (getBoostType == GBM.Goss) {
+      require(getTopFraction + getOtherFraction <= 1)
     }
 
     val sc = data.sparkContext
@@ -988,20 +990,20 @@ private[gbm] object GBM extends Logging {
       val quantiles = gradBlocks.mapPartitions { iter =>
         val summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold,
           QuantileSummaries.defaultRelativeError)
-        iter.foreach { case (_, sum2s) => sum2s.map(nuh.toDouble).foreach(summary.insert) }
+        iter.foreach { case (_, sum2s) => sum2s.iterator.map(nuh.toDouble).foreach(summary.insert) }
         Iterator.single(summary.compress)
 
       }.treeReduce(f = {
         case (summary1, summary2) => summary1.compress.merge(summary2.compress).compress
       }, depth = boostConf.getAggregationDepth)
 
-      val topThreshold = neh.fromDouble(quantiles.query(boostConf.getTopFraction).get)
+      val topThreshold = neh.fromDouble(quantiles.query(1 - boostConf.getTopFraction).get)
 
       val otherSample = 1 / boostConf.computeOtherReweight
 
       val reweighting = neh.fromDouble(boostConf.computeOtherReweight)
 
-      val treeIds = Array.range(0, numBaseModels).map(int.fromInt)
+      val treeIds = Array.range(0, numTrees).map(int.fromInt)
 
       blocks.zip(gradBlocks).mapPartitionsWithIndex { case (partId, iter) =>
         val sampleRNG = new XORShiftRandom(iteration + partId)
@@ -1040,7 +1042,7 @@ private[gbm] object GBM extends Logging {
       gradBlocks.persist(boostConf.getStorageLevel)
       persisted.append(gradBlocks)
 
-      val treeIds = Array.range(0, numBaseModels).map(int.fromInt)
+      val treeIds = Array.range(0, numTrees).map(int.fromInt)
 
       blocks.zip(gradBlocks).flatMap { case (block, gradBlock) =>
         require(block.size == gradBlock.size)

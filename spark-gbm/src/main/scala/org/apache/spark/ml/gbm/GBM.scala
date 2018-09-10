@@ -987,7 +987,7 @@ private[gbm] object GBM extends Logging {
       gradBlocks.persist(boostConf.getStorageLevel)
       persisted.append(gradBlocks)
 
-      val quantiles = gradBlocks.mapPartitions { iter =>
+      val summary = gradBlocks.mapPartitions { iter =>
         var summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold,
           QuantileSummaries.defaultRelativeError)
         iter.foreach { case (_, sum2s) =>
@@ -1003,7 +1003,8 @@ private[gbm] object GBM extends Logging {
         case (summary1, summary2) => summary1.compress.merge(summary2.compress).compress
       }, depth = boostConf.getAggregationDepth)
 
-      val topThreshold = neh.fromDouble(quantiles.query(1 - boostConf.getTopFraction).get)
+      val topThreshold = neh.fromDouble(summary.query(1 - boostConf.getTopFraction).get)
+      logInfo(s"Iteration $iteration: threshold for top gradient: $topThreshold")
 
       val otherSample = 1 / boostConf.computeOtherReweight
 

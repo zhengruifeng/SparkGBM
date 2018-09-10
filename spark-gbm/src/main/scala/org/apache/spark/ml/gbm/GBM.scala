@@ -23,7 +23,6 @@ class GBM extends Logging with Serializable {
 
   /** maximum number of iterations */
   def setMaxIter(value: Int): this.type = {
-    require(value >= 0)
     boostConf.setMaxIter(value)
     this
   }
@@ -33,7 +32,6 @@ class GBM extends Logging with Serializable {
 
   /** maximum tree depth */
   def setMaxDepth(value: Int): this.type = {
-    require(value >= 1 && value <= 30)
     boostConf.setMaxDepth(value)
     this
   }
@@ -43,7 +41,6 @@ class GBM extends Logging with Serializable {
 
   /** maximum number of tree leaves */
   def setMaxLeaves(value: Int): this.type = {
-    require(value >= 2)
     boostConf.setMaxLeaves(value)
     this
   }
@@ -53,7 +50,6 @@ class GBM extends Logging with Serializable {
 
   /** minimum gain for each split */
   def setMinGain(value: Double): this.type = {
-    require(value >= 0 && !value.isNaN && !value.isInfinity)
     boostConf.setMinGain(value)
     this
   }
@@ -63,8 +59,6 @@ class GBM extends Logging with Serializable {
 
   /** base score for global bias */
   def setBaseScore(value: Array[Double]): this.type = {
-    require(value.nonEmpty)
-    require(value.forall(v => !v.isNaN && !v.isInfinity))
     boostConf.setBaseScore(value)
     this
   }
@@ -74,7 +68,6 @@ class GBM extends Logging with Serializable {
 
   /** minimum sum of hess for each node */
   def setMinNodeHess(value: Double): this.type = {
-    require(value >= 0 && !value.isNaN && !value.isInfinity)
     boostConf.setMinNodeHess(value)
     this
   }
@@ -84,7 +77,6 @@ class GBM extends Logging with Serializable {
 
   /** learning rate */
   def setStepSize(value: Double): this.type = {
-    require(value > 0 && !value.isNaN && !value.isInfinity)
     boostConf.setStepSize(value)
     this
   }
@@ -94,7 +86,6 @@ class GBM extends Logging with Serializable {
 
   /** L1 regularization term on weights */
   def setRegAlpha(value: Double): this.type = {
-    require(value >= 0 && !value.isNaN && !value.isInfinity)
     boostConf.setRegAlpha(value)
     this
   }
@@ -104,7 +95,6 @@ class GBM extends Logging with Serializable {
 
   /** L2 regularization term on weights */
   def setRegLambda(value: Double): this.type = {
-    require(value >= 0 && !value.isNaN && !value.isInfinity)
     boostConf.setRegLambda(value)
     this
   }
@@ -114,7 +104,6 @@ class GBM extends Logging with Serializable {
 
   /** objective function */
   def setObjFunc(value: ObjFunc): this.type = {
-    require(value != null)
     boostConf.setObjFunc(value)
     this
   }
@@ -124,7 +113,6 @@ class GBM extends Logging with Serializable {
 
   /** evaluation functions */
   def setEvalFunc(value: Array[EvalFunc]): this.type = {
-    require(value.map(_.name).distinct.length == value.length)
     boostConf.setEvalFunc(value)
     this
   }
@@ -134,7 +122,6 @@ class GBM extends Logging with Serializable {
 
   /** callback functions */
   def setCallbackFunc(value: Array[CallbackFunc]): this.type = {
-    require(value.map(_.name).distinct.length == value.length)
     boostConf.setCallbackFunc(value)
     this
   }
@@ -168,7 +155,6 @@ class GBM extends Logging with Serializable {
 
   /** subsample ratio of the training instance */
   def setSubSample(value: Double): this.type = {
-    require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
     boostConf.setSubSample(value)
     this
   }
@@ -178,7 +164,6 @@ class GBM extends Logging with Serializable {
 
   /** subsample ratio of columns when constructing each tree */
   def setColSampleByTree(value: Double): this.type = {
-    require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
     boostConf.setColSampleByTree(value)
     this
   }
@@ -188,7 +173,6 @@ class GBM extends Logging with Serializable {
 
   /** subsample ratio of columns when constructing each level */
   def setColSampleByLevel(value: Double): this.type = {
-    require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
     boostConf.setColSampleByLevel(value)
     this
   }
@@ -198,7 +182,6 @@ class GBM extends Logging with Serializable {
 
   /** checkpoint interval */
   def setCheckpointInterval(value: Int): this.type = {
-    require(value == -1 || value > 0)
     boostConf.setCheckpointInterval(value)
     this
   }
@@ -208,7 +191,6 @@ class GBM extends Logging with Serializable {
 
   /** storage level */
   def setStorageLevel(value: StorageLevel): this.type = {
-    require(value != StorageLevel.NONE)
     boostConf.setStorageLevel(value)
     this
   }
@@ -218,7 +200,6 @@ class GBM extends Logging with Serializable {
 
   /** depth for treeAggregate */
   def setAggregationDepth(value: Int): this.type = {
-    require(value >= 2)
     boostConf.setAggregationDepth(value)
     this
   }
@@ -237,7 +218,6 @@ class GBM extends Logging with Serializable {
 
   /** parallelism of histogram computation */
   def setReduceParallelism(value: Double): this.type = {
-    require(value != 0 && !value.isNaN && !value.isInfinity)
     boostConf.setReduceParallelism(value)
     this
   }
@@ -247,7 +227,6 @@ class GBM extends Logging with Serializable {
 
   /** parallelism of split searching */
   def setTrialParallelism(value: Double): this.type = {
-    require(value != 0 && !value.isNaN && !value.isInfinity)
     boostConf.setTrialParallelism(value)
     this
   }
@@ -257,7 +236,6 @@ class GBM extends Logging with Serializable {
 
   /** boosting type */
   def setBoostType(value: String): this.type = {
-    require(value == GBM.GBTree || value == GBM.Dart || value == GBM.Goss)
     boostConf.setBoostType(value)
     this
   }
@@ -267,7 +245,6 @@ class GBM extends Logging with Serializable {
 
   /** dropout rate */
   def setDropRate(value: Double): this.type = {
-    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
     boostConf.setDropRate(value)
     this
   }
@@ -277,7 +254,6 @@ class GBM extends Logging with Serializable {
 
   /** probability of skipping drop */
   def setDropSkip(value: Double): this.type = {
-    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
     boostConf.setDropSkip(value)
     this
   }
@@ -286,7 +262,6 @@ class GBM extends Logging with Serializable {
 
   /** minimum number of dropped trees in each iteration */
   def setMinDrop(value: Int): this.type = {
-    require(value >= 0)
     boostConf.setMinDrop(value)
     this
   }
@@ -304,7 +279,7 @@ class GBM extends Logging with Serializable {
 
 
   /** retain fraction of large gradient data in GOSS */
-  def setTopFraction(value: Double): this.type  = {
+  def setTopFraction(value: Double): this.type = {
     boostConf.setTopFraction(value)
     this
   }
@@ -313,7 +288,7 @@ class GBM extends Logging with Serializable {
 
 
   /** retain fraction of small gradient data in GOSS */
-  def setOtherFraction(value: Double): this.type  = {
+  def setOtherFraction(value: Double): this.type = {
     boostConf.setOtherFraction(value)
     this
   }
@@ -331,7 +306,6 @@ class GBM extends Logging with Serializable {
 
   /** Double precision to represent internal gradient, hessian and prediction */
   def setFloatType(value: String): this.type = {
-    require(value == GBM.SinglePrecision || value == GBM.DoublePrecision)
     boostConf.setFloatType(value)
     this
   }
@@ -341,7 +315,6 @@ class GBM extends Logging with Serializable {
 
   /** number of base models in one round */
   def setBaseModelParallelism(value: Int): this.type = {
-    require(value > 0)
     boostConf.setBaseModelParallelism(value)
     this
   }
@@ -360,7 +333,6 @@ class GBM extends Logging with Serializable {
 
   /** size of block */
   def setBlockSize(value: Int): this.type = {
-    require(value > 0)
     boostConf.setBlockSize(value)
     this
   }
@@ -395,7 +367,7 @@ class GBM extends Logging with Serializable {
   private var numericalBinType: String = GBM.Width
 
   def setNumericalBinType(value: String): this.type = {
-    require(value == GBM.Width || value == GBM.Depth)
+    require(value == GBM.SinglePrecision || value == GBM.DoublePrecision)
     numericalBinType = value
     this
   }
@@ -441,47 +413,32 @@ class GBM extends Logging with Serializable {
 
     val validation = test.nonEmpty && getEvalFunc.nonEmpty
 
-    val discretizer = if (initialModel.nonEmpty) {
-      require(numCols == initialModel.get.discretizer.numCols)
-      logWarning(s"Discretizer is already provided in the initial model, related params are ignored: " +
-        s"maxBins,catCols,rankCols,numericalBinType,zeroAsMissing")
-      initialModel.get.discretizer
-
-    } else {
-      require(getCatCols.forall(v => v >= 0 && v < numCols))
-      require(getRankCols.forall(v => v >= 0 && v < numCols))
-      require((getCatCols & getRankCols).isEmpty)
-
-      Discretizer.fit(data.map(_._3), numCols, boostConf.getCatCols, boostConf.getRankCols,
-        maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
-    }
-    logInfo(s"Bins: ${discretizer.numBins.mkString(",")}, " +
-      s"Min: ${discretizer.numBins.min}, Max: ${discretizer.numBins.max}, " +
-      s"Avg: ${discretizer.numBins.sum.toDouble / discretizer.numCols}")
-    logInfo(s"Sparsity of train data: ${discretizer.sparsity}")
-
+    var labelAvg = Array.emptyDoubleArray
+    var discretizer = null.asInstanceOf[Discretizer]
 
     if (initialModel.nonEmpty) {
+      require(numCols == initialModel.get.discretizer.numCols)
+
+      discretizer = initialModel.get.discretizer
+      logWarning(s"Discretizer is already provided in the initial model, related params are ignored: " +
+        s"maxBins,catCols,rankCols,numericalBinType,zeroAsMissing")
+
       val baseScore_ = initialModel.get.baseScore
+      boostConf.setBaseScore(baseScore_)
       logWarning(s"BaseScore is already provided in the initial model, related param is overridden: " +
         s"${boostConf.getBaseScore.mkString(",")} -> ${baseScore_.mkString(",")}")
-      boostConf.setBaseScore(baseScore_)
 
-    } else if (boostConf.getBaseScore.isEmpty) {
+    } else {
+      val t = Discretizer.fit2(data, numCols, boostConf.getCatCols, boostConf.getRankCols,
+        maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
+      discretizer = t._1
+      labelAvg = t._2
+    }
 
-      val (_, avgLabel) = data.map { case (weight, label, _) =>
-        (weight, label)
-      }.treeReduce(f = {
-        case ((w1, avg1), (w2, avg2)) =>
-          require(avg1.length == avg2.length)
-          val w = w1 + w2
-          avg1.indices.foreach { i => avg1(i) += (avg2(i) - avg1(i)) * w2 / w }
-          (w, avg1)
-      }, depth = boostConf.getAggregationDepth)
-
+    if (boostConf.getBaseScore.isEmpty) {
       logInfo(s"Basescore is not provided, assign it to average label value " +
         s"${boostConf.getBaseScore.mkString(",")}")
-      boostConf.setBaseScore(avgLabel)
+      boostConf.setBaseScore(labelAvg)
     }
 
     val rawBase = boostConf.computeRawBaseScore

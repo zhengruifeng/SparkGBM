@@ -488,7 +488,7 @@ class BoostConfig extends Logging with Serializable {
   private var evalFunc: Array[EvalFunc] = Array.empty
 
   private[gbm] def setEvalFunc(value: Array[EvalFunc]): this.type = {
-    require(value != null)
+    require(value != null && value.map(_.name).distinct.length == value.length)
     evalFunc = value
     this
   }
@@ -519,7 +519,7 @@ class BoostConfig extends Logging with Serializable {
   private var callbackFunc: Array[CallbackFunc] = Array.empty
 
   private[gbm] def setCallbackFunc(value: Array[CallbackFunc]): this.type = {
-    require(value.map(_.name).distinct.length == value.length)
+    require(value != null && value.map(_.name).distinct.length == value.length)
     callbackFunc = value
     this
   }
@@ -536,7 +536,6 @@ class BoostConfig extends Logging with Serializable {
   private var baseScore: Array[Double] = Array.empty
 
   private[gbm] def setBaseScore(value: Array[Double]): this.type = {
-    require(value.nonEmpty)
     require(value.forall(v => !v.isNaN && !v.isInfinity))
     baseScore = value
     this

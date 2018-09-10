@@ -219,27 +219,27 @@ class GBMClassifier(override val uid: String)
         None
       }
 
-    val baseScore_ = $(objectiveFunc) match {
-      case GBMClassifier.LogisticObj =>
-        if ($(baseScore).nonEmpty) {
-          require($(baseScore).length == 1)
-          $(baseScore)
-        } else {
-          // share of positive
-          val sum = labelWeights.values.sum
-          Array(labelWeights(1) / sum)
-        }
-
-      case GBMClassifier.SoftmaxObj =>
-        if ($(baseScore).nonEmpty) {
-          require($(baseScore).length == numClasses)
-          $(baseScore)
-        } else {
-          // share of classes
-          val sum = labelWeights.values.sum
-          labelWeights.toArray.sortBy(_._1).map(_._2 / sum)
-        }
-    }
+    //    val baseScore_ = $(objectiveFunc) match {
+    //      case GBMClassifier.LogisticObj =>
+    //        if ($(baseScore).nonEmpty) {
+    //          require($(baseScore).length == 1)
+    //          $(baseScore)
+    //        } else {
+    //          // share of positive
+    //          val sum = labelWeights.values.sum
+    //          Array(labelWeights(1) / sum)
+    //        }
+    //
+    //      case GBMClassifier.SoftmaxObj =>
+    //        if ($(baseScore).nonEmpty) {
+    //          require($(baseScore).length == numClasses)
+    //          $(baseScore)
+    //        } else {
+    //          // share of classes
+    //          val sum = labelWeights.values.sum
+    //          labelWeights.toArray.sortBy(_._1).map(_._2 / sum)
+    //        }
+    //    }
 
     val gbm = new GBM
     gbm.setMaxIter($(maxIter))
@@ -248,7 +248,7 @@ class GBMClassifier(override val uid: String)
       .setMaxBins($(maxBins))
       .setMinGain($(minGain))
       .setMinNodeHess($(minNodeHess))
-      .setBaseScore(baseScore_)
+      .setBaseScore($(baseScore))
       .setStepSize($(stepSize))
       .setRegAlpha($(regAlpha))
       .setRegLambda($(regLambda))

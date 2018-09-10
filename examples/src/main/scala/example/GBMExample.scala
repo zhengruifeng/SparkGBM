@@ -28,12 +28,6 @@ object GBMExample {
       (1.0, Array(row.getDouble(0)), row.getAs[Vector](1))
     }
 
-    val (sum, count) = rdd.map(t => (t._2.head, 1L))
-      .treeReduce(f = {
-        case ((sum1, count1), (sum2, count2)) => (sum1 + sum2, count1 + count2)
-      })
-    val avg = sum / count
-
     val Array(train, test) = rdd.randomSplit(Array(0.8, 0.2), seed = 123456)
 
     /** User defined objective function */
@@ -101,7 +95,6 @@ object GBMExample {
       .setObjFunc(obj)
       .setEvalFunc(Array(r2Eval, maeEval, new R2Eval))
       .setCallbackFunc(Array(lrUpdater, recoder))
-      .setBaseScore(Array(avg))
       .setBaseModelParallelism(3)
       .setBlockSize(4)
 

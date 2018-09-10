@@ -202,13 +202,13 @@ class GBMRegressor(override val uid: String) extends
       lit(1.0)
     }
 
-    val baseScore_ = if ($(baseScore).nonEmpty) {
-      require($(baseScore).length == 1)
-      $(baseScore)
-    } else {
-      val average = dataset.select(avg(col($(labelCol)) * w)).first.getDouble(0)
-      Array(average)
-    }
+    //    val baseScore_ = if ($(baseScore).nonEmpty) {
+    //      require($(baseScore).length == 1)
+    //      $(baseScore)
+    //    } else {
+    //      val average = dataset.select(avg(col($(labelCol)) * w)).first.getDouble(0)
+    //      Array(average)
+    //    }
 
     val gbm = new GBM
     gbm.setMaxIter($(maxIter))
@@ -217,7 +217,7 @@ class GBMRegressor(override val uid: String) extends
       .setMaxBins($(maxBins))
       .setMinGain($(minGain))
       .setMinNodeHess($(minNodeHess))
-      .setBaseScore(baseScore_)
+      .setBaseScore($(baseScore))
       .setStepSize($(stepSize))
       .setRegAlpha($(regAlpha))
       .setRegLambda($(regLambda))

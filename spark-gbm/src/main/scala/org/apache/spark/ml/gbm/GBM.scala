@@ -9,6 +9,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.util.QuantileSummaries
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.random.XORShiftRandom
 
@@ -256,7 +257,7 @@ class GBM extends Logging with Serializable {
 
   /** boosting type */
   def setBoostType(value: String): this.type = {
-    require(value == GBM.GBTree || value == GBM.Dart)
+    require(value == GBM.GBTree || value == GBM.Dart || value == GBM.Goss)
     boostConf.setBoostType(value)
     this
   }
@@ -295,7 +296,6 @@ class GBM extends Logging with Serializable {
 
   /** maximum number of dropped trees in each iteration */
   def setMaxDrop(value: Int): this.type = {
-    require(value >= 0)
     boostConf.setMaxDrop(value)
     this
   }
@@ -303,9 +303,26 @@ class GBM extends Logging with Serializable {
   def getMaxDrop: Int = boostConf.getMaxDrop
 
 
+  /** retain fraction of large gradient data in GOSS */
+  def setTopFraction(value: Double): this.type  = {
+    boostConf.setTopFraction(value)
+    this
+  }
+
+  def getTopFraction: Double = boostConf.getTopFraction
+
+
+  /** retain fraction of small gradient data in GOSS */
+  def setOtherFraction(value: Double): this.type  = {
+    boostConf.setOtherFraction(value)
+    this
+  }
+
+  def getOtherFraction: Double = boostConf.getOtherFraction
+
+
   /** the maximum number of non-zero histogram bins to search split for categorical columns by brute force */
   def setMaxBruteBins(value: Int): this.type = {
-    require(value >= 0)
     boostConf.setMaxBruteBins(value)
     this
   }
@@ -483,6 +500,7 @@ private[gbm] object GBM extends Logging {
 
   val GBTree = "gbtree"
   val Dart = "dart"
+  val Goss = "goss"
 
   val Width = "width"
   val Depth = "depth"
@@ -802,6 +820,9 @@ private[gbm] object GBM extends Logging {
       case GBTree =>
         weights.appendAll(Iterator.fill(trees.length)(neh.fromDouble(boostConf.getStepSize)))
 
+      case Goss =>
+        weights.appendAll(Iterator.fill(trees.length)(neh.fromDouble(boostConf.getStepSize)))
+
       case Dart if dropped.isEmpty =>
         weights.appendAll(Iterator.fill(trees.length)(nuh.one))
 
@@ -944,6 +965,9 @@ private[gbm] object GBM extends Logging {
       case GBTree =>
         rawSeq: Array[H] => rawSeq
 
+      case Goss =>
+        rawSeq: Array[H] => rawSeq
+
       case Dart if dropped.isEmpty =>
         rawSeq: Array[H] => rawSeq.take(rawSize)
 
@@ -981,23 +1005,90 @@ private[gbm] object GBM extends Logging {
         val iter = block.weightIterator
           .zip(block.labelIterator)
           .zip(rawBlock.iterator)
-          .map { case ((weight, label), rawSeq) =>
-            computeGrad(weight, label, rawSeq)
-          }
+          .map { case ((weight, label), rawSeq) => computeGrad(weight, label, rawSeq) }
 
         ArrayBlock.build[H](iter)
       }
 
 
-    val data = if (boostConf.getSubSample == 1) {
+    val data = if (boostConf.getBoostType == Goss) {
+      val gradBlocks = blocks.zip(rawBlocks)
+        .map { case (block, rawBlock) =>
+          val gradBlock = computeGradBlock(block, rawBlock)
+
+          val gradSum2Seq = gradBlock.iterator.map { gradHess =>
+            var gradSum2 = nuh.zero
+            var i = 0
+            while (i < gradHess.length) {
+              gradSum2 += gradHess(i) * gradHess(i)
+              i += 2
+            }
+            gradSum2
+          }.toArray
+
+          (gradBlock, gradSum2Seq)
+        }
+
+      gradBlocks.setName(s"GradientBlocks with Gradient-Norm Arrays (iteration $iteration)")
+      gradBlocks.persist(boostConf.getStorageLevel)
+      persisted.append(gradBlocks)
+
+      val quantiles = gradBlocks.mapPartitions { iter =>
+        val summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold,
+          QuantileSummaries.defaultRelativeError)
+        iter.foreach { case (_, sum2s) => sum2s.map(nuh.toDouble).foreach(summary.insert) }
+        Iterator.single(summary.compress)
+
+      }.treeReduce(f = {
+        case (summary1, summary2) => summary1.compress.merge(summary2.compress).compress
+      }, depth = boostConf.getAggregationDepth)
+
+      val topThreshold = neh.fromDouble(quantiles.query(boostConf.getTopFraction).get)
+
+      val otherSample = 1 / boostConf.computeOtherReweight
+
+      val reweighting = neh.fromDouble(boostConf.computeOtherReweight)
+
       val treeIds = Array.range(0, numBaseModels).map(int.fromInt)
 
+      blocks.zip(gradBlocks).mapPartitionsWithIndex { case (partId, iter) =>
+        val sampleRNG = new XORShiftRandom(iteration + partId)
+
+        iter.flatMap { case (block, (gradBlock, gradSum2Seq)) =>
+          require(block.size == gradBlock.size)
+          require(block.size == gradSum2Seq.length)
+
+          block.vectorIterator
+            .zip(gradBlock.iterator)
+            .zip(gradSum2Seq.iterator)
+            .flatMap { case ((bin, grad), gradSum2) =>
+              if (gradSum2 >= topThreshold) {
+                Iterator.single((bin, treeIds, grad))
+
+              } else if (sampleRNG.nextDouble < otherSample) {
+                var i = 0
+                while (i < grad.length) {
+                  grad(i) *= reweighting
+                  i += 1
+                }
+                Iterator.single((bin, treeIds, grad))
+
+              } else {
+                Iterator.empty
+              }
+            }
+        }
+      }.setName(s"Gradients with TreeIds (iteration $iteration) (Gradient-based One-Side Sampled)")
+
+    } else if (boostConf.getSubSample == 1) {
       val gradBlocks = blocks.zip(rawBlocks)
         .map { case (block, rawBlock) => computeGradBlock(block, rawBlock) }
 
       gradBlocks.setName(s"GradientBlocks (iteration $iteration)")
       gradBlocks.persist(boostConf.getStorageLevel)
       persisted.append(gradBlocks)
+
+      val treeIds = Array.range(0, numBaseModels).map(int.fromInt)
 
       blocks.zip(gradBlocks).flatMap { case (block, gradBlock) =>
         require(block.size == gradBlock.size)
@@ -1173,13 +1264,14 @@ private[gbm] object GBM extends Logging {
 
     if (trees.nonEmpty) {
       boostConf.getBoostType match {
-        case GBTree =>
+        case Dart =>
           blocks.map { block =>
             val iter = block.vectorIterator.map { bins =>
-              val raw = rawBase.clone()
+              val raw = rawBase.clone() ++ trees.map(tree => neh.fromDouble(tree.predict(bins.apply)))
+
               var j = 0
               while (j < trees.length) {
-                val p = neh.fromDouble(trees(j).predict(bins.apply))
+                val p = raw(rawSize + j)
                 raw(j % rawSize) += p * weights(j)
                 j += 1
               }
@@ -1189,14 +1281,13 @@ private[gbm] object GBM extends Logging {
             ArrayBlock.build[H](iter)
           }
 
-        case Dart =>
+        case _ =>
           blocks.map { block =>
             val iter = block.vectorIterator.map { bins =>
-              val raw = rawBase.clone() ++ trees.map(tree => neh.fromDouble(tree.predict(bins.apply)))
-
+              val raw = rawBase.clone()
               var j = 0
               while (j < trees.length) {
-                val p = raw(rawSize + j)
+                val p = neh.fromDouble(trees(j).predict(bins.apply))
                 raw(j % rawSize) += p * weights(j)
                 j += 1
               }
@@ -1251,27 +1342,6 @@ private[gbm] object GBM extends Logging {
     val treeOffset = weights.length - newTrees.length
 
     boostConf.getBoostType match {
-      case GBTree =>
-        blocks.zip(rawScores).map { case (block, rawBlock) =>
-          require(rawBlock.size == block.size)
-
-          val iter = block.vectorIterator
-            .zip(rawBlock.iterator)
-            .map { case (bins, raw) =>
-              require(raw.length == rawSize)
-              var j = 0
-              while (j < newTrees.length) {
-                val p = neh.fromDouble(newTrees(j).predict(bins.apply))
-                raw(j % rawSize) += p * weights(treeOffset + j)
-                j += 1
-              }
-              raw
-            }
-
-          ArrayBlock.build[H](iter)
-        }
-
-
       case Dart =>
         val rawBase = neh.fromDouble(boostConf.computeRawBaseScore)
         require(rawSize == rawBase.length)
@@ -1304,6 +1374,26 @@ private[gbm] object GBM extends Logging {
               }
 
               newRaw
+            }
+
+          ArrayBlock.build[H](iter)
+        }
+
+      case _ =>
+        blocks.zip(rawScores).map { case (block, rawBlock) =>
+          require(rawBlock.size == block.size)
+
+          val iter = block.vectorIterator
+            .zip(rawBlock.iterator)
+            .map { case (bins, raw) =>
+              require(raw.length == rawSize)
+              var j = 0
+              while (j < newTrees.length) {
+                val p = neh.fromDouble(newTrees(j).predict(bins.apply))
+                raw(j % rawSize) += p * weights(treeOffset + j)
+                j += 1
+              }
+              raw
             }
 
           ArrayBlock.build[H](iter)

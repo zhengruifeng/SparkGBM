@@ -112,6 +112,10 @@ class GBMClassifier(override val uid: String)
 
   def setMaxDrop(value: Int): this.type = set(maxDrop, value)
 
+  def setTopFraction(value: Double): this.type = set(topFraction, value)
+
+  def setOtherFraction(value: Double): this.type = set(otherFraction, value)
+
   def setInitialModelPath(value: String): this.type = set(initialModelPath, value)
 
   def setMaxBruteBins(value: Int): this.type = set(maxBruteBins, value)
@@ -265,6 +269,8 @@ class GBMClassifier(override val uid: String)
       .setDropSkip($(dropSkip))
       .setMinDrop($(minDrop))
       .setMaxDrop($(maxDrop))
+      .setTopFraction($(topFraction))
+      .setOtherFraction($(otherFraction))
       .setMaxBruteBins($(maxBruteBins))
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))

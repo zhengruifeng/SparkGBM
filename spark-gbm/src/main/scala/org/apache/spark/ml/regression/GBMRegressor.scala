@@ -108,6 +108,10 @@ class GBMRegressor(override val uid: String) extends
 
   def setMaxDrop(value: Int): this.type = set(maxDrop, value)
 
+  def setTopFraction(value: Double): this.type = set(topFraction, value)
+
+  def setOtherFraction(value: Double): this.type = set(otherFraction, value)
+
   def setInitialModelPath(value: String): this.type = set(initialModelPath, value)
 
   def setMaxBruteBins(value: Int): this.type = set(maxBruteBins, value)
@@ -234,6 +238,8 @@ class GBMRegressor(override val uid: String) extends
       .setDropSkip($(dropSkip))
       .setMinDrop($(minDrop))
       .setMaxDrop($(maxDrop))
+      .setTopFraction($(topFraction))
+      .setOtherFraction($(otherFraction))
       .setMaxBruteBins($(maxBruteBins))
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
@@ -243,7 +249,6 @@ class GBMRegressor(override val uid: String) extends
       .setBaseModelParallelism($(baseModelParallelism))
       .setBlockSize($(blockSize))
       .setInitialModel(initialModel)
-
 
 
     val data = dataset.select(w, col($(labelCol)).cast(DoubleType), col($(featuresCol))).rdd

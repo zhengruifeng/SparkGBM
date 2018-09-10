@@ -248,7 +248,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     */
   final val boostType: Param[String] =
     new Param[String](this, "boostType", "boosting type",
-      ParamValidators.inArray[String](Array("gbtree", "dart")))
+      ParamValidators.inArray[String](Array("gbtree", "dart", "goss")))
 
   def getBoostType: String = $(boostType)
 
@@ -313,6 +313,36 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getMaxDrop: Double = $(maxDrop)
 
   setDefault(maxDrop -> 50)
+
+
+  /**
+    * Retain fraction of large gradient data in GOSS.
+    * (default = 0.2)
+    *
+    * @group param
+    */
+  final val topFraction: DoubleParam =
+    new DoubleParam(this, "topFraction", "Retain fraction of large gradient data in GOSS.",
+      ParamValidators.inRange(0.0, 1.0, false, false))
+
+  def getTopFraction: Double = $(topFraction)
+
+  setDefault(topFraction -> 0.2)
+
+
+  /**
+    * Retain fraction of small gradient data in GOSS.
+    * (default = 0.1)
+    *
+    * @group param
+    */
+  final val otherFraction: DoubleParam =
+    new DoubleParam(this, "otherFraction", "Retain fraction of small gradient data in GOSS.",
+      ParamValidators.inRange(0.0, 1.0, false, false))
+
+  def getOtherFraction: Double = $(otherFraction)
+
+  setDefault(otherFraction -> 0.1)
 
 
   /**

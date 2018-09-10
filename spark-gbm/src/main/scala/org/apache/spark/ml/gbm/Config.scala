@@ -12,7 +12,7 @@ class BoostConfig extends Logging with Serializable {
   private var boostType: String = "gbtree"
 
   private[gbm] def setBoostType(value: String): this.type = {
-    require(value == "gbtree" || value == "dart")
+    require(value == "gbtree" || value == "dart" || value == "goss")
     boostType = value
     this
   }
@@ -183,6 +183,42 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def getSubSample: Double = subSample
+
+
+  /** retain fraction of large gradient data */
+  private var topFraction: Double = 0.2
+
+  private[gbm] def setTopFraction(value: Double): this.type = {
+    require(value > 0 && value < 1 && !value.isNaN && !value.isInfinity)
+    topFraction = value
+    this
+  }
+
+  def updateTopFraction(value: Double): this.type = {
+    logInfo(s"topFraction was changed from $topFraction to $value")
+    setTopFraction(value)
+  }
+
+  def getTopFraction: Double = topFraction
+
+
+  /** retain fraction of small gradient data */
+  private var otherFraction: Double = 0.2
+
+  def setOtherFraction(value: Double): this.type = {
+    require(value > 0 && value < 1 && !value.isNaN && !value.isInfinity)
+    otherFraction = value
+    this
+  }
+
+  def updateOtherFraction(value: Double): this.type = {
+    logInfo(s"otherFraction was changed from $otherFraction to $value")
+    setOtherFraction(value)
+  }
+
+  def getOtherFraction: Double = otherFraction
+
+  private[gbm] def computeOtherReweight: Double = (1 - getTopFraction) / getOtherFraction
 
 
   /** subsample ratio of columns when constructing each tree */

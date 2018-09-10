@@ -92,7 +92,8 @@ object GBMExample {
     val recoder = new MetricRecoder
 
     val gbm = new GBM
-    gbm.setMaxIter(15)
+    gbm.setBoostType("goss")
+      .setMaxIter(15)
       .setMaxDepth(5)
       .setStepSize(0.2)
       .setMinNodeHess(1e-2)

@@ -988,9 +988,15 @@ private[gbm] object GBM extends Logging {
       persisted.append(gradBlocks)
 
       val quantiles = gradBlocks.mapPartitions { iter =>
-        val summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold,
+        var summary = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold,
           QuantileSummaries.defaultRelativeError)
-        iter.foreach { case (_, sum2s) => sum2s.iterator.map(nuh.toDouble).foreach(summary.insert) }
+        iter.foreach { case (_, sum2s) =>
+          var i = 0
+          while (i < sum2s.length) {
+            summary = summary.insert(nuh.toDouble(sum2s(i)))
+            i += 1
+          }
+        }
         Iterator.single(summary.compress)
 
       }.treeReduce(f = {

@@ -575,11 +575,11 @@ class BoostConfig extends Logging with Serializable {
   def getBaseModelParallelism: Int = baseModelParallelism
 
 
-  /** Double precision */
+  /** numerical precision */
   private var floatType: String = "float"
 
   private[gbm] def setFloatType(value: String): this.type = {
-    require(value == "float" || value == "double")
+    require(value == GBM.SinglePrecision || value == GBM.DoublePrecision)
     floatType = value
     this
   }

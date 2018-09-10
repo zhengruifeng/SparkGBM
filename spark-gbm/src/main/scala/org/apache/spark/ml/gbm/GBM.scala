@@ -367,7 +367,7 @@ class GBM extends Logging with Serializable {
   private var numericalBinType: String = GBM.Width
 
   def setNumericalBinType(value: String): this.type = {
-    require(value == GBM.SinglePrecision || value == GBM.DoublePrecision)
+    require(value == GBM.Width || value == GBM.Depth)
     numericalBinType = value
     this
   }
@@ -498,14 +498,9 @@ private[gbm] object GBM extends Logging {
                 discretizer: Discretizer,
                 initialModel: Option[GBMModel])
                (implicit ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
-    val data2 = data.map { case (weight, label, vec) =>
-      (neh.fromDouble(weight), neh.fromDouble(label), vec)
-    }
+    val data2 = data.map { case (weight, label, vec) => (neh.fromDouble(weight), neh.fromDouble(label), vec) }
 
-    val test2 = test.map { case (weight, label, vec) =>
-      (neh.fromDouble(weight), neh.fromDouble(label), vec)
-    }
-
+    val test2 = test.map { case (weight, label, vec) => (neh.fromDouble(weight), neh.fromDouble(label), vec) }
 
     val columnIndexType = Utils.getTypeByRange(discretizer.numCols)
     logInfo(s"DataType of ColumnId: $columnIndexType")

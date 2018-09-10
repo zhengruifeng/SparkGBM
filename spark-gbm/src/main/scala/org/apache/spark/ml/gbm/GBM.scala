@@ -624,9 +624,10 @@ private[gbm] object GBM extends Logging {
       }, depth = boostConf.getAggregationDepth)
     logInfo(s"Train Data: $numInstances instances, $numBlocks blocks")
 
-    val testBlocks = InstanceBlock.blockify[C, B, H](testInstances, boostConf.getBlockSize)
-      .setName("Test Blocks")
+    var testBlocks = sc.emptyRDD[InstanceBlock[C, B, H]]
     if (validation) {
+      testBlocks = InstanceBlock.blockify[C, B, H](testInstances, boostConf.getBlockSize)
+        .setName("Test Blocks")
       testBlocks.persist(boostConf.getStorageLevel)
       val (numInstances, numBlocks) = testBlocks.map { block => (block.size.toLong, 1L) }
         .treeReduce(f = {
@@ -645,22 +646,22 @@ private[gbm] object GBM extends Logging {
 
 
     // raw scores and checkpointers
-    var trainRawScores = computeRawScores[C, B, H](trainBlocks, treesBuff.toArray, weightsBuff.toArray, boostConf)
-      .setName("Train Raw Scores (Initial)")
-    val trainRawScoresCheckpointer = new Checkpointer[Array[H]](sc,
+    var trainRawBlocks = computeRawBlocks[C, B, H](trainBlocks, treesBuff.toArray, weightsBuff.toArray, boostConf)
+      .setName("Train Raw Blocks (Initial)")
+    val trainRawBlockCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
     if (treesBuff.nonEmpty) {
-      trainRawScoresCheckpointer.update(trainRawScores)
+      trainRawBlockCheckpointer.update(trainRawBlocks)
     }
 
-    var testRawScores = sc.emptyRDD[Array[H]]
-    val testRawScoresCheckpointer = new Checkpointer[Array[H]](sc,
+    var testRawBlocks = sc.emptyRDD[ArrayBlock[H]]
+    val testRawBlockCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
     if (validation) {
-      testRawScores = computeRawScores[C, B, H](testBlocks, treesBuff.toArray, weightsBuff.toArray, boostConf)
-        .setName("Test Raw Scores (Initial)")
+      testRawBlocks = computeRawBlocks[C, B, H](testBlocks, treesBuff.toArray, weightsBuff.toArray, boostConf)
+        .setName("Test Raw Blocks (Initial)")
       if (treesBuff.nonEmpty) {
-        testRawScoresCheckpointer.update(testRawScores)
+        testRawBlockCheckpointer.update(testRawBlocks)
       }
     }
 
@@ -695,7 +696,7 @@ private[gbm] object GBM extends Logging {
       // build trees
       logInfo(s"$logPrefix start")
       val start = System.nanoTime
-      val trees = buildTrees[C, B, H](trainBlocks, trainRawScores, weightsBuff.toArray, boostConf, iter, dropped.toSet)
+      val trees = buildTrees[C, B, H](trainBlocks, trainRawBlocks, weightsBuff.toArray, boostConf, iter, dropped.toSet)
       logInfo(s"$logPrefix finish, duration: ${(System.nanoTime - start) / 1e9} sec")
 
       if (trees.forall(_.isEmpty)) {
@@ -711,31 +712,31 @@ private[gbm] object GBM extends Logging {
         val keepWeights = boostConf.getBoostType != Dart || dropped.isEmpty
 
         // update train data predictions
-        trainRawScores = updateRawScores[C, B, H](trainBlocks, trainRawScores, trees, weightsBuff.toArray, boostConf, keepWeights)
-          .setName(s"Train Raw Scores (Iteration $iter)")
-        trainRawScoresCheckpointer.update(trainRawScores)
+        trainRawBlocks = updateRawBlocks[C, B, H](trainBlocks, trainRawBlocks, trees, weightsBuff.toArray, boostConf, keepWeights)
+          .setName(s"Train Raw Blocks (Iteration $iter)")
+        trainRawBlockCheckpointer.update(trainRawBlocks)
 
 
         if (boostConf.getEvalFunc.isEmpty) {
           // materialize predictions
-          trainRawScores.count()
+          trainRawBlocks.count()
         }
 
         // evaluate on train data
         if (boostConf.getEvalFunc.nonEmpty) {
-          val trainMetrics = evaluate(trainBlocks, trainRawScores, boostConf)
+          val trainMetrics = evaluate(trainBlocks, trainRawBlocks, boostConf)
           trainMetricsHistory.append(trainMetrics)
           logInfo(s"$logPrefix train metrics ${trainMetrics.mkString("(", ", ", ")")}")
         }
 
         if (validation) {
           // update test data predictions
-          testRawScores = updateRawScores[C, B, H](testBlocks, testRawScores, trees, weightsBuff.toArray, boostConf, keepWeights)
-            .setName(s"Test Raw Scores (Iteration $iter)")
-          testRawScoresCheckpointer.update(testRawScores)
+          testRawBlocks = updateRawBlocks[C, B, H](testBlocks, testRawBlocks, trees, weightsBuff.toArray, boostConf, keepWeights)
+            .setName(s"Test Raw Blocks (Iteration $iter)")
+          testRawBlockCheckpointer.update(testRawBlocks)
 
           // evaluate on test data
-          val testMetrics = evaluate(testBlocks, testRawScores, boostConf)
+          val testMetrics = evaluate(testBlocks, testRawBlocks, boostConf)
           testMetricsHistory.append(testMetrics)
           logInfo(s"$logPrefix test metrics ${testMetrics.mkString("(", ", ", ")")}")
         }
@@ -766,11 +767,11 @@ private[gbm] object GBM extends Logging {
     }
 
     trainBlocks.unpersist(blocking = false)
-    trainRawScoresCheckpointer.cleanup()
+    trainRawBlockCheckpointer.cleanup()
 
     if (validation) {
       testBlocks.unpersist(blocking = false)
-      testRawScoresCheckpointer.cleanup()
+      testRawBlockCheckpointer.cleanup()
     }
 
     new GBMModel(boostConf.getObjFunc, discretizer, rawBase,
@@ -859,7 +860,7 @@ private[gbm] object GBM extends Logging {
 
 
   def buildTrees[C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
-                          rawScores: RDD[Array[H]],
+                          rawBlocks: RDD[ArrayBlock[H]],
                           weights: Array[H],
                           boostConf: BoostConfig,
                           iteration: Int,
@@ -878,31 +879,31 @@ private[gbm] object GBM extends Logging {
 
     (treeIdType, nodeIdType) match {
       case ("Byte", "Byte") =>
-        buildTreesImpl[Byte, Byte, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Byte, Byte, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case ("Byte", "Short") =>
-        buildTreesImpl[Byte, Short, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Byte, Short, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case ("Byte", "Int") =>
-        buildTreesImpl[Byte, Int, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Byte, Int, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case ("Short", "Byte") =>
-        buildTreesImpl[Short, Byte, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Short, Byte, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case ("Short", "Short") =>
-        buildTreesImpl[Short, Short, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Short, Short, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case ("Short", "Int") =>
-        buildTreesImpl[Short, Int, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Short, Int, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case ("Int", "Byte") =>
-        buildTreesImpl[Int, Byte, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Int, Byte, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case ("Int", "Short") =>
-        buildTreesImpl[Int, Short, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Int, Short, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case ("Int", "Int") =>
-        buildTreesImpl[Int, Int, C, B, H](blocks, rawScores, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Int, Int, C, B, H](blocks, rawBlocks, weights, boostConf, iteration, dropped)
     }
   }
 
@@ -911,7 +912,7 @@ private[gbm] object GBM extends Logging {
     * build new trees
     *
     * @param blocks    blockified instances containing (weight, label, bins)
-    * @param rawScores previous raw predictions
+    * @param rawBlocks previous raw predictions
     * @param weights   weights of trees
     * @param boostConf boosting configuration
     * @param iteration current iteration
@@ -919,7 +920,7 @@ private[gbm] object GBM extends Logging {
     * @return new trees
     */
   def buildTreesImpl[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
-                                    rawScores: RDD[Array[H]],
+                                    rawBlocks: RDD[ArrayBlock[H]],
                                     weights: Array[H],
                                     boostConf: BoostConfig,
                                     iteration: Int,
@@ -974,13 +975,12 @@ private[gbm] object GBM extends Logging {
       }
 
     val computeGradBlock =
-      (block: InstanceBlock[C, B, H], rawBlock: Array[H]) => {
-        require(rawBlock.length % block.size == 0)
-        val g = rawBlock.length / block.size
+      (block: InstanceBlock[C, B, H], rawBlock: ArrayBlock[H]) => {
+        require(block.size == rawBlock.size)
 
         val iter = block.weightIterator
           .zip(block.labelIterator)
-          .zip(rawBlock.grouped(g))
+          .zip(rawBlock.iterator)
           .map { case ((weight, label), rawSeq) =>
             computeGrad(weight, label, rawSeq)
           }
@@ -992,7 +992,7 @@ private[gbm] object GBM extends Logging {
     val data = if (boostConf.getSubSample == 1) {
       val treeIds = Array.range(0, numBaseModels).map(int.fromInt)
 
-      val gradBlocks = blocks.zip(rawScores)
+      val gradBlocks = blocks.zip(rawBlocks)
         .map { case (block, rawBlock) => computeGradBlock(block, rawBlock) }
 
       gradBlocks.setName(s"GradientBlocks (iteration $iteration)")
@@ -1025,7 +1025,7 @@ private[gbm] object GBM extends Logging {
 
         val emptyValue = (net.emptyArray, ArrayBlock.empty[H])
 
-        val gradBlocks = blocks.zip(rawScores)
+        val gradBlocks = blocks.zip(rawBlocks)
           .mapPartitionsWithIndex { case (partId, iter) =>
             val sampleRNGs = Array.tabulate(numBaseModels)(i =>
               new XORShiftRandom(seedOffset + partId + i))
@@ -1065,18 +1065,17 @@ private[gbm] object GBM extends Logging {
 
         val emptyValue = (net.emptyArray, neh.emptyArray)
 
-        val gradBlocks = blocks.zip(rawScores)
+        val gradBlocks = blocks.zip(rawBlocks)
           .mapPartitionsWithIndex { case (partId, iter) =>
             val sampleRNGs = Array.tabulate(numBaseModels)(i =>
               new XORShiftRandom(seedOffset + partId + i))
 
             iter.map { case (block, rawBlock) =>
-              require(rawBlock.length % block.size == 0)
-              val g = rawBlock.length / block.size
+              require(block.size == rawBlock.size)
 
               val grads = block.weightIterator
                 .zip(block.labelIterator)
-                .zip(rawBlock.grouped(g))
+                .zip(rawBlock.iterator)
                 .map { case ((weight, label), rawSeq) =>
                   val baseIds = Array.range(0, numBaseModels).filter { i =>
                     sampleRNGs(i).nextDouble < boostConf.getSubSample
@@ -1156,64 +1155,54 @@ private[gbm] object GBM extends Logging {
     * @param boostConf boosting configuration
     * @return RDD containing final score (weighted) and the scores of each tree (non-weighted, only for DART)
     */
-  def computeRawScores[C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
+  def computeRawBlocks[C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
                                 trees: Array[TreeModel],
                                 weights: Array[H],
                                 boostConf: BoostConfig)
                                (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                 cb: ClassTag[B], inb: Integral[B],
-                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[Array[H]] = {
+                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[H]] = {
     import nuh._
 
     require(trees.length == weights.length)
     require(trees.length % boostConf.getRawSize == 0)
 
     val rawBase = neh.fromDouble(boostConf.computeRawBaseScore)
-    require(boostConf.getRawSize == rawBase.length)
     val rawSize = boostConf.getRawSize
+    require(rawSize == rawBase.length)
 
     boostConf.getBoostType match {
       case GBTree =>
         blocks.map { block =>
-          val step = rawSize
-          var offset = 0
-          val array = Array.ofDim[H](block.size * step)
-
-          block.vectorIterator.foreach { bins =>
-            Array.copy(rawBase, 0, array, offset, rawSize)
+          val iter = block.vectorIterator.map { bins =>
+            val raw = rawBase.clone()
             var j = 0
             while (j < trees.length) {
               val p = neh.fromDouble(trees(j).predict(bins.apply))
-              array(offset + j % step) += p * weights(j)
+              raw(j % rawSize) += p * weights(j)
               j += 1
             }
-            offset += step
+            raw
           }
 
-          array
+          ArrayBlock.build[H](iter)
         }
 
       case Dart =>
         blocks.map { block =>
-          val step = rawSize + trees.length
-          var offset = 0
-          val array = Array.ofDim[H](block.size * step)
-
-          block.vectorIterator.foreach { bins =>
-            Array.copy(rawBase, 0, array, offset, rawSize)
+          val iter = block.vectorIterator.map { bins =>
+            val raw = rawBase.clone() ++ trees.map(tree => neh.fromDouble(tree.predict(bins.apply)))
 
             var j = 0
             while (j < trees.length) {
-              val p = neh.fromDouble(trees(j).predict(bins.apply))
-              array(offset + rawSize + j) = p
-              array(offset + j % rawSize) += p * weights(j)
+              val p = raw(rawSize + j)
+              raw(j % rawSize) += p * weights(j)
               j += 1
             }
-
-            offset += step
+            raw
           }
 
-          array
+          ArrayBlock.build[H](iter)
         }
     }
   }
@@ -1230,43 +1219,42 @@ private[gbm] object GBM extends Logging {
     * @param keepWeights whether to keep the weights of previous trees
     * @return RDD containing final score and the predictions of each tree
     */
-  def updateRawScores[C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
-                               rawScores: RDD[Array[H]],
+  def updateRawBlocks[C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
+                               rawScores: RDD[ArrayBlock[H]],
                                newTrees: Array[TreeModel],
                                weights: Array[H],
                                boostConf: BoostConfig,
                                keepWeights: Boolean)
                               (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                cb: ClassTag[B], inb: Integral[B],
-                               ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[Array[H]] = {
+                               ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[H]] = {
     import nuh._
 
     require(newTrees.length % boostConf.getRawSize == 0)
     require(weights.length % boostConf.getRawSize == 0)
 
     val rawSize = boostConf.getRawSize
-    val numOldTrees = weights.length - newTrees.length
+    val treeOffset = weights.length - newTrees.length
 
     boostConf.getBoostType match {
       case GBTree =>
-        blocks.zip(rawScores).map { case (block, array) =>
-          require(array.length == block.size * rawSize)
+        blocks.zip(rawScores).map { case (block, rawBlock) =>
+          require(rawBlock.size == block.size)
 
-          val step = rawSize
-          var offset = 0
-
-          block.vectorIterator.foreach { bins =>
-            var j = 0
-            while (j < newTrees.length) {
-              val p = neh.fromDouble(newTrees(j).predict(bins.apply))
-              array(offset + j % step) += p * weights(numOldTrees + j)
-              j += 1
+          val iter = block.vectorIterator
+            .zip(rawBlock.iterator)
+            .map { case (bins, raw) =>
+              require(raw.length == rawSize)
+              var j = 0
+              while (j < newTrees.length) {
+                val p = neh.fromDouble(newTrees(j).predict(bins.apply))
+                raw(j % rawSize) += p * weights(treeOffset + j)
+                j += 1
+              }
+              raw
             }
 
-            offset += step
-          }
-
-          array
+          ArrayBlock.build[H](iter)
         }
 
 
@@ -1274,49 +1262,37 @@ private[gbm] object GBM extends Logging {
         val rawBase = neh.fromDouble(boostConf.computeRawBaseScore)
         require(rawSize == rawBase.length)
 
-        blocks.zip(rawScores).map { case (block, array) =>
-          require(array.length == block.size * (rawSize + numOldTrees))
+        blocks.zip(rawScores).map { case (block, rawBlock) =>
+          require(rawBlock.size == block.size)
 
-          val oldStep = rawSize + numOldTrees
-          var oldOffset = 0
+          val iter = block.vectorIterator
+            .zip(rawBlock.iterator)
+            .map { case (bins, raw) =>
+              require(raw.length == rawSize + treeOffset)
+              val newRaw = raw ++ newTrees.map(tree => neh.fromDouble(tree.predict(bins.apply)))
 
-          val step = rawSize + weights.length
-          var offset = 0
+              if (keepWeights) {
+                var j = 0
+                while (j < newTrees.length) {
+                  val p = newRaw(rawSize + treeOffset + j)
+                  raw(j % rawSize) += p * weights(treeOffset + j)
+                  j += 1
+                }
 
-          val newArray = Array.ofDim[H](block.size * step)
-
-          block.vectorIterator.foreach { bins =>
-            Array.copy(array, oldOffset, newArray, offset, oldStep)
-
-            var j = 0
-            while (j < newTrees.length) {
-              val p = neh.fromDouble(newTrees(j).predict(bins.apply))
-              newArray(offset + oldStep + j) = p
-              j += 1
-            }
-
-            if (keepWeights) {
-              j = 0
-              while (j < newTrees.length) {
-                newArray(offset + j % rawSize) += newArray(offset + oldStep + j) * weights(numOldTrees + j)
-                j += 1
+              } else {
+                var j = 0
+                Array.copy(rawBase, 0, newRaw, 0, rawSize)
+                while (j < weights.length) {
+                  val p = newRaw(rawSize + j)
+                  raw(j % rawSize) += p * weights(j)
+                  j += 1
+                }
               }
 
-            } else {
-              Array.copy(rawBase, 0, newArray, offset, rawSize)
-
-              j = 0
-              while (j < weights.length) {
-                newArray(offset + j % rawSize) += newArray(offset + rawSize + j) * weights(j)
-                j += 1
-              }
+              newRaw
             }
 
-            oldOffset += oldStep
-            offset += step
-          }
-
-          newArray
+          ArrayBlock.build[H](iter)
         }
     }
   }
@@ -1326,12 +1302,12 @@ private[gbm] object GBM extends Logging {
     * Evaluate current model and output the result
     *
     * @param blocks    instances containing (weight, label, bins)
-    * @param rawScores prediction of instances, containing the final score and the scores of each tree
+    * @param rawBlocks prediction of instances, containing the final score and the scores of each tree
     * @param boostConf boosting configuration containing the evaluation functions
     * @return Evaluation result with names as the keys and metrics as the values
     */
   def evaluate[H, C, B](blocks: RDD[InstanceBlock[C, B, H]],
-                        rawScores: RDD[Array[H]],
+                        rawBlocks: RDD[ArrayBlock[H]],
                         boostConf: BoostConfig)
                        (implicit cc: ClassTag[C], inc: Integral[C],
                         cb: ClassTag[B], inb: Integral[B],
@@ -1342,14 +1318,13 @@ private[gbm] object GBM extends Logging {
 
     val rawSize = boostConf.getRawSize
 
-    val scores = blocks.zip(rawScores)
+    val scores = blocks.zip(rawBlocks)
       .flatMap { case (block, rawBlock) =>
-        require(rawBlock.length % block.size == 0)
-        val g = rawBlock.length / block.size
+        require(block.size == rawBlock.size)
 
         block.weightIterator
           .zip(block.labelIterator)
-          .zip(rawBlock.grouped(g))
+          .zip(rawBlock.iterator)
           .map { case ((weight, label), rawSeq) =>
             val raw = neh.toDouble(rawSeq.take(rawSize))
             val score = boostConf.getObjFunc.transform(raw)
@@ -1450,60 +1425,4 @@ object InstanceBlock extends Serializable {
 }
 
 
-class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Array[V],
-                                                                 val steps: Array[Int]) extends Serializable {
-  def isEmpty: Boolean = size == 0
-
-  def size: Int = steps.length
-
-  def iterator()
-              (implicit cv: ClassTag[V]): Iterator[Array[V]] =
-    new Iterator[Array[V]]() {
-
-      var i = 0
-      var offset = 0
-
-      val builder = mutable.ArrayBuilder.make[V]
-
-      override def hasNext: Boolean = i < steps.length
-
-      override def next(): Array[V] = {
-        builder.clear()
-
-        val step = steps(i)
-
-        var j = 0
-        while (j < step) {
-          builder += values(offset + j)
-          j += 1
-        }
-
-        i += 1
-        offset += step
-        builder.result()
-      }
-    }
-}
-
-object ArrayBlock extends Serializable {
-
-  def empty[V]()
-              (implicit cv: ClassTag[V]): ArrayBlock[V] = {
-    new ArrayBlock[V](Array.empty[V], Array.emptyIntArray)
-  }
-
-  def build[V](iterator: Iterator[Array[V]])
-              (implicit cv: ClassTag[V]): ArrayBlock[V] = {
-
-    val valueBuilder = mutable.ArrayBuilder.make[V]
-    val stepBuilder = mutable.ArrayBuilder.make[Int]
-
-    iterator.foreach { array =>
-      valueBuilder ++= array
-      stepBuilder += array.length
-    }
-
-    new ArrayBlock[V](valueBuilder.result(), stepBuilder.result())
-  }
-}
 

@@ -71,6 +71,7 @@ private[gbm] object Tree extends Serializable with Logging {
         nodesCheckpointer.update(nodeIds)
       }
 
+
       val partitioner = if (treeIds.length * boostConf.getNumCols *
         boostConf.getColSampleByTree * boostConf.getColSampleByLevel < parallelism * 4) {
         // partitioning only by treeId-colId tends to cause imbalance
@@ -80,7 +81,6 @@ private[gbm] object Tree extends Serializable with Logging {
       }
       logInfo(s"$logPrefix Depth $depth: partitioner $partitioner")
 
-      //      val partitioner = new HashPartitioner(parallelism)
 
       if (inn.equiv(minNodeId, inn.one)) {
         // direct compute the histogram of roots
@@ -98,6 +98,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
       prevSplits.clear()
 
+
       // find best splits
       val splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, depth, splitRNG.nextLong)
 
@@ -107,7 +108,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
       } else {
 
-        val splitsByTree = splits.toArray
+        val splits2 = splits.toArray
           .map { case ((treeId, nodeId), split) => (treeId, nodeId, split) }
           .groupBy(_._1)
           .mapValues(_.map(t => (t._2, t._3)))
@@ -116,7 +117,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
         Iterator.range(0, baseConf.numTrees)
           .filterNot(finished).foreach { treeId =>
-          val array = splitsByTree.getOrElse(int.fromInt(treeId), Array.empty[(N, Split)])
+          val array = splits2.getOrElse(int.fromInt(treeId), Array.empty[(N, Split)])
 
           if (array.isEmpty) {
             finished(treeId) = true

@@ -121,8 +121,8 @@ trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, D
 object KVVector {
 
   def empty[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V]()
-                                                                                      (implicit cv: ClassTag[V]): KVVector[K, V] = {
-    dense[K, V](Array.empty[V])
+                                                                                      (implicit cv: ClassTag[V], nev: NumericExt[V]): KVVector[K, V] = {
+    dense[K, V](nev.emptyArray)
   }
 
   def dense[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](values: Array[V]): KVVector[K, V] = {
@@ -430,7 +430,8 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](
   }
 
   def iterator()
-              (implicit ck: ClassTag[K], cv: ClassTag[V]): Iterator[KVVector[K, V]] = {
+              (implicit ck: ClassTag[K], nek: NumericExt[K],
+               cv: ClassTag[V], nev: NumericExt[V]): Iterator[KVVector[K, V]] = {
 
     val size_ = size
 
@@ -442,7 +443,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](
       val indexBuilder = mutable.ArrayBuilder.make[K]
       val valueBuilder = mutable.ArrayBuilder.make[V]
 
-      val emptyVec = KVVector.sparse[K, V](vecLen, Array.empty[K], Array.empty[V])
+      val emptyVec = KVVector.sparse[K, V](vecLen, nek.emptyArray, nev.emptyArray)
 
       override def hasNext: Boolean = i < size_
 
@@ -595,13 +596,12 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
 object ArrayBlock extends Serializable {
 
   def empty[V]()
-              (implicit cv: ClassTag[V]): ArrayBlock[V] = {
-    new ArrayBlock[V](Array.empty[V], Array.emptyIntArray, 0)
+              (implicit cv: ClassTag[V], nev: NumericExt[V]): ArrayBlock[V] = {
+    new ArrayBlock[V](nev.emptyArray, Array.emptyIntArray, 0)
   }
 
   def build[V](iterator: Iterator[Array[V]])
               (implicit cv: ClassTag[V]): ArrayBlock[V] = {
-
     val valueBuilder = mutable.ArrayBuilder.make[V]
     val stepBuilder = mutable.ArrayBuilder.make[Int]
 
@@ -613,7 +613,7 @@ object ArrayBlock extends Serializable {
     val values = valueBuilder.result()
     val steps = stepBuilder.result()
 
-    if (steps.distinct.length == 1) {
+    if (steps.distinct.length == 1 && steps.head > 0) {
       new ArrayBlock[V](values, Array.emptyIntArray, steps.head)
     } else {
       new ArrayBlock[V](values, steps, 0)
@@ -640,6 +640,8 @@ private trait NumericExt[K] extends Serializable {
 
   def toDouble(array: Array[K]): Array[Double]
 
+  def sqrt(value: K): K
+
   def search(array: Array[K], value: K): Int
 
   def size: Int
@@ -656,6 +658,8 @@ private object ByteNumericExt extends NumericExt[Byte] {
   override def fromDouble(array: Array[Double]): Array[Byte] = array.map(_.toByte)
 
   override def toDouble(array: Array[Byte]): Array[Double] = array.map(_.toDouble)
+
+  override def sqrt(value: Byte): Byte = math.sqrt(value).toByte
 
   override def search(array: Array[Byte], value: Byte): Int = ju.Arrays.binarySearch(array, value)
 
@@ -674,6 +678,8 @@ private object ShortNumericExt extends NumericExt[Short] {
 
   override def toDouble(array: Array[Short]): Array[Double] = array.map(_.toDouble)
 
+  override def sqrt(value: Short): Short = math.sqrt(value).toByte
+
   override def search(array: Array[Short], value: Short): Int = ju.Arrays.binarySearch(array, value)
 
   override def size: Int = 2
@@ -690,6 +696,8 @@ private object IntNumericExt extends NumericExt[Int] {
   override def fromDouble(array: Array[Double]): Array[Int] = array.map(_.toInt)
 
   override def toDouble(array: Array[Int]): Array[Double] = array.map(_.toDouble)
+
+  override def sqrt(value: Int): Int = math.sqrt(value).toInt
 
   override def search(array: Array[Int], value: Int): Int = ju.Arrays.binarySearch(array, value)
 
@@ -708,6 +716,8 @@ private object LongNumericExt extends NumericExt[Long] {
 
   override def toDouble(array: Array[Long]): Array[Double] = array.map(_.toDouble)
 
+  override def sqrt(value: Long): Long = math.sqrt(value).toLong
+
   override def search(array: Array[Long], value: Long): Int = ju.Arrays.binarySearch(array, value)
 
   override def size: Int = 8
@@ -725,6 +735,8 @@ private object FloatNumericExt extends NumericExt[Float] {
 
   override def toDouble(array: Array[Float]): Array[Double] = array.map(_.toDouble)
 
+  override def sqrt(value: Float): Float = math.sqrt(value).toFloat
+
   override def search(array: Array[Float], value: Float): Int = ju.Arrays.binarySearch(array, value)
 
   override def size: Int = 4
@@ -741,6 +753,8 @@ private object DoubleNumericExt extends NumericExt[Double] {
   override def fromDouble(array: Array[Double]): Array[Double] = array
 
   override def toDouble(array: Array[Double]): Array[Double] = array
+
+  override def sqrt(value: Double): Double = math.sqrt(value)
 
   override def search(array: Array[Double], value: Double): Int = ju.Arrays.binarySearch(array, value)
 

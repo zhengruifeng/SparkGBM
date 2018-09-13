@@ -12,45 +12,55 @@ import org.apache.spark.rdd._
 import org.apache.spark.util.random.XORShiftRandom
 
 
-private[gbm] class PartitionSelectedRDDPartition[T](val idx: Int,
-                                                    val prev: Partition)
-  extends Partition with Serializable {
-
+private[gbm] class M2NRDDPartition[T](val idx: Int,
+                                      val prevs: Array[Partition]) extends Partition {
   override val index: Int = idx
 }
 
-
-private[gbm] class PartitionSelectedRDD[T: ClassTag](@transient val parent: RDD[T],
-                                                     val partIds: Array[Int]) extends RDD[T](parent) {
-  require(partIds.forall(p => p >= 0 && p < parent.getNumPartitions))
+private[gbm] class M2NRDD[T: ClassTag](@transient val parent: RDD[T],
+                                       val partIds: Array[Array[Int]]) extends RDD[T](parent) {
+  require(partIds.iterator.flatten
+    .forall(p => p >= 0 && p < parent.getNumPartitions))
 
   override def compute(split: Partition, context: TaskContext): Iterator[T] = {
-    val part = split.asInstanceOf[PartitionSelectedRDDPartition[T]]
-    firstParent[T].iterator(part.prev, context)
+    val part = split.asInstanceOf[M2NRDDPartition[T]]
+    part.prevs.iterator.flatMap { prev =>
+      firstParent[T].iterator(prev, context)
+    }
   }
 
   override protected def getPartitions: Array[Partition] = {
     partIds.zipWithIndex.map { case (partId, i) =>
-      val partition = firstParent[T].partitions(partId)
-      new PartitionSelectedRDDPartition(i, partition)
+      val prevs = partId.map { pid => firstParent[T].partitions(pid) }
+      new M2NRDDPartition(i, prevs)
     }
   }
 
-  override def getPreferredLocations(split: Partition): Seq[String] =
-    firstParent[T].preferredLocations(split.asInstanceOf[PartitionSelectedRDDPartition[T]].prev)
+  override def getPreferredLocations(split: Partition): Seq[String] = {
+    val votes = mutable.OpenHashMap.empty[String, Int]
+
+    split.asInstanceOf[M2NRDDPartition[T]].prevs.iterator
+      .flatMap { prev => firstParent[T].preferredLocations(prev) }
+      .foreach { location =>
+        val cnt = votes.getOrElse(location, 0)
+        votes.update(location, cnt + 1)
+      }
+
+    votes.toArray.sortBy(_._2).map(_._1).reverse
+  }
 
   override def getDependencies: Seq[Dependency[_]] = Seq(
     new NarrowDependency(parent) {
-      def getParents(id: Int): Seq[Int] = Seq(partIds(id))
+      def getParents(id: Int): Seq[Int] = partIds(id)
     })
 }
-
 
 
 private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable {
 
   def selectPartitions(partIds: Array[Int]): RDD[T] = {
-    new PartitionSelectedRDD[T](self, partIds)
+    val array = partIds.map(p => Array(p))
+    new M2NRDD[T](self, array)
   }
 
   def samplePartitions(weights: Map[Int, Double], seed: Long): RDD[T] = {
@@ -117,9 +127,13 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
             n
           }
 
-          iter.zipWithIndex
-            .filter(_._2 % k == i)
-            .map(_._1)
+          if (k == 1 && i == 0) {
+            iter
+          } else {
+            iter.zipWithIndex
+              .filter(_._2 % k == i)
+              .map(_._1)
+          }
         }
     }
   }

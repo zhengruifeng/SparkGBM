@@ -56,6 +56,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
     var treeIds = Array.range(0, baseConf.numTrees)
+    var prevPartitioner = Option.empty[Partitioner]
 
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
       val start = System.nanoTime
@@ -72,14 +73,9 @@ private[gbm] object Tree extends Serializable with Logging {
       }
 
 
-      val partitioner = if (treeIds.length * boostConf.getNumCols *
-        boostConf.getColSampleByTree * boostConf.getColSampleByLevel < parallelism * 4) {
-        // partitioning only by treeId-colId tends to cause imbalance
-        new HashPartitioner(parallelism)
-      } else {
-        new HistogramPratitioner[T, C](parallelism, boostConf.getNumCols, treeIds)
-      }
-      logInfo(s"$logPrefix Depth $depth: partitioner $partitioner")
+      val partitioner = updatePartitioner[T, N, C](boostConf, treeIds, depth, parallelism, prevPartitioner)
+      prevPartitioner = Some(partitioner)
+      logInfo(s"$logPrefix Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
 
 
       if (inn.equiv(minNodeId, inn.one)) {
@@ -115,33 +111,36 @@ private[gbm] object Tree extends Serializable with Logging {
 
         var numFinished = 0
 
-        Iterator.range(0, baseConf.numTrees)
-          .filterNot(finished).foreach { treeId =>
-          val array = splits2.getOrElse(int.fromInt(treeId), Array.empty[(N, Split)])
+        Iterator.range(0, baseConf.numTrees).filterNot(finished).foreach { treeId =>
+          val maxRemains = boostConf.getMaxLeaves - numLeaves(treeId)
 
-          if (array.isEmpty) {
-            finished(treeId) = true
-            numFinished += 1
-
-          } else {
-            val prevNumLeaves = numLeaves(treeId)
-            if (prevNumLeaves + array.length >= boostConf.getMaxLeaves) {
-              val r = boostConf.getMaxLeaves - prevNumLeaves
-              array.sortBy(_._2.gain).takeRight(r)
-                .foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
+          splits2.get(int.fromInt(treeId)) match {
+            case Some(array) if array.length == maxRemains =>
+              array.foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
+              numLeaves(treeId) += array.length
               finished(treeId) = true
               numFinished += 1
 
-            } else {
-              numLeaves(treeId) += array.length
+            case Some(array) if array.length > maxRemains =>
+              array.sortBy(_._2.gain).takeRight(maxRemains)
+                .foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
+              numLeaves(treeId) += maxRemains
+              finished(treeId) = true
+              numFinished += 1
+
+            case Some(array) if array.length < maxRemains =>
               array.foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
-            }
+              numLeaves(treeId) += array.length
+
+            case None =>
+              finished(treeId) = true
+              numFinished += 1
           }
         }
 
         updateTrees[T, N](roots, minNodeId, prevSplits.toMap)
 
-        treeIds = prevSplits.keys.map(_._1).map(int.toInt).toArray.distinct.sorted
+        treeIds = prevSplits.keysIterator.map(t => int.toInt(t._1)).toArray.distinct.sorted
 
         logInfo(s"$logPrefix Depth $depth: splitting finished, $numFinished trees building finished," +
           s" ${prevSplits.size} leaves split, total gain=${prevSplits.values.map(_.gain).sum}," +
@@ -162,6 +161,48 @@ private[gbm] object Tree extends Serializable with Logging {
     histsCheckpointer.cleanup()
 
     roots.map(TreeModel.createModel)
+  }
+
+
+  /**
+    * create partitioner for the current depth to avoid shuffle if possible
+    *
+    * @param treeIds         current treeIds
+    * @param depth           current depth
+    * @param prevPartitioner previous partitioner
+    */
+  def updatePartitioner[T, N, C](boostConf: BoostConfig,
+                                 treeIds: Array[Int],
+                                 depth: Int,
+                                 parallelism: Int,
+                                 prevPartitioner: Option[Partitioner])
+                                (implicit ct: ClassTag[T], int: Integral[T],
+                                 cn: ClassTag[N], inn: Integral[N],
+                                 cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C]): Partitioner = {
+
+    prevPartitioner match {
+      case Some(p: SkipNodePratitioner[_, _, _])
+        if p.numPartitions == parallelism && p.treeIds.length == treeIds.length => p
+
+      case Some(p: DepthPratitioner[_, _, _])
+        if p.numPartitions == parallelism && p.treeIds.length == treeIds.length => p
+
+      case _ =>
+
+        // ignore nodeId here
+        val expectedNumKeys = treeIds.length * boostConf.getNumCols * boostConf.getColSampleByTree * boostConf.getColSampleByLevel
+
+        if (expectedNumKeys >= parallelism * 8) {
+          new SkipNodePratitioner[T, N, C](parallelism, boostConf.getNumCols, treeIds)
+
+        } else if (depth > 2 && expectedNumKeys * (1 << (depth - 1)) >= parallelism * 8) {
+          // check the parent level (not current level)
+          new DepthPratitioner[T, N, C](parallelism, boostConf.getNumCols, depth - 1, treeIds)
+
+        } else {
+          new HashPartitioner(parallelism)
+        }
+    }
   }
 
 
@@ -337,29 +378,35 @@ private[gbm] object Tree extends Serializable with Logging {
                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
     val threshold = neh.fromDouble(boostConf.getMinNodeHess * 2)
 
-    // Only if the partitioner is a HistogramPratitioner, we can preserves the
-    // partitioning after changing the nodeId in key
-    val preservesPartitioning1 =
-    rightHists.partitioner.nonEmpty &&
-      rightHists.partitioner.get.isInstanceOf[HistogramPratitioner[_, _]]
+    // Only if the partitioner is a SkipNodePratitioner or DepthPratitioner, we can preserves
+    // the partitioning after changing the nodeId in key
+    val preserve1 = nodeHists.partitioner match {
+      case Some(_: SkipNodePratitioner[_, _, _]) => true
+      case Some(_: DepthPratitioner[_, _, _]) => true
+      case _ => false
+    }
 
-    val preservesPartitioning2 = partitioner.isInstanceOf[HistogramPratitioner[_, _]]
+    val preserve2 = partitioner match {
+      case _: SkipNodePratitioner[_, _, _] => true
+      case _: DepthPratitioner[_, _, _] => true
+      case _ => false
+    }
 
-    rightHists.mapPartitions(f = { iter =>
-      iter.map { case ((treeId, rightNodeId, colId), rightHist) =>
-        val parentNodeId = inn.quot(rightNodeId, inn.fromInt(2))
-        ((treeId, parentNodeId, colId), rightHist)
+    nodeHists.mapPartitions(f = { iter =>
+      iter.map { case ((treeId, parentNodeId, colId), parentHist) =>
+        val leftNodeId = inn.plus(parentNodeId, parentNodeId)
+        val rightNodeId = inn.plus(leftNodeId, inn.one)
+        ((treeId, rightNodeId, colId), parentHist)
       }
-    }, preservesPartitioning1)
+    }, preserve1)
 
-      .join(nodeHists, partitioner)
+      .join(rightHists, partitioner)
 
       .mapPartitions(f = { iter =>
 
-        iter.flatMap { case ((treeId, parentNodeId, colId), (rightHist, parentHist)) =>
+        iter.flatMap { case ((treeId, rightNodeId, colId), (parentHist, rightHist)) =>
           require(rightHist.len <= parentHist.len)
-          val leftNodeId = inn.plus(parentNodeId, parentNodeId)
-          val rightNodeId = inn.plus(leftNodeId, inn.one)
+          val leftNodeId = inn.minus(rightNodeId, inn.one)
           val leftHist = parentHist.minus(rightHist)
 
           ((treeId, leftNodeId, colId), leftHist) ::
@@ -374,7 +421,7 @@ private[gbm] object Tree extends Serializable with Logging {
           nuh.gteq(hessSum, threshold) && hist.nnz > 2
         }
 
-      }, preservesPartitioning2)
+      }, preserve2)
   }
 
 
@@ -464,11 +511,12 @@ private[gbm] object Tree extends Serializable with Logging {
   * Partitioner that ignore nodeId in key (treeId, nodeId, colId), this will avoid unnecessary shuffle
   * in histogram subtraction and reduce communication cost in following split-searching.
   */
-class HistogramPratitioner[T, C](val numPartitions: Int,
-                                 val numCols: Int,
-                                 val treeIds: Array[Int])
-                                (implicit ct: ClassTag[T], int: Integral[T],
-                                 cc: ClassTag[C], inc: Integral[C]) extends Partitioner {
+class SkipNodePratitioner[T, N, C](val numPartitions: Int,
+                                   val numCols: Int,
+                                   val treeIds: Array[Int])
+                                  (implicit ct: ClassTag[T], int: Integral[T],
+                                   cn: ClassTag[N], inn: Integral[N],
+                                   cc: ClassTag[C], inc: Integral[C]) extends Partitioner {
   require(numPartitions > 0)
   require(numCols > 0)
   require(treeIds.nonEmpty)
@@ -479,21 +527,24 @@ class HistogramPratitioner[T, C](val numPartitions: Int,
 
   private val treeInterval = numPartitions.toDouble / treeIds.length
 
+  private val colInterval = treeInterval / numCols
+
   override def getPartition(key: Any): Int = key match {
     case null => 0
 
-    case (treeId: T, _, colId: C) =>
+    case (treeId: T, _: N, colId: C) =>
       val i = ju.Arrays.binarySearch(treeIds, int.toInt(treeId))
       require(i >= 0)
-      val p = (i + inc.toDouble(colId) / numCols) * treeInterval
+
+      val p = i * treeInterval + inc.toInt(colId) * colInterval
       math.min(numPartitions - 1, p.toInt)
   }
 
   override def equals(other: Any): Boolean = other match {
-    case h: HistogramPratitioner[_, _] =>
-      numPartitions == h.numPartitions && numCols == h.numCols &&
-        treeIds.length == h.treeIds.length &&
-        Iterator.range(0, treeIds.length).forall(i => treeIds(i) == h.treeIds(i))
+    case p: SkipNodePratitioner[T, N, C] =>
+      numPartitions == p.numPartitions && numCols == p.numCols &&
+        treeIds.length == p.treeIds.length &&
+        Iterator.range(0, treeIds.length).forall(i => treeIds(i) == p.treeIds(i))
 
     case _ =>
       false
@@ -502,8 +553,83 @@ class HistogramPratitioner[T, C](val numPartitions: Int,
   override def hashCode: Int = hash
 
   override def toString: String = {
-    s"HistogramPratitioner(numPartitions=$numPartitions, numCols=$numCols, " +
-      s"treeIds=${treeIds.mkString("[", ",", "]")})"
+    s"SkipNodePratitioner[${ct.runtimeClass}, ${cn.runtimeClass}, ${cc.runtimeClass}](numPartitions=$numPartitions," +
+      s" numCols=$numCols, treeIds=${treeIds.mkString("[", ",", "]")})"
+  }
+}
+
+
+/**
+  * Partitioner that will map nodeId into certain depth before partitioning:
+  * if nodeId is of depth #depth, just keep it;
+  * if nodeId is a descendant of depth level, map it to its ancestor in depth #depth;
+  * otherwise, throw an exception
+  * this will avoid unnecessary shuffle in histogram subtraction and reduce communication cost in following split-searching.
+  */
+class DepthPratitioner[T, N, C](val numPartitions: Int,
+                                val numCols: Int,
+                                val depth: Int,
+                                val treeIds: Array[Int])
+                               (implicit ct: ClassTag[T], int: Integral[T],
+                                cn: ClassTag[N], inn: Integral[N],
+                                cc: ClassTag[C], inc: Integral[C]) extends Partitioner {
+  require(numPartitions > 0)
+  require(numCols > 0)
+  require(depth > 1)
+  require(treeIds.nonEmpty)
+  require(treeIds.forall(_ >= 0))
+  require(Iterator.range(0, treeIds.length - 1).forall(i => treeIds(i) < treeIds(i + 1)))
+
+  private val lowerBound: Int = 1 << depth
+
+  private val upperBound: Int = lowerBound << 1
+
+  private val hash = numPartitions * depth * (numCols + treeIds.sum + treeIds.min + treeIds.max)
+
+  private val treeInterval = numPartitions.toDouble / treeIds.length
+
+  private val nodeInterval = treeInterval / lowerBound
+
+  private val colInterval = nodeInterval / numCols
+
+  override def getPartition(key: Any): Int = key match {
+    case null => 0
+
+    case (treeId: T, nodeId: N, colId: C) =>
+      val i = ju.Arrays.binarySearch(treeIds, int.toInt(treeId))
+      require(i >= 0)
+
+      val nodeId2 = adjust(inn.toInt(nodeId))
+
+      val p = i * treeInterval + (nodeId2 - lowerBound) * nodeInterval + inc.toDouble(colId) * colInterval
+      math.min(numPartitions - 1, p.toInt)
+  }
+
+  private def adjust(nodeId: Int): Int = {
+    require(nodeId >= lowerBound, s"nodeId $nodeId < lowerBound $lowerBound")
+    var n = nodeId
+    while (n >= upperBound) {
+      n >>= 1
+    }
+    n
+  }
+
+  override def equals(other: Any): Boolean = other match {
+    case p: DepthPratitioner[T, N, C] =>
+      numPartitions == p.numPartitions &&
+        numCols == p.numCols && depth == p.depth &&
+        treeIds.length == p.treeIds.length &&
+        Iterator.range(0, treeIds.length).forall(i => treeIds(i) == p.treeIds(i))
+
+    case _ =>
+      false
+  }
+
+  override def hashCode: Int = hash
+
+  override def toString: String = {
+    s"DepthPratitioner[${ct.runtimeClass}, ${cn.runtimeClass}, ${cc.runtimeClass}](numPartitions=$numPartitions, numCols=$numCols, " +
+      s"depth=$depth, treeIds=${treeIds.mkString("[", ",", "]")})"
   }
 }
 

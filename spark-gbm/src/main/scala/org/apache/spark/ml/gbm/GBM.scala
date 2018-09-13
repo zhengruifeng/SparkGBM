@@ -669,7 +669,7 @@ private[gbm] object GBM extends Logging {
       logInfo(s"$logPrefix start")
       val start = System.nanoTime
       val trees = buildTrees[C, B, H](trainBlocks, trainRawBlocks, weightsBuff.toArray, boostConf, iter, dropped.toSet)
-      logInfo(s"$logPrefix finish, duration: ${(System.nanoTime - start) / 1e9} sec")
+      logInfo(s"$logPrefix finished, duration: ${(System.nanoTime - start) / 1e9} sec")
 
       if (trees.forall(_.isEmpty)) {
         // fail to build a new tree

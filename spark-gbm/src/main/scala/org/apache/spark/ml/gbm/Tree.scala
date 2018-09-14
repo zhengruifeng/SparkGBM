@@ -179,7 +179,6 @@ private[gbm] object Tree extends Serializable with Logging {
                                 (implicit ct: ClassTag[T], int: Integral[T],
                                  cn: ClassTag[N], inn: Integral[N],
                                  cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C]): Partitioner = {
-
     prevPartitioner match {
       case Some(p: SkipNodePratitioner[_, _, _])
         if p.numPartitions == parallelism && p.treeIds.length == treeIds.length => p
@@ -190,12 +189,13 @@ private[gbm] object Tree extends Serializable with Logging {
       case _ =>
 
         // ignore nodeId here
-        val expectedNumKeys = treeIds.length * boostConf.getNumCols * boostConf.getColSampleByTree * boostConf.getColSampleByLevel
+        val numKeys = treeIds.length * boostConf.getNumCols *
+          boostConf.getColSampleByTree * boostConf.getColSampleByLevel
 
-        if (expectedNumKeys >= parallelism * 8) {
+        if (numKeys >= (parallelism << 3)) {
           new SkipNodePratitioner[T, N, C](parallelism, boostConf.getNumCols, treeIds)
 
-        } else if (depth > 2 && expectedNumKeys * (1 << (depth - 1)) >= parallelism * 8) {
+        } else if (depth > 2 && numKeys * (1 << (depth - 1)) >= (parallelism << 3)) {
           // check the parent level (not current level)
           new DepthPratitioner[T, N, C](parallelism, boostConf.getNumCols, depth - 1, treeIds)
 

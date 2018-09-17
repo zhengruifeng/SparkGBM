@@ -913,8 +913,6 @@ private[gbm] object GBM extends Logging {
     val rawBase = neh.fromDouble(boostConf.computeRawBaseScore)
     val rawSize = boostConf.getRawSize
 
-    val persisted = mutable.ArrayBuffer.empty[RDD[_]]
-
     val computeRaw = boostConf.getBoostType match {
       case GBTree =>
         rawSeq: Array[H] => rawSeq
@@ -964,6 +962,8 @@ private[gbm] object GBM extends Logging {
         ArrayBlock.build[H](iter)
       }
 
+
+    val persisted = mutable.ArrayBuffer.empty[RDD[_]]
 
     // To alleviate memory footprint in caching layer, different schemes are designed.
     // Each `prepareTreeInput**` method will internally cache necessary datasets in a compact fashion.

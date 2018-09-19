@@ -32,6 +32,23 @@ class BoostConfig extends Logging with Serializable {
   def getBlockSize: Int = blockSize
 
 
+  /** top K in voting parallelism */
+  private var topK: Int = 20
+
+  private[gbm] def setTopK(value: Int): this.type = {
+    require(value > 0)
+    topK = value
+    this
+  }
+
+  def updateTopK(value: Int): this.type = {
+    logInfo(s"topK was changed from $topK to $value")
+    setTopK(value)
+  }
+
+  def getTopK: Int = topK
+
+
   /** maximum number of iterations */
   private var maxIter: Int = 20
 
@@ -640,26 +657,6 @@ private[gbm] class BaseConfig(val iteration: Int,
       colSelectors(index)
     } else {
       TotalSelector()
-    }
-  }
-
-  def contains[T, C](indices: Array[T], colId: C)
-                    (implicit int: Integral[T],
-                     inc: Integral[C]): Array[Boolean] = {
-    var prevSelector: ColumSelector = null
-    var prevResult = false
-
-    indices.map { index =>
-      val selector = getSelector(int.toInt(index))
-
-      if (selector == prevSelector) {
-        prevResult
-      } else {
-        val result = selector.contains(colId)
-        prevSelector = selector
-        prevResult = result
-        result
-      }
     }
   }
 }

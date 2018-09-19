@@ -6,14 +6,15 @@ import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.{Failure, Success}
-
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark._
+
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.unsafe.hash.Murmur3_x86_32
 
@@ -192,6 +193,47 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
           logWarning(s"Fail to remove old checkpoint file: $file, ${t.toString}")
       }
     }
+  }
+}
+
+
+private[gbm] class ResourceRecoder extends Logging {
+
+  private val datasetBuff = mutable.ArrayBuffer.empty[Dataset[_]]
+
+  private val rddBuff = mutable.ArrayBuffer.empty[RDD[_]]
+
+  private val bcBuff = mutable.ArrayBuffer.empty[Broadcast[_]]
+
+  def append(dataset: Dataset[_]): Unit = {
+    datasetBuff.append(dataset)
+  }
+
+  def append(rdd: RDD[_]): Unit = {
+    rddBuff.append(rdd)
+  }
+
+  def append(bc: Broadcast[_]): Unit = {
+    bcBuff.append(bc)
+  }
+
+  def cleanup(): Unit = {
+    datasetBuff.foreach { dataset =>
+      if (dataset.storageLevel != StorageLevel.NONE) {
+        dataset.unpersist(false)
+      }
+    }
+    datasetBuff.clear()
+
+    rddBuff.foreach { rdd =>
+      if (rdd.getStorageLevel != StorageLevel.NONE) {
+        rdd.unpersist(false)
+      }
+    }
+    rddBuff.clear()
+
+    bcBuff.foreach(_.destroy(false))
+    bcBuff.clear()
   }
 }
 
@@ -502,7 +544,37 @@ private[gbm] object Utils extends Logging {
         classOf[DepthPratitioner[Int, Short, Int]],
         classOf[DepthPratitioner[Int, Int, Byte]],
         classOf[DepthPratitioner[Int, Int, Short]],
-        classOf[DepthPratitioner[Int, Int, Int]]))
+        classOf[DepthPratitioner[Int, Int, Int]],
+
+
+        classOf[IDRangePratitioner[Any, Any, Any]],
+        classOf[IDRangePratitioner[Byte, Byte, Byte]],
+        classOf[IDRangePratitioner[Byte, Byte, Short]],
+        classOf[IDRangePratitioner[Byte, Byte, Int]],
+        classOf[IDRangePratitioner[Byte, Short, Byte]],
+        classOf[IDRangePratitioner[Byte, Short, Short]],
+        classOf[IDRangePratitioner[Byte, Short, Int]],
+        classOf[IDRangePratitioner[Byte, Int, Byte]],
+        classOf[IDRangePratitioner[Byte, Int, Short]],
+        classOf[IDRangePratitioner[Byte, Int, Int]],
+        classOf[IDRangePratitioner[Short, Byte, Byte]],
+        classOf[IDRangePratitioner[Short, Byte, Short]],
+        classOf[IDRangePratitioner[Short, Byte, Int]],
+        classOf[IDRangePratitioner[Short, Short, Byte]],
+        classOf[IDRangePratitioner[Short, Short, Short]],
+        classOf[IDRangePratitioner[Short, Short, Int]],
+        classOf[IDRangePratitioner[Short, Int, Byte]],
+        classOf[IDRangePratitioner[Short, Int, Short]],
+        classOf[IDRangePratitioner[Short, Int, Int]],
+        classOf[IDRangePratitioner[Int, Byte, Byte]],
+        classOf[IDRangePratitioner[Int, Byte, Short]],
+        classOf[IDRangePratitioner[Int, Byte, Int]],
+        classOf[IDRangePratitioner[Int, Short, Byte]],
+        classOf[IDRangePratitioner[Int, Short, Short]],
+        classOf[IDRangePratitioner[Int, Short, Int]],
+        classOf[IDRangePratitioner[Int, Int, Byte]],
+        classOf[IDRangePratitioner[Int, Int, Short]],
+        classOf[IDRangePratitioner[Int, Int, Int]]))
 
       kryoRegistered = true
     }

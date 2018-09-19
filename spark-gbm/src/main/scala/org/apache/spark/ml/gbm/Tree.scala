@@ -5,10 +5,10 @@ import java.{util => ju}
 import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
-
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.util.BoundedPriorityQueue
 
 
 private[gbm] object Tree extends Serializable with Logging {
@@ -19,17 +19,17 @@ private[gbm] object Tree extends Serializable with Logging {
     * @param data      instances containing (bins, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
     *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] -> {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
     * @param boostConf boosting configure
-    * @param baseConf  trees-building configure
+    * @param baseConf  trees-growth configure
     * @return tree models
     */
-  def train[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
-                           boostConf: BoostConfig,
-                           baseConf: BaseConfig)
-                          (implicit ct: ClassTag[T], int: Integral[T],
-                           cn: ClassTag[N], inn: Integral[N],
-                           cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                           cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                           ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+  def trainWithDataParallelism[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
+                                              boostConf: BoostConfig,
+                                              baseConf: BaseConfig)
+                                             (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                              cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                              cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                              cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                              ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = data.sparkContext
 
     var nodeIds = sc.emptyRDD[Array[N]]
@@ -40,12 +40,9 @@ private[gbm] object Tree extends Serializable with Logging {
     val histsCheckpointer = new Checkpointer[((T, N, C), KVVector[B, H])](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
 
-    val logPrefix = s"Iteration ${baseConf.iteration}:"
-    logInfo(s"$logPrefix trees building start")
+    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
 
     val splitRNG = new Random(boostConf.getSeed)
-
-    val prevSplits = mutable.OpenHashMap.empty[(T, N), Split]
 
     val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
     val numLeaves = Array.fill(baseConf.numTrees)(1)
@@ -55,13 +52,15 @@ private[gbm] object Tree extends Serializable with Logging {
     var depth = 0
 
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
-    var treeIds = Array.range(0, baseConf.numTrees)
+
+    var prevTreeIds = Array.tabulate(baseConf.numTrees)(int.fromInt)
     var prevPartitioner = Option.empty[Partitioner]
+    val prevSplits = mutable.OpenHashMap.empty[(T, N), Split]
 
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
       val start = System.nanoTime
 
-      logInfo(s"$logPrefix Depth $depth: splitting start")
+      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
 
       if (inn.equiv(minNodeId, inn.one)) {
         nodeIds = data.map { case (_, treeIds, _) => Array.fill(treeIds.length)(inn.one) }
@@ -73,9 +72,9 @@ private[gbm] object Tree extends Serializable with Logging {
       }
 
 
-      val partitioner = updatePartitioner[T, N, C](boostConf, treeIds, depth, parallelism, prevPartitioner)
+      val partitioner = updatePartitioner[T, N, C](boostConf, prevTreeIds, depth, parallelism, prevPartitioner)
       prevPartitioner = Some(partitioner)
-      logInfo(s"$logPrefix Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
+      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
 
 
       if (inn.equiv(minNodeId, inn.one)) {
@@ -92,73 +91,113 @@ private[gbm] object Tree extends Serializable with Logging {
       hists.setName(s"Histograms (Iteration ${baseConf.iteration}, depth $depth)")
       histsCheckpointer.update(hists)
 
-      prevSplits.clear()
-
-
       // find best splits
       val splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, depth, splitRNG.nextLong)
 
-      if (splits.isEmpty) {
-        logInfo(s"$logPrefix Depth $depth: no more splits found, trees building finished")
-        Iterator.range(0, finished.length).foreach(finished(_) = true)
+      // update trees
+      updateTrees[T, N](splits, boostConf, baseConf, roots, numLeaves, finished, depth, minNodeId, prevSplits)
+      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished, duration ${(System.nanoTime - start) / 1e9} seconds")
 
-      } else {
-
-        val splits2 = splits.toArray
-          .map { case ((treeId, nodeId), split) => (treeId, nodeId, split) }
-          .groupBy(_._1)
-          .mapValues(_.map(t => (t._2, t._3)))
-
-        var numFinished = 0
-
-        Iterator.range(0, baseConf.numTrees).filterNot(finished).foreach { treeId =>
-          val maxRemains = boostConf.getMaxLeaves - numLeaves(treeId)
-
-          splits2.get(int.fromInt(treeId)) match {
-            case Some(array) if array.length == maxRemains =>
-              array.foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
-              numLeaves(treeId) += array.length
-              finished(treeId) = true
-              numFinished += 1
-
-            case Some(array) if array.length > maxRemains =>
-              array.sortBy(_._2.gain).takeRight(maxRemains)
-                .foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
-              numLeaves(treeId) += maxRemains
-              finished(treeId) = true
-              numFinished += 1
-
-            case Some(array) if array.length < maxRemains =>
-              array.foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
-              numLeaves(treeId) += array.length
-
-            case None =>
-              finished(treeId) = true
-              numFinished += 1
-          }
-        }
-
-        updateTrees[T, N](roots, minNodeId, prevSplits.toMap)
-
-        treeIds = prevSplits.keysIterator.map(t => int.toInt(t._1)).toArray.distinct.sorted
-
-        logInfo(s"$logPrefix Depth $depth: splitting finished, $numFinished trees building finished," +
-          s" ${prevSplits.size} leaves split, total gain=${prevSplits.values.map(_.gain).sum}," +
-          s" duration ${(System.nanoTime - start) / 1e9} seconds")
-      }
+      prevTreeIds = prevSplits.keysIterator.map(_._1).toArray.distinct.sorted
 
       minNodeId = inn.plus(minNodeId, minNodeId)
       depth += 1
     }
 
     if (depth >= boostConf.getMaxDepth) {
-      logInfo(s"$logPrefix maxDepth=${boostConf.getMaxDepth} reached, trees building finished")
+      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, trees growth finished")
     } else {
-      logInfo(s"$logPrefix trees building finished")
+      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
     }
 
     nodesCheckpointer.cleanup()
     histsCheckpointer.cleanup()
+
+    roots.map(TreeModel.createModel)
+  }
+
+
+  /**
+    *
+    * @param data      instances containing (bins, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
+    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] -> {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
+    * @param boostConf boosting configure
+    * @param baseConf  trees-growth configure
+    * @return tree models
+    */
+  def trainWithVotingParallelism[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
+                                                boostConf: BoostConfig,
+                                                baseConf: BaseConfig)
+                                               (implicit ct: ClassTag[T], int: Integral[T],
+                                                cn: ClassTag[N], inn: Integral[N],
+                                                cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+    val sc = data.sparkContext
+
+    var nodeIds = sc.emptyRDD[Array[N]]
+    val nodesCheckpointer = new Checkpointer[Array[N]](sc,
+      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
+
+    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
+
+    val splitRNG = new Random(boostConf.getSeed)
+
+    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
+    val numLeaves = Array.fill(baseConf.numTrees)(1)
+    val finished = Array.fill(baseConf.numTrees)(false)
+
+    var minNodeId = inn.one
+    var depth = 0
+
+    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
+
+    var prevTreeNodeIds = Array.tabulate(baseConf.numTrees)(t => (int.fromInt(t), inn.one))
+    val prevSplits = mutable.OpenHashMap.empty[(T, N), Split]
+
+    val recoder = new ResourceRecoder
+
+    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
+      val start = System.nanoTime
+
+      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
+
+      if (inn.equiv(minNodeId, inn.one)) {
+        nodeIds = data.map { case (_, treeIds, _) => Array.fill(treeIds.length)(inn.one) }
+        nodeIds.setName(s"NodeIds (Iteration ${baseConf.iteration}, depth $depth)")
+      } else {
+        nodeIds = updateNodeIds[T, N, C, B, H](data, nodeIds, prevSplits.toMap)
+        nodeIds.setName(s"NodeIds (Iteration ${baseConf.iteration}, depth $depth)")
+        nodesCheckpointer.update(nodeIds)
+      }
+
+      val partitioner = new IDRangePratitioner[T, N, C](parallelism, boostConf.getNumCols, depth, prevTreeNodeIds)
+
+      // compute histograms
+      val hists = computeHistogramsWithVoting[T, N, C, B, H](data.zip(nodeIds), boostConf, baseConf, depth, partitioner, recoder)
+
+      // find best splits
+      val splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, depth, splitRNG.nextLong)
+
+      recoder.cleanup()
+
+      // update trees
+      updateTrees[T, N](splits, boostConf, baseConf, roots, numLeaves, finished, depth, minNodeId, prevSplits)
+      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished, duration ${(System.nanoTime - start) / 1e9} seconds")
+
+      prevTreeNodeIds = prevSplits.keys.toArray.sorted
+
+      minNodeId = inn.plus(minNodeId, minNodeId)
+      depth += 1
+    }
+
+    if (depth >= boostConf.getMaxDepth) {
+      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, trees growth finished")
+    } else {
+      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
+    }
+
+    nodesCheckpointer.cleanup()
 
     roots.map(TreeModel.createModel)
   }
@@ -172,11 +211,11 @@ private[gbm] object Tree extends Serializable with Logging {
     * @param prevPartitioner previous partitioner
     */
   def updatePartitioner[T, N, C](boostConf: BoostConfig,
-                                 treeIds: Array[Int],
+                                 treeIds: Array[T],
                                  depth: Int,
                                  parallelism: Int,
                                  prevPartitioner: Option[Partitioner])
-                                (implicit ct: ClassTag[T], int: Integral[T],
+                                (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                  cn: ClassTag[N], inn: Integral[N],
                                  cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C]): Partitioner = {
     prevPartitioner match {
@@ -207,36 +246,113 @@ private[gbm] object Tree extends Serializable with Logging {
 
 
   /**
-    * update trees
+    * update trees and other metrics
+    *
+    * @param splits     best splits
+    * @param boostConf  boosting config
+    * @param baseConf   base model config
+    * @param roots      root nodes of trees, will be updated
+    * @param numLeaves  number of leaves of trees, will be updated
+    * @param finished   indicates that where a tree has stopped growth, will be updated
+    * @param depth      current depth
+    * @param minNodeId  current minimum index of node of this depth
+    * @param prevSplits previous selected splits, will be cleaned and set to selected splits of this depth
+    */
+  def updateTrees[T, N](splits: Map[(T, N), Split],
+                        boostConf: BoostConfig,
+                        baseConf: BaseConfig,
+                        roots: Array[LearningNode],
+                        numLeaves: Array[Int],
+                        finished: Array[Boolean],
+                        depth: Int,
+                        minNodeId: N,
+                        prevSplits: mutable.OpenHashMap[(T, N), Split])
+                       (implicit ct: ClassTag[T], int: Integral[T],
+                        cn: ClassTag[N], inn: Integral[N]): Unit = {
+    prevSplits.clear()
+
+    if (splits.nonEmpty) {
+      val splits2 = splits.toArray
+        .map { case ((treeId, nodeId), split) => (treeId, nodeId, split) }
+        .groupBy(_._1)
+        .mapValues(_.map(t => (t._2, t._3)))
+
+      var numFinished = 0
+
+      Iterator.range(0, baseConf.numTrees).filterNot(finished).foreach { treeId =>
+        val maxRemains = boostConf.getMaxLeaves - numLeaves(treeId)
+
+        splits2.get(int.fromInt(treeId)) match {
+
+          case Some(array) if array.length == maxRemains =>
+            array.foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
+            numLeaves(treeId) += array.length
+            finished(treeId) = true
+            numFinished += 1
+
+          case Some(array) if array.length > maxRemains =>
+            // if number of splits in a tree exceeds `maxLeaves`, only a part will be selected
+            array.sortBy(_._2.gain).takeRight(maxRemains)
+              .foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
+            numLeaves(treeId) += maxRemains
+            finished(treeId) = true
+            numFinished += 1
+
+          case Some(array) if array.length < maxRemains =>
+            array.foreach { case (nodeId, split) => prevSplits.update((int.fromInt(treeId), nodeId), split) }
+            numLeaves(treeId) += array.length
+
+          case None =>
+            finished(treeId) = true
+            numFinished += 1
+        }
+      }
+
+      updateRoots[T, N](roots, minNodeId, prevSplits.toMap)
+
+      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting finished, $numFinished trees growth finished," +
+        s" ${prevSplits.size} leaves split, total gain=${prevSplits.values.map(_.gain).sum}.")
+
+    } else {
+      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: no more splits found, trees growth finished.")
+      Iterator.range(0, finished.length).foreach(finished(_) = true)
+    }
+  }
+
+
+  /**
+    * update roots of trees
     *
     * @param roots     roots of trees
     * @param minNodeId minimum nodeId for this level
     * @param splits    splits of leaves
     */
-  def updateTrees[T, N](roots: Array[LearningNode],
+  def updateRoots[T, N](roots: Array[LearningNode],
                         minNodeId: N,
                         splits: Map[(T, N), Split])
                        (implicit ct: ClassTag[T], int: Integral[T],
                         cn: ClassTag[N], inn: Integral[N]): Unit = {
-    roots.zipWithIndex.foreach {
-      case (root, treeId) =>
-        val nodes = root.nodeIterator.filter { node =>
-          node.nodeId >= inn.toInt(minNodeId) &&
-            splits.contains((int.fromInt(treeId), inn.fromInt(node.nodeId)))
-        }.toArray
+    if (splits.nonEmpty) {
+      roots.zipWithIndex.foreach {
+        case (root, treeId) =>
+          val nodes = root.nodeIterator.filter { node =>
+            node.nodeId >= inn.toInt(minNodeId) &&
+              splits.contains((int.fromInt(treeId), inn.fromInt(node.nodeId)))
+          }.toArray
 
-        nodes.foreach { node =>
-          node.isLeaf = false
-          node.split = splits.get((int.fromInt(treeId), inn.fromInt(node.nodeId)))
+          nodes.foreach { node =>
+            node.isLeaf = false
+            node.split = splits.get((int.fromInt(treeId), inn.fromInt(node.nodeId)))
 
-          val leftNodeId = node.nodeId << 1
-          node.leftNode = Some(LearningNode.create(leftNodeId))
-          node.leftNode.get.prediction = node.split.get.leftWeight
+            val leftNodeId = node.nodeId << 1
+            node.leftNode = Some(LearningNode.create(leftNodeId))
+            node.leftNode.get.prediction = node.split.get.leftWeight
 
-          val rightNodeId = leftNodeId + 1
-          node.rightNode = Some(LearningNode.create(rightNodeId))
-          node.rightNode.get.prediction = node.split.get.rightWeight
-        }
+            val rightNodeId = leftNodeId + 1
+            node.rightNode = Some(LearningNode.create(rightNodeId))
+            node.rightNode.get.prediction = node.split.get.rightWeight
+          }
+      }
     }
   }
 
@@ -335,8 +451,7 @@ private[gbm] object Tree extends Serializable with Logging {
           val indexHess = inb.plus(indexGrad, inb.one)
           hist.plus(indexHess, hess)
             .plus(indexGrad, grad)
-      },
-      combOp = _ plus _
+      }, combOp = _ plus _
 
     ).mapValues { hist =>
       var nzGradSum = nuh.zero
@@ -487,7 +602,11 @@ private[gbm] object Tree extends Serializable with Logging {
           }
         }
 
-        Iterator.single((splits.toArray, metrics))
+        if (metrics.head > 0) {
+          Iterator.single((splits.toArray, metrics))
+        } else {
+          Iterator.empty
+        }
 
       }.treeReduce(f = {
         case ((splits1, metrics1), (splits2, metrics2)) =>
@@ -504,6 +623,176 @@ private[gbm] object Tree extends Serializable with Logging {
 
     splits.toMap
   }
+
+
+  /**
+    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    *
+    * @param data instances appended with nodeId, containing ((bins, treeIds, grad-hess), nodeIds)
+    * @return histogram data containing (treeId, nodeId, columnId, histogram)
+    */
+  def computeHistogramsWithVoting[T, N, C, B, H](data: RDD[((KVVector[C, B], Array[T], Array[H]), Array[N])],
+                                                 boostConf: BoostConfig,
+                                                 baseConf: BaseConfig,
+                                                 depth: Int,
+                                                 partitioner: Partitioner,
+                                                 recoder: ResourceRecoder)
+                                                (implicit ct: ClassTag[T], int: Integral[T],
+                                                 cn: ClassTag[N], inn: Integral[N],
+                                                 cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                 cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                                 ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
+    import PairRDDFunctions._
+
+    val sc = data.sparkContext
+
+    // config of level-based column sampling
+    val baseConf2 = if (boostConf.getColSampleByLevel == 1) {
+      new BaseConfig(-1, -1, Array.empty)
+
+    } else if (boostConf.getNumCols * boostConf.getColSampleByLevel > 32) {
+      val rng = new Random(boostConf.getSeed * baseConf.iteration + depth)
+      val numBaseModels = baseConf.numTrees / boostConf.getRawSize
+      val maximum = (Int.MaxValue * boostConf.getColSampleByTree).ceil.toInt
+      val selectors: Array[ColumSelector] = Array.range(0, numBaseModels).flatMap { i =>
+        val seed = rng.nextInt
+        Iterator.fill(boostConf.getRawSize)(HashSelector(maximum, seed))
+      }
+      new BaseConfig(-1, -1, selectors)
+
+    } else {
+      val rng = new Random(boostConf.getSeed * baseConf.iteration + depth)
+      val numBaseModels = baseConf.numTrees / boostConf.getRawSize
+      val numSelected = (boostConf.getNumCols * boostConf.getColSampleByTree).ceil.toInt
+      val selectors: Array[ColumSelector] = Array.range(0, numBaseModels).flatMap { i =>
+        val selected = rng.shuffle(Seq.range(0, boostConf.getNumCols))
+          .take(numSelected).toArray.sorted
+        Iterator.fill(boostConf.getRawSize)(SetSelector(selected))
+      }
+      new BaseConfig(-1, -1, selectors)
+    }
+    require(baseConf.colSelectors.length == baseConf2.colSelectors.length)
+
+
+    val localHistograms = data.mapPartitions { iter =>
+      val histSums = mutable.OpenHashMap.empty[(T, N), (H, H)]
+
+      iter.flatMap { case ((bins, treeIds, gradHess), nodeIds) =>
+        val gradSize = gradHess.length >> 1
+        Iterator.range(0, treeIds.length)
+          .flatMap { i =>
+            val treeId = treeIds(i)
+            val nodeId = nodeIds(i)
+            val indexGrad = (i % gradSize) << 1
+            val grad = gradHess(indexGrad)
+            val hess = gradHess(indexGrad + 1)
+
+            val (g, h) = histSums.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
+            histSums.update((treeId, nodeId), (nuh.plus(g, grad), nuh.plus(h, hess)))
+
+            val selector = baseConf.getSelector(int.toInt(treeId))
+            val selector2 = baseConf2.getSelector(int.toInt(treeId))
+
+            // ignore zero-index bins
+            bins.activeIter
+              .filter { case (colId, _) => selector.contains(colId) && selector2.contains(colId) }
+              .map { case (colId, bin) => ((treeId, nodeId, colId), (bin, grad, hess)) }
+          }
+
+      } ++ histSums.iterator.flatMap { case ((treeId, nodeId), (gradSum, hessSum)) =>
+        val selector = baseConf.getSelector(int.toInt(treeId))
+        val selector2 = baseConf2.getSelector(int.toInt(treeId))
+
+        // make sure all available (treeId, nodeId, colId) tuples are taken into account
+        // by the way, store sum of hist in zero-index bin
+        Iterator.range(0, boostConf.getNumCols)
+          .filter(colId => selector.contains(colId) && selector2.contains(colId))
+          .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, gradSum, hessSum)) }
+      }
+
+    }.aggregatePartitionsByKey(KVVector.empty[B, H])(
+      seqOp = {
+        case (hist, (bin, grad, hess)) =>
+          val indexGrad = inb.plus(bin, bin)
+          val indexHess = inb.plus(indexGrad, inb.one)
+          hist.plus(indexHess, hess)
+            .plus(indexGrad, grad)
+      }, combOp = _ plus _
+
+    ).mapValues { hist =>
+      var nzGradSum = nuh.zero
+      var nzHessSum = nuh.zero
+
+      hist.activeIter.foreach { case (bin, v) =>
+        if (inb.gt(bin, inb.one)) {
+          if (inb.equiv(inb.rem(bin, inb.fromInt(2)), inb.zero)) {
+            nzGradSum = nuh.plus(nzGradSum, v)
+          } else {
+            nzHessSum = nuh.plus(nzHessSum, v)
+          }
+        }
+      }
+
+      hist.minus(inb.zero, nzGradSum)
+        .minus(inb.one, nzHessSum)
+        .compressed
+    }.setName("Local Histograms")
+
+    localHistograms.persist(boostConf.getStorageLevel)
+    recoder.append(localHistograms)
+
+    val parallelism = partitioner.numPartitions
+    val topK = boostConf.getTopK
+    val top2K = topK << 1
+
+    val voted = localHistograms.flatMap { case ((treeId, nodeId, colId), hist) =>
+      val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
+      split.map(s => ((treeId, nodeId), (-s.gain, colId)))
+
+    }.aggregatePartitionsByKey(new BoundedPriorityQueue[(Float, C)](topK))(
+      seqOp = _ += _,
+      combOp = _ ++= _
+    ).setName("Local TopK")
+
+      .aggregateByKey(KVVector.empty[C, Int], parallelism)(
+        seqOp = {
+          case (votes, localTopK) =>
+            var v = votes
+            localTopK.iterator.foreach { case (_, colId) => v = v.plus(colId, 1) }
+            v
+        }, combOp = _ plus _
+
+      ).setName("Global Votes")
+
+      .flatMap { case ((treeId, nodeId), votes) =>
+        votes.activeIter.toArray
+          .sortBy(_._2).takeRight(top2K)
+          .iterator.map { case (colId, _) =>
+          ((treeId, nodeId, colId), true)
+        }
+      }.setName("Global Top2K")
+
+    voted.persist(boostConf.getStorageLevel)
+    recoder.append(voted)
+
+    if (voted.count < (1 << 16)) {
+      val set = voted.map(_._1).collect().toSet
+      val bcSet = sc.broadcast(set)
+      recoder.append(bcSet)
+
+      localHistograms.mapPartitions { iter =>
+        val set = bcSet.value
+        iter.filter { case (id, _) =>
+          set.contains(id)
+        }
+      }.reduceByKey(partitioner, _ plus _)
+
+    } else {
+      localHistograms.join(voted, partitioner)
+        .mapValues(_._1)
+        .reduceByKey(partitioner, _ plus _)
+    }
+  }
 }
 
 
@@ -513,17 +802,17 @@ private[gbm] object Tree extends Serializable with Logging {
   */
 class SkipNodePratitioner[T, N, C](val numPartitions: Int,
                                    val numCols: Int,
-                                   val treeIds: Array[Int])
-                                  (implicit ct: ClassTag[T], int: Integral[T],
+                                   val treeIds: Array[T])
+                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                    cn: ClassTag[N], inn: Integral[N],
                                    cc: ClassTag[C], inc: Integral[C]) extends Partitioner {
   require(numPartitions > 0)
   require(numCols > 0)
   require(treeIds.nonEmpty)
-  require(treeIds.forall(_ >= 0))
-  require(Iterator.range(0, treeIds.length - 1).forall(i => treeIds(i) < treeIds(i + 1)))
+  require(treeIds.forall(t => int.gteq(t, int.zero)))
+  require(Iterator.range(0, treeIds.length - 1).forall(i => int.lt(treeIds(i), treeIds(i + 1))))
 
-  private val hash = numPartitions * (numCols + treeIds.sum + treeIds.min + treeIds.max)
+  private val hash = numPartitions * (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
 
   private val treeInterval = numPartitions.toDouble / treeIds.length
 
@@ -533,7 +822,7 @@ class SkipNodePratitioner[T, N, C](val numPartitions: Int,
     case null => 0
 
     case (treeId: T, _: N, colId: C) =>
-      val i = ju.Arrays.binarySearch(treeIds, int.toInt(treeId))
+      val i = net.search(treeIds, treeId)
       require(i >= 0)
 
       val p = i * treeInterval + inc.toInt(colId) * colInterval
@@ -553,8 +842,8 @@ class SkipNodePratitioner[T, N, C](val numPartitions: Int,
   override def hashCode: Int = hash
 
   override def toString: String = {
-    s"SkipNodePratitioner[${ct.runtimeClass}, ${cn.runtimeClass}, ${cc.runtimeClass}](numPartitions=$numPartitions," +
-      s" numCols=$numCols, treeIds=${treeIds.mkString("[", ",", "]")})"
+    s"SkipNodePratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, ${cc.runtimeClass.toString.capitalize}]" +
+      s"(numPartitions=$numPartitions, numCols=$numCols, treeIds=${treeIds.mkString("[", ",", "]")})"
   }
 }
 
@@ -569,22 +858,22 @@ class SkipNodePratitioner[T, N, C](val numPartitions: Int,
 class DepthPratitioner[T, N, C](val numPartitions: Int,
                                 val numCols: Int,
                                 val depth: Int,
-                                val treeIds: Array[Int])
-                               (implicit ct: ClassTag[T], int: Integral[T],
+                                val treeIds: Array[T])
+                               (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                 cn: ClassTag[N], inn: Integral[N],
                                 cc: ClassTag[C], inc: Integral[C]) extends Partitioner {
   require(numPartitions > 0)
   require(numCols > 0)
   require(depth > 1)
   require(treeIds.nonEmpty)
-  require(treeIds.forall(_ >= 0))
-  require(Iterator.range(0, treeIds.length - 1).forall(i => treeIds(i) < treeIds(i + 1)))
+  require(treeIds.forall(t => int.gteq(t, int.zero)))
+  require(Iterator.range(0, treeIds.length - 1).forall(i => int.lt(treeIds(i), treeIds(i + 1))))
 
   private val lowerBound: Int = 1 << depth
 
   private val upperBound: Int = lowerBound << 1
 
-  private val hash = numPartitions * depth * (numCols + treeIds.sum + treeIds.min + treeIds.max)
+  private val hash = numPartitions * depth * (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
 
   private val treeInterval = numPartitions.toDouble / treeIds.length
 
@@ -596,7 +885,7 @@ class DepthPratitioner[T, N, C](val numPartitions: Int,
     case null => 0
 
     case (treeId: T, nodeId: N, colId: C) =>
-      val i = ju.Arrays.binarySearch(treeIds, int.toInt(treeId))
+      val i = net.search(treeIds, treeId)
       require(i >= 0)
 
       val nodeId2 = adjust(inn.toInt(nodeId))
@@ -628,10 +917,71 @@ class DepthPratitioner[T, N, C](val numPartitions: Int,
   override def hashCode: Int = hash
 
   override def toString: String = {
-    s"DepthPratitioner[${ct.runtimeClass}, ${cn.runtimeClass}, ${cc.runtimeClass}](numPartitions=$numPartitions, numCols=$numCols, " +
-      s"depth=$depth, treeIds=${treeIds.mkString("[", ",", "]")})"
+    s"DepthPratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, ${cc.runtimeClass.toString.capitalize}]" +
+      s"(numPartitions=$numPartitions, numCols=$numCols, depth=$depth, treeIds=${treeIds.mkString("[", ",", "]")})"
   }
 }
+
+
+/**
+  * Partitioner that partition the keys (treeId, nodeId, colId) by order, this will
+  * reduce communication cost in following split-searching.
+  */
+class IDRangePratitioner[T, N, C](val numPartitions: Int,
+                                  val numCols: Int,
+                                  val depth: Int,
+                                  val treeNodeIds: Array[(T, N)])
+                                 (implicit ct: ClassTag[T], int: Integral[T],
+                                  cn: ClassTag[N], inn: Integral[N],
+                                  cc: ClassTag[C], inc: Integral[C],
+                                  order: Ordering[(T, N)]) extends Partitioner {
+  require(numPartitions > 0)
+  require(numCols > 0)
+  require(depth > 1)
+  require(treeNodeIds.nonEmpty)
+  require(Iterator.range(0, treeNodeIds.length - 1).forall(i => order.lt(treeNodeIds(i), treeNodeIds(i + 1))))
+
+  private val hash = {
+    val treeIds = treeNodeIds.map(_._1)
+    val nodeIds = treeNodeIds.map(_._2)
+    numPartitions * depth * (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max)
+      + inn.toInt(nodeIds.sum) + inn.toInt(nodeIds.max) + inn.toInt(nodeIds.min))
+  }
+
+  private val nodeInterval = numPartitions.toDouble / treeNodeIds.length
+
+  private val colInterval = nodeInterval / numCols
+
+  override def getPartition(key: Any): Int = key match {
+    case null => 0
+
+    case (treeId: T, nodeId: N, colId: C) =>
+      val i = ju.Arrays.binarySearch(treeNodeIds, (treeId, nodeId), order.asInstanceOf[ju.Comparator[(T, N)]])
+      require(i >= 0)
+
+      val p = i * nodeInterval + inc.toDouble(colId) * colInterval
+      math.min(numPartitions - 1, p.toInt)
+  }
+
+  override def equals(other: Any): Boolean = other match {
+    case p: IDRangePratitioner[T, N, C] =>
+      numPartitions == p.numPartitions &&
+        numCols == p.numCols && depth == p.depth &&
+        treeNodeIds.length == p.treeNodeIds.length &&
+        Iterator.range(0, treeNodeIds.length).forall(i => order.equiv(treeNodeIds(i), p.treeNodeIds(i)))
+
+    case _ =>
+      false
+  }
+
+  override def hashCode: Int = hash
+
+  override def toString: String = {
+    s"IDRangePratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, ${cc.runtimeClass.toString.capitalize}]" +
+      s"(numPartitions=$numPartitions, numCols=$numCols, depth=$depth, treeNodeIds=${treeNodeIds.mkString("[", ",", "]")})"
+  }
+}
+
 
 
 

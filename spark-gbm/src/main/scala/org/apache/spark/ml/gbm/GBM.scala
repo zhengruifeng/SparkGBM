@@ -963,22 +963,22 @@ private[gbm] object GBM extends Logging {
       }
 
 
-    val persisted = mutable.ArrayBuffer.empty[RDD[_]]
+    val recoder = new ResourceRecoder
 
     // To alleviate memory footprint in caching layer, different schemes are designed.
     // Each `prepareTreeInput**` method will internally cache necessary datasets in a compact fashion.
     // Those cached datasets are holden in buffer `persisted`, and will be freed after training.
     val data = if (boostConf.getBoostType == Goss) {
-      prepareTreeInputWithGoss[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, persisted)
+      adaptTreeInputsForGoss[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
 
     } else if (boostConf.getSubSample == 1) {
-      prepareTreeInputWithoutSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, persisted)
+      adaptTreeInputsForNonSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
 
     } else if (boostConf.getSampleBlocks) {
-      prepareTreeInputWithBlockSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, persisted)
+      adaptTreeInputsForBlockSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
 
     } else {
-      prepareTreeInputWithInstanceSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGrad, persisted)
+      adaptTreeInputsForInstanceSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGrad, recoder)
     }
 
 
@@ -988,42 +988,43 @@ private[gbm] object GBM extends Logging {
     } else if (boostConf.getNumCols * boostConf.getColSampleByTree > 32) {
       val rng = new Random(boostConf.getSeed.toInt + iteration)
       val maximum = (Int.MaxValue * boostConf.getColSampleByTree).ceil.toInt
-      val selectors: Array[ColumSelector] = Array.range(0, numBaseModels)
-        .flatMap { i => Iterator.fill(boostConf.getRawSize)(HashSelector(maximum, rng.nextInt)) }
+      val selectors: Array[ColumSelector] = Array.range(0, numBaseModels).flatMap { i =>
+        val seed = rng.nextInt
+        Iterator.fill(boostConf.getRawSize)(HashSelector(maximum, seed))
+      }
       new BaseConfig(iteration, numTrees, selectors)
 
     } else {
       val rng = new Random(boostConf.getSeed.toInt + iteration)
       val numSelected = (boostConf.getNumCols * boostConf.getColSampleByTree).ceil.toInt
       val selectors: Array[ColumSelector] = Array.range(0, numBaseModels).flatMap { i =>
-        val selected = rng.shuffle(Seq.range(0, boostConf.getNumCols)).take(numSelected)
-        Iterator.fill(boostConf.getRawSize)(SetSelector(selected.toArray.sorted))
+        val selected = rng.shuffle(Seq.range(0, boostConf.getNumCols)).take(numSelected).toArray.sorted
+        Iterator.fill(boostConf.getRawSize)(SetSelector(selected))
       }
       new BaseConfig(iteration, numTrees, selectors)
     }
 
     logInfo(s"Column Selectors: ${Array.range(0, numTrees).map(baseConfig.getSelector).mkString(",")}")
 
-    val trees = Tree.train[T, N, C, B, H](data, boostConf, baseConfig)
+    val trees = Tree.trainWithDataParallelism[T, N, C, B, H](data, boostConf, baseConfig)
 
-    persisted.foreach(_.unpersist(false))
-    persisted.clear()
+    recoder.cleanup()
 
     trees
   }
 
 
-  def prepareTreeInputWithGoss[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
-                                              rawBlocks: RDD[ArrayBlock[H]],
-                                              boostConf: BoostConfig,
-                                              iteration: Int,
-                                              computeGradBlock: (InstanceBlock[C, B, H], ArrayBlock[H]) => ArrayBlock[H],
-                                              persisted: mutable.ArrayBuffer[RDD[_]])
-                                             (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                              cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                              cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                              cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                              ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+  def adaptTreeInputsForGoss[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
+                                            rawBlocks: RDD[ArrayBlock[H]],
+                                            boostConf: BoostConfig,
+                                            iteration: Int,
+                                            computeGradBlock: (InstanceBlock[C, B, H], ArrayBlock[H]) => ArrayBlock[H],
+                                            recoder: ResourceRecoder)
+                                           (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                            cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                            cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                            cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                            ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
     import nuh._
 
     val rawSize = boostConf.getRawSize
@@ -1049,7 +1050,7 @@ private[gbm] object GBM extends Logging {
 
     gradBlocks.setName(s"GradientBlocks with Gradient-Norms (iteration $iteration)")
     gradBlocks.persist(boostConf.getStorageLevel)
-    persisted.append(gradBlocks)
+    recoder.append(gradBlocks)
 
 
     val start = System.nanoTime
@@ -1103,7 +1104,7 @@ private[gbm] object GBM extends Logging {
 
     baseIdBlocks.setName(s"BaseIdBlocks (iteration $iteration)")
     baseIdBlocks.persist(boostConf.getStorageLevel)
-    persisted.append(baseIdBlocks)
+    recoder.append(baseIdBlocks)
 
 
     val computeTreeId = if (rawSize == 1) {
@@ -1119,7 +1120,7 @@ private[gbm] object GBM extends Logging {
     val weightScale = neh.fromDouble(boostConf.computeOtherReweight)
 
     blocks.zip(gradBlocks).zip(baseIdBlocks).mapPartitions { iter =>
-      val topTreeId = Array.range(0, numTrees).map(int.fromInt)
+      val topTreeId = Array.tabulate(numTrees)(int.fromInt)
 
       iter.flatMap { case ((block, (gradBlock, _)), baseIdBlock) =>
         require(block.size == gradBlock.size)
@@ -1150,17 +1151,17 @@ private[gbm] object GBM extends Logging {
   }
 
 
-  def prepareTreeInputWithoutSampling[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
-                                                     rawBlocks: RDD[ArrayBlock[H]],
-                                                     boostConf: BoostConfig,
-                                                     iteration: Int,
-                                                     computeGradBlock: (InstanceBlock[C, B, H], ArrayBlock[H]) => ArrayBlock[H],
-                                                     persisted: mutable.ArrayBuffer[RDD[_]])
-                                                    (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                                     cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                                     cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                                     cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+  def adaptTreeInputsForNonSampling[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
+                                                   rawBlocks: RDD[ArrayBlock[H]],
+                                                   boostConf: BoostConfig,
+                                                   iteration: Int,
+                                                   computeGradBlock: (InstanceBlock[C, B, H], ArrayBlock[H]) => ArrayBlock[H],
+                                                   recoder: ResourceRecoder)
+                                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                                   cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                   cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
     val numTrees = numBaseModels * rawSize
@@ -1170,10 +1171,10 @@ private[gbm] object GBM extends Logging {
 
     gradBlocks.setName(s"GradientBlocks (iteration $iteration)")
     gradBlocks.persist(boostConf.getStorageLevel)
-    persisted.append(gradBlocks)
+    recoder.append(gradBlocks)
 
     blocks.zip(gradBlocks).mapPartitions { iter =>
-      val treeId = Array.range(0, numTrees).map(int.fromInt)
+      val treeId = Array.tabulate(numTrees)(int.fromInt)
 
       iter.flatMap { case (block, gradBlock) =>
         require(block.size == gradBlock.size)
@@ -1185,17 +1186,17 @@ private[gbm] object GBM extends Logging {
   }
 
 
-  def prepareTreeInputWithBlockSampling[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
-                                                       rawBlocks: RDD[ArrayBlock[H]],
-                                                       boostConf: BoostConfig,
-                                                       iteration: Int,
-                                                       computeGradBlock: (InstanceBlock[C, B, H], ArrayBlock[H]) => ArrayBlock[H],
-                                                       persisted: mutable.ArrayBuffer[RDD[_]])
-                                                      (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                                       cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                                       cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+  def adaptTreeInputsForBlockSampling[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
+                                                     rawBlocks: RDD[ArrayBlock[H]],
+                                                     boostConf: BoostConfig,
+                                                     iteration: Int,
+                                                     computeGradBlock: (InstanceBlock[C, B, H], ArrayBlock[H]) => ArrayBlock[H],
+                                                     recoder: ResourceRecoder)
+                                                    (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                                     cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                                     cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                     cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
     val seedOffset = boostConf.getSeed + iteration
@@ -1221,7 +1222,7 @@ private[gbm] object GBM extends Logging {
 
     gradBlocks.setName(s"GradientBlocks with BaseModelIds (iteration $iteration)")
     gradBlocks.persist(boostConf.getStorageLevel)
-    persisted.append(gradBlocks)
+    recoder.append(gradBlocks)
 
 
     val computeTreeId = if (rawSize == 1) {
@@ -1250,17 +1251,17 @@ private[gbm] object GBM extends Logging {
   }
 
 
-  def prepareTreeInputWithInstanceSampling[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
-                                                          rawBlocks: RDD[ArrayBlock[H]],
-                                                          boostConf: BoostConfig,
-                                                          iteration: Int,
-                                                          computeGrad: (H, Array[H], Array[H]) => Array[H],
-                                                          persisted: mutable.ArrayBuffer[RDD[_]])
-                                                         (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                                          cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                                          cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                                          cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                          ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+  def adaptTreeInputsForInstanceSampling[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
+                                                        rawBlocks: RDD[ArrayBlock[H]],
+                                                        boostConf: BoostConfig,
+                                                        iteration: Int,
+                                                        computeGrad: (H, Array[H], Array[H]) => Array[H],
+                                                        recoder: ResourceRecoder)
+                                                       (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                                        cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                                        cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
 
@@ -1300,7 +1301,7 @@ private[gbm] object GBM extends Logging {
 
     gradBlocks.setName(s"GradientBlocks with baseIdBlocks (iteration $iteration)")
     gradBlocks.persist(boostConf.getStorageLevel)
-    persisted.append(gradBlocks)
+    recoder.append(gradBlocks)
 
 
     val computeTreeId = if (rawSize == 1) {

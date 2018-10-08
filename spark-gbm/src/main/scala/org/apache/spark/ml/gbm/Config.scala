@@ -12,7 +12,7 @@ class BoostConfig extends Logging with Serializable {
   private var boostType: String = "gbtree"
 
   private[gbm] def setBoostType(value: String): this.type = {
-    require(value == "gbtree" || value == "dart" || value == "goss")
+    require(Array("gbtree", "dart").contains(value))
     boostType = value
     this
   }
@@ -186,90 +186,91 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** subsample ratio of the training instance */
-  private var subSample: Double = 1.0
+  private var subSampleRateRate: Double = 1.0
 
-  private[gbm] def setSubSample(value: Double): this.type = {
+  private[gbm] def setSubSampleRate(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    subSample = value
+    subSampleRateRate = value
     this
   }
 
-  def updateSubSample(value: Double): this.type = {
-    logInfo(s"subSample was changed from $subSample to $value")
-    setSubSample(value)
+  def updateSubSampleRate(value: Double): this.type = {
+    logInfo(s"subSampleRateRate was changed from $subSampleRateRate to $value")
+    setSubSampleRate(value)
   }
 
-  def getSubSample: Double = subSample
+  def getSubSampleRate: Double = subSampleRateRate
 
 
   /** retain fraction of large gradient data */
-  private var topFraction: Double = 0.2
+  private var topRate: Double = 0.2
 
-  private[gbm] def setTopFraction(value: Double): this.type = {
+  private[gbm] def setTopRate(value: Double): this.type = {
     require(value > 0 && value < 1 && !value.isNaN && !value.isInfinity)
-    topFraction = value
+    topRate = value
     this
   }
 
-  def updateTopFraction(value: Double): this.type = {
-    logInfo(s"topFraction was changed from $topFraction to $value")
-    setTopFraction(value)
+  def updateTopRate(value: Double): this.type = {
+    logInfo(s"topRate was changed from $topRate to $value")
+    setTopRate(value)
   }
 
-  def getTopFraction: Double = topFraction
+  def getTopRate: Double = topRate
 
 
   /** retain fraction of small gradient data */
-  private var otherFraction: Double = 0.2
+  private var otherRate: Double = 0.2
 
-  def setOtherFraction(value: Double): this.type = {
+  def setOtherRate(value: Double): this.type = {
     require(value > 0 && value < 1 && !value.isNaN && !value.isInfinity)
-    otherFraction = value
+    otherRate = value
     this
   }
 
-  def updateOtherFraction(value: Double): this.type = {
-    logInfo(s"otherFraction was changed from $otherFraction to $value")
-    setOtherFraction(value)
+  def updateOtherRate(value: Double): this.type = {
+    logInfo(s"otherRate was changed from $otherRate to $value")
+    setOtherRate(value)
   }
 
-  def getOtherFraction: Double = otherFraction
+  def getOtherRate: Double = otherRate
 
-  private[gbm] def computeOtherReweight: Double = (1 - getTopFraction) / getOtherFraction
+
+  private[gbm] def computeOtherReweight: Double = (1 - getTopRate) / getOtherRate
 
 
   /** subsample ratio of columns when constructing each tree */
-  private var colSampleByTree: Double = 1.0
+  private var colSampleRateByTree: Double = 1.0
 
-  private[gbm] def setColSampleByTree(value: Double): this.type = {
+  private[gbm] def setColSampleRateByTree(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    colSampleByTree = value
+    colSampleRateByTree = value
     this
   }
 
-  def updateColSampleByTree(value: Double): this.type = {
-    logInfo(s"colSampleByTree was changed from $colSampleByTree to $value")
-    setColSampleByTree(value)
+  def updateColSampleRateByTree(value: Double): this.type = {
+    logInfo(s"colSampleRateByTree was changed from $colSampleRateByTree to $value")
+    setColSampleRateByTree(value)
   }
 
-  def getColSampleByTree: Double = colSampleByTree
+  def getColSampleRateByTree: Double = colSampleRateByTree
 
 
   /** subsample ratio of columns when constructing each level */
-  private var colSampleByLevel: Double = 1.0
+  private var colSampleRateByLevel: Double = 1.0
 
-  private[gbm] def setColSampleByLevel(value: Double): this.type = {
+  private[gbm] def setColSampleRateByLevel(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    colSampleByLevel = value
+    colSampleRateByLevel = value
     this
   }
 
-  def updateColSampleByLevel(value: Double): this.type = {
-    logInfo(s"colSampleByLevel was changed from $colSampleByLevel to $value")
-    setColSampleByLevel(value)
+  def updateColSampleRateByLevel(value: Double): this.type = {
+    logInfo(s"colSampleRateByLevel was changed from $colSampleRateByLevel to $value")
+    setColSampleRateByLevel(value)
   }
 
-  def getColSampleByLevel: Double = colSampleByLevel
+  def getColSampleRateByLevel: Double = colSampleRateByLevel
 
 
   /** the maximum number of non-zero histogram bins to search split for categorical columns by brute force */
@@ -408,20 +409,40 @@ class BoostConfig extends Logging with Serializable {
   def getAggregationDepth: Int = aggregationDepth
 
 
-  /** whether to sample blocks instead of instances if possible */
-  private var sampleBlocks: Boolean = true
+  /** method of data sampling */
+  private var subSampleType: String = "block"
 
-  private[gbm] def setSampleBlocks(value: Boolean): this.type = {
-    sampleBlocks = value
+  private[gbm] def setSubSampleType(value: String): this.type = {
+    require(Array("instance", "block", "partition", "goss").contains(value))
+    subSampleType = value
     this
   }
 
-  def updateSampleBlocks(value: Boolean): this.type = {
-    logInfo(s"sampleBlocks was changed from $sampleBlocks to $value")
-    setSampleBlocks(value)
+  def updateSubSampleType(value: String): this.type = {
+    logInfo(s"subsampleMethod was changed from $subSampleType to $value")
+    setSubSampleType(value)
+    this
   }
 
-  def getSampleBlocks: Boolean = sampleBlocks
+  def getSubSampleType: String = subSampleType
+
+
+  /** method to compute histograms */
+  private var histogramComputationType: String = "subtract"
+
+  private[gbm] def setHistogramComputationType(value: String): this.type = {
+    require(Array("basic", "subtract", "vote").contains(value))
+    histogramComputationType = value
+    this
+  }
+
+  def updateHistogramComputationType(value: String): this.type = {
+    logInfo(s"histogramComputationMethod was changed from $histogramComputationType to $value")
+    setHistogramComputationType(value)
+    this
+  }
+
+  def getHistogramComputationType: String = histogramComputationType
 
 
   /** parallelism of histogram computation */
@@ -650,16 +671,7 @@ class BoostConfig extends Logging with Serializable {
 
 private[gbm] class BaseConfig(val iteration: Int,
                               val numTrees: Int,
-                              val colSelectors: Array[ColumSelector]) extends Serializable {
-
-  def getSelector(index: Int): ColumSelector = {
-    if (colSelectors.nonEmpty) {
-      colSelectors(index)
-    } else {
-      TotalSelector()
-    }
-  }
-}
+                              val selector: ColumSelector) extends Serializable
 
 
 

@@ -5,11 +5,11 @@ import java.{util => ju}
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.util.{Failure, Success}
+import scala.util.{Failure, Random, Success}
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark._
-
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
@@ -20,61 +20,93 @@ import org.apache.spark.unsafe.hash.Murmur3_x86_32
 
 
 trait ColumSelector extends Serializable {
-  def contains[C](index: C)
-                 (implicit inc: Integral[C]): Boolean
+  def contains[T, C](treeId: T, colId: C)
+                    (implicit int: Integral[T], inc: Integral[C]): Boolean
 }
 
-case class TotalSelector() extends ColumSelector {
-  override def contains[C](index: C)
-                          (implicit inc: Integral[C]): Boolean = true
 
-  override def equals(other: Any): Boolean = {
-    other match {
-      case TotalSelector => true
-      case _ => false
+object ColumSelector extends Serializable {
+
+  def create(colSampleRate: Double,
+             numCols: Int,
+             numBaseModels: Int,
+             rawSize: Int,
+             seed: Long): ColumSelector = {
+
+    if (colSampleRate == 1) {
+      TotalSelector()
+
+    } else if (numCols * colSampleRate > 32) {
+      val rng = new Random(seed)
+      val maximum = (Int.MaxValue * colSampleRate).ceil.toInt
+
+      val seeds = Array.range(0, numBaseModels).flatMap { i =>
+        val s = rng.nextInt
+        Iterator.fill(rawSize)(s)
+      }
+
+      HashSelector(maximum, seeds)
+
+    } else {
+      val rng = new Random(seed)
+      val numSelected = (numCols * colSampleRate).ceil.toInt
+
+      val sets = Array.range(0, numBaseModels).flatMap { i =>
+        val selected = rng.shuffle(Seq.range(0, numCols)).take(numSelected).toArray.sorted
+        Iterator.fill(rawSize)(selected)
+      }
+
+      SetSelector(sets)
     }
   }
+
+  def union(selectors: Array[ColumSelector]): ColumSelector = {
+    UnionSelector(selectors)
+  }
+}
+
+
+case class TotalSelector() extends ColumSelector {
+
+  override def contains[T, C](treeId: T, colId: C)
+                             (implicit int: Integral[T], inc: Integral[C]): Boolean = true
 
   override def toString: String = "TotalSelector"
 }
 
+
 case class HashSelector(maximum: Int,
-                        seed: Int) extends ColumSelector {
+                        seeds: Array[Int]) extends ColumSelector {
   require(maximum >= 0)
 
-  override def contains[C](index: C)
-                          (implicit inc: Integral[C]): Boolean = {
-    Murmur3_x86_32.hashLong(inc.toLong(index), seed).abs < maximum
+  override def contains[T, C](treeId: T, colId: C)
+                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
+    Murmur3_x86_32.hashLong(inc.toLong(colId), seeds(int.toInt(treeId))).abs < maximum
   }
 
-  override def equals(other: Any): Boolean = {
-    other match {
-      case HashSelector(m2, s2) => maximum == m2 && seed == s2
-      case _ => false
-    }
-  }
-
-  override def toString: String = s"HashSelector(maximum: $maximum, seed: $seed)"
+  override def toString: String = s"HashSelector(maximum: $maximum, seed: ${seeds.mkString("[", ",", "]")})"
 }
 
-case class SetSelector(array: Array[Int]) extends ColumSelector {
-  require(array.nonEmpty)
 
-  override def contains[C](index: C)(implicit inc: Integral[C]): Boolean = {
-    ju.Arrays.binarySearch(array, inc.toInt(index)) >= 0
+case class SetSelector(sets: Array[Array[Int]]) extends ColumSelector {
+  require(sets.nonEmpty && sets.forall(_.nonEmpty))
+
+  override def contains[T, C](treeId: T, colId: C)
+                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
+    ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toInt(colId)) >= 0
   }
 
-  override def equals(other: Any): Boolean = {
-    other match {
-      case SetSelector(array2) =>
-        array2.length == array.length &&
-          Iterator.range(0, array.length).forall(i => array(i) == array2(i))
+  override def toString: String = s"SetSelector(sets: ${sets.mkString("[", ",", "]")})"
+}
 
-      case _ => false
-    }
+
+case class UnionSelector(selectors: Array[ColumSelector]) extends ColumSelector {
+  override def contains[T, C](treeId: T, colId: C)
+                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
+    selectors.forall(_.contains[T, C](treeId, colId))
   }
 
-  override def toString: String = s"SetSelector(set: ${array.mkString("[", ",", "]")})"
+  override def toString: String = s"UnionSelector(selectors: ${selectors.mkString("[", ",", "]")})"
 }
 
 
@@ -161,14 +193,22 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     }
   }
 
-  def cleanup(): Unit = {
+  def last: RDD[T] = persistedQueue.last
+
+  def lastOption: Option[RDD[T]] = persistedQueue.lastOption
+
+  def clear(): Unit = {
     while (persistedQueue.nonEmpty) {
       persistedQueue.dequeue.unpersist(false)
     }
+    persistedQueue.clear()
 
     while (checkpointQueue.nonEmpty) {
       removeCheckpointFile(checkpointQueue.dequeue)
     }
+    checkpointQueue.clear()
+
+    updateCount = 0
   }
 
   /**
@@ -217,7 +257,7 @@ private[gbm] class ResourceRecoder extends Logging {
     bcBuff.append(bc)
   }
 
-  def cleanup(): Unit = {
+  def clear(): Unit = {
     datasetBuff.foreach { dataset =>
       if (dataset.storageLevel != StorageLevel.NONE) {
         dataset.unpersist(false)
@@ -238,7 +278,7 @@ private[gbm] class ResourceRecoder extends Logging {
 }
 
 
-private[gbm] object Utils extends Logging {
+object Utils extends Logging {
 
   def getTypeByRange(value: Int): String = {
     if (value <= Byte.MaxValue) {
@@ -249,6 +289,150 @@ private[gbm] object Utils extends Logging {
       "Int"
     }
   }
+
+
+  def outerJoinSortedIters[K, V1, V2](iter1: Iterator[(K, V1)],
+                                      iter2: Iterator[(K, V2)])
+                                     (implicit ork: Ordering[K]): Iterator[(K, Option[V1], Option[V2])] = new Iterator[(K, Option[V1], Option[V2])]() {
+
+    var kv1 = Option.empty[(K, V1)]
+    var kv2 = Option.empty[(K, V2)]
+
+    {
+      updateKV1()
+      updateKV2()
+    }
+
+    def updateKV1(): Unit = {
+      kv1 = if (iter1.hasNext) {
+        Some(iter1.next)
+      } else {
+        None
+      }
+    }
+
+
+    def updateKV2(): Unit = {
+      kv2 = if (iter2.hasNext) {
+        Some(iter2.next)
+      } else {
+        None
+      }
+    }
+
+    override def hasNext: Boolean = {
+      kv1.nonEmpty || kv2.nonEmpty
+    }
+
+    override def next(): (K, Option[V1], Option[V2]) = (kv1, kv2) match {
+      case (Some((k1, v1)), Some((k2, v2))) =>
+        val cmp = ork.compare(k1, k2)
+
+        if (cmp == 0) {
+          val t = (k1, Some(v1), Some(v2))
+          updateKV1()
+          updateKV2()
+          t
+
+        } else if (cmp < 0) {
+          val t = (k1, Some(v1), None)
+          updateKV1()
+          t
+
+        } else {
+          val t = (k2, None, Some(v2))
+          updateKV2()
+          t
+        }
+
+      case (Some((k1, v1)), None) =>
+        val t = (k1, Some(v1), None)
+        updateKV1()
+        t
+
+      case (None, Some((k2, v2))) =>
+        val t = (k2, None, Some(v2))
+        updateKV2()
+        t
+    }
+
+  }
+
+
+  def innerJoinSortedIters[K, V1, V2](iter1: Iterator[(K, V1)],
+                                      iter2: Iterator[(K, V2)])
+                                     (implicit ork: Ordering[K]): Iterator[(K, V1, V2)] = new Iterator[(K, V1, V2)]() {
+
+    var kv1 = Option.empty[(K, V1)]
+    var kv2 = Option.empty[(K, V2)]
+    var cmp = 0
+
+    {
+      updateKV()
+    }
+
+    def updateKV1(): Unit = {
+      cmp = -1
+      while (iter1.hasNext && cmp < 0) {
+        kv1 = Some(iter1.next)
+        cmp = ork.compare(kv1.get._1, kv2.get._1)
+      }
+
+      if (cmp < 0) {
+        kv1 = None
+      }
+    }
+
+
+    def updateKV2(): Unit = {
+      cmp = 1
+      while (iter2.hasNext && cmp > 0) {
+        kv2 = Some(iter2.next)
+        cmp = ork.compare(kv1.get._1, kv2.get._1)
+      }
+
+      if (cmp > 0) {
+        kv2 = None
+      }
+    }
+
+
+    def updateKV(): Unit = {
+      kv1 = if (iter1.hasNext) {
+        Some(iter1.next)
+      } else {
+        None
+      }
+
+      kv2 = if (iter2.hasNext) {
+        Some(iter2.next)
+      } else {
+        None
+      }
+
+      if (kv1.nonEmpty && kv2.nonEmpty) {
+        cmp = ork.compare(kv1.get._1, kv2.get._1)
+        while (cmp != 0 && kv1.nonEmpty && kv2.nonEmpty) {
+          if (cmp > 0) {
+            updateKV2()
+          } else if (cmp < 0) {
+            updateKV1()
+          }
+        }
+      }
+    }
+
+    override def hasNext: Boolean = {
+      kv1.nonEmpty && kv2.nonEmpty
+    }
+
+    override def next(): (K, V1, V2) = {
+      val t = (kv1.get._1, kv1.get._2, kv2.get._2)
+      updateKV()
+      t
+    }
+  }
+
 
   /**
     * traverse all the elements of a vector

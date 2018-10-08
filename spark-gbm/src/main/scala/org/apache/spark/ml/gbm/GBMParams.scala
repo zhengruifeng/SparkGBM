@@ -185,13 +185,13 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val subSample: DoubleParam =
-    new DoubleParam(this, "subSample", "Subsample ratio of the training instance.",
+  final val subSampleRate: DoubleParam =
+    new DoubleParam(this, "subSampleRate", "Subsample ratio of the training instance.",
       ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
 
-  def getSubSample: Double = $(subSample)
+  def getSubSampleRate: Double = $(subSampleRate)
 
-  setDefault(subSample -> 1.0)
+  setDefault(subSampleRate -> 1.0)
 
 
   /**
@@ -200,13 +200,13 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val colSampleByTree: DoubleParam =
-    new DoubleParam(this, "colSampleByTree", "Subsample ratio of columns when constructing each tree.",
+  final val colSampleRateByTree: DoubleParam =
+    new DoubleParam(this, "colSampleRateByTree", "Subsample ratio of columns when constructing each tree.",
       ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
 
-  def getColSampleByTree: Double = $(colSampleByTree)
+  def getColSampleRateByTree: Double = $(colSampleRateByTree)
 
-  setDefault(colSampleByTree -> 1.0)
+  setDefault(colSampleRateByTree -> 1.0)
 
 
   /**
@@ -215,13 +215,13 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val colSampleByLevel: DoubleParam =
-    new DoubleParam(this, "colSampleByLevel", "Subsample ratio of columns when constructing each tree.",
+  final val colSampleRateByLevel: DoubleParam =
+    new DoubleParam(this, "colSampleRateByLevel", "Subsample ratio of columns when constructing each tree.",
       ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
 
-  def getColSampleByLevel: Double = $(colSampleByLevel)
+  def getColSampleRateByLevel: Double = $(colSampleRateByLevel)
 
-  setDefault(colSampleByLevel -> 1.0)
+  setDefault(colSampleRateByLevel -> 1.0)
 
 
   /**
@@ -248,7 +248,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     */
   final val boostType: Param[String] =
     new Param[String](this, "boostType", "boosting type",
-      ParamValidators.inArray[String](Array("gbtree", "dart", "goss")))
+      ParamValidators.inArray[String](Array("gbtree", "dart")))
 
   def getBoostType: String = $(boostType)
 
@@ -321,13 +321,13 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val topFraction: DoubleParam =
-    new DoubleParam(this, "topFraction", "Retain fraction of large gradient data in GOSS.",
+  final val topRate: DoubleParam =
+    new DoubleParam(this, "topRate", "Retain fraction of large gradient data in GOSS.",
       ParamValidators.inRange(0.0, 1.0, false, false))
 
-  def getTopFraction: Double = $(topFraction)
+  def getTopRate: Double = $(topRate)
 
-  setDefault(topFraction -> 0.2)
+  setDefault(topRate -> 0.2)
 
 
   /**
@@ -336,13 +336,13 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val otherFraction: DoubleParam =
-    new DoubleParam(this, "otherFraction", "Retain fraction of small gradient data in GOSS.",
+  final val otherRate: DoubleParam =
+    new DoubleParam(this, "otherRate", "Retain fraction of small gradient data in GOSS.",
       ParamValidators.inRange(0.0, 1.0, false, false))
 
-  def getOtherFraction: Double = $(otherFraction)
+  def getOtherRate: Double = $(otherRate)
 
-  setDefault(otherFraction -> 0.1)
+  setDefault(otherRate -> 0.1)
 
 
   /**
@@ -520,17 +520,33 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Whether to sample blocks instead of instances.
-    * (default = true)
+    * Method of data sampling.
+    * (default = "block")
     *
     * @group param
     */
-  final val sampleBlocks: BooleanParam =
-    new BooleanParam(this, "sampleBlocks", "Whether to sample blocks instead of instances.")
+  final val subSampleType: Param[String] =
+    new Param[String](this, "subSampleType", "Method of data sampling.",
+      ParamValidators.inArray[String](Array("instance", "block", "partition", "goss")))
 
-  def getSampleBlocks: Boolean = $(sampleBlocks)
+  def getSubSampleType: String = $(subSampleType)
 
-  setDefault(sampleBlocks -> true)
+  setDefault(subSampleType -> "block")
+
+
+  /**
+    * Method to compute histograms.
+    * (default = "subtract")
+    *
+    * @group param
+    */
+  final val histogramComputationType: Param[String] =
+    new Param[String](this, "histogramComputationType", "Method to compute histograms.",
+      ParamValidators.inArray[String](Array("basic", "subtract", "vote")))
+
+  def getHistogramComputationType: String = $(histogramComputationType)
+
+  setDefault(histogramComputationType -> "subtract")
 
 
   /**

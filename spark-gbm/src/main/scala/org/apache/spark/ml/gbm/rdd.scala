@@ -9,13 +9,13 @@ import scala.util.Random
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd._
+import org.apache.spark.util.collection.ExternalSorter
 import org.apache.spark.util.random.XORShiftRandom
 
 
-private[gbm] class M2NRDDPartition[T](val idx: Int,
-                                      val prevs: Array[Partition]) extends Partition {
-  override val index: Int = idx
-}
+private[gbm] class M2NRDDPartition[T](val index: Int,
+                                      val prevs: Array[Partition]) extends Partition
+
 
 private[gbm] class M2NRDD[T: ClassTag](@transient val parent: RDD[T],
                                        val partIds: Array[Array[Int]]) extends RDD[T](parent) {
@@ -37,16 +37,16 @@ private[gbm] class M2NRDD[T: ClassTag](@transient val parent: RDD[T],
   }
 
   override def getPreferredLocations(split: Partition): Seq[String] = {
-    val votes = mutable.OpenHashMap.empty[String, Int]
+    val prefs = split.asInstanceOf[M2NRDDPartition[T]].prevs
+      .map { prev => firstParent[T].preferredLocations(prev) }
 
-    split.asInstanceOf[M2NRDDPartition[T]].prevs.iterator
-      .flatMap { prev => firstParent[T].preferredLocations(prev) }
-      .foreach { location =>
-        val cnt = votes.getOrElse(location, 0)
-        votes.update(location, cnt + 1)
-      }
+    val intersect = prefs.reduce((p1, p2) => p1.intersect(p2))
 
-    votes.toArray.sortBy(_._2).map(_._1).reverse
+    if (intersect.nonEmpty) {
+      intersect
+    } else {
+      prefs.flatten.distinct
+    }
   }
 
   override def getDependencies: Seq[Dependency[_]] = Seq(
@@ -58,15 +58,19 @@ private[gbm] class M2NRDD[T: ClassTag](@transient val parent: RDD[T],
 
 private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable {
 
-  def selectPartitions(partIds: Array[Int]): RDD[T] = {
+  def reorgPartitions(partIds: Array[Array[Int]]): RDD[T] = {
+    new M2NRDD[T](self, partIds)
+  }
+
+  def reorgPartitions(partIds: Array[Int]): RDD[T] = {
     val array = partIds.map(p => Array(p))
-    new M2NRDD[T](self, array)
+    reorgPartitions(array)
   }
 
   def samplePartitions(weights: Map[Int, Double], seed: Long): RDD[T] = {
     val (partIdArr, weightArr) = weights.toArray.unzip
 
-    selectPartitions(partIdArr)
+    reorgPartitions(partIdArr)
       .mapPartitionsWithIndex { case (pid, iter) =>
         val w = weightArr(pid)
         if (w == 0) {
@@ -116,7 +120,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
       val r = numPartitions % prevNumPartitions
       val partIds = Array.tabulate(numPartitions)(_ % prevNumPartitions)
 
-      selectPartitions(partIds)
+      reorgPartitions(partIds)
         .mapPartitionsWithIndex { case (partId, iter) =>
           val i = partId / prevNumPartitions
           val j = partId % prevNumPartitions
@@ -147,19 +151,20 @@ private[gbm] object RDDFunctions {
 }
 
 
-class PairRDDFunctions[K, V](self: RDD[(K, V)])
-                            (implicit kt: ClassTag[K], vt: ClassTag[V], ord: Ordering[K] = null)
+private[gbm] class PairRDDFunctions[K, V](self: RDD[(K, V)])
+                                         (implicit ct: ClassTag[K], cv: ClassTag[V])
   extends Logging with Serializable {
 
-  def aggregatePartitionsByKey[U: ClassTag](zeroValue: U)
-                                           (seqOp: (U, V) => U,
-                                            combOp: (U, U) => U): RDD[(K, U)] = self.withScope {
+  def aggregatePartitionsByKey[C: ClassTag](zeroValue: C,
+                                            ordering: Option[Ordering[K]])
+                                           (seqOp: (C, V) => C,
+                                            combOp: (C, C) => C): RDD[(K, C)] = self.withScope {
     val zeroBuffer = SparkEnv.get.serializer.newInstance().serialize(zeroValue)
     val zeroArray = new Array[Byte](zeroBuffer.limit)
     zeroBuffer.get(zeroArray)
 
     lazy val cachedSerializer = SparkEnv.get.serializer.newInstance()
-    val createZero = () => cachedSerializer.deserialize[U](ByteBuffer.wrap(zeroArray))
+    val createZero = () => cachedSerializer.deserialize[C](ByteBuffer.wrap(zeroArray))
 
     val mergeValue = self.context.clean(seqOp)
 
@@ -167,19 +172,35 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     val mergeCombiners = combOp
 
     require(mergeCombiners != null, "mergeCombiners must be defined")
-    if (kt.runtimeClass.isArray) {
+    if (ct.runtimeClass.isArray) {
       throw new SparkException("Cannot use map-side combining with array keys.")
     }
 
-    val aggregator = new Aggregator[K, V, U](
+    val aggregator = new Aggregator[K, V, C](
       self.context.clean(createCombiner),
       self.context.clean(mergeValue),
       self.context.clean(mergeCombiners))
 
     self.mapPartitions(iter => {
       val context = TaskContext.get()
-      new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))
+
+      if (ordering.nonEmpty) {
+        val sorter = new ExternalSorter[K, V, C](context, Some(aggregator), None, ordering)
+        sorter.insertAll(iter)
+        new InterruptibleIterator(context, sorter.iterator).map(t => (t._1, t._2))
+
+      } else {
+        new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))
+      }
+
     }, preservesPartitioning = true)
+  }
+
+
+  def aggregatePartitionsByKey[C: ClassTag](zeroValue: C)
+                                           (seqOp: (C, V) => C,
+                                            combOp: (C, C) => C): RDD[(K, C)] = {
+    aggregatePartitionsByKey[C](zeroValue, None)(seqOp, combOp)
   }
 }
 

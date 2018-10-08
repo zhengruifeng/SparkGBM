@@ -154,30 +154,30 @@ class GBM extends Logging with Serializable {
 
 
   /** subsample ratio of the training instance */
-  def setSubSample(value: Double): this.type = {
-    boostConf.setSubSample(value)
+  def setSubSampleRate(value: Double): this.type = {
+    boostConf.setSubSampleRate(value)
     this
   }
 
-  def getSubSample: Double = boostConf.getSubSample
+  def getSubSampleRate: Double = boostConf.getSubSampleRate
 
 
   /** subsample ratio of columns when constructing each tree */
-  def setColSampleByTree(value: Double): this.type = {
-    boostConf.setColSampleByTree(value)
+  def setColSampleRateByTree(value: Double): this.type = {
+    boostConf.setColSampleRateByTree(value)
     this
   }
 
-  def getColSampleByTree: Double = boostConf.getColSampleByTree
+  def getColSampleRateByTree: Double = boostConf.getColSampleRateByTree
 
 
   /** subsample ratio of columns when constructing each level */
-  def setColSampleByLevel(value: Double): this.type = {
-    boostConf.setColSampleByLevel(value)
+  def setColSampleRateByLevel(value: Double): this.type = {
+    boostConf.setColSampleRateByLevel(value)
     this
   }
 
-  def getColSampleByLevel: Double = boostConf.getColSampleByLevel
+  def getColSampleRateByLevel: Double = boostConf.getColSampleRateByLevel
 
 
   /** checkpoint interval */
@@ -279,21 +279,21 @@ class GBM extends Logging with Serializable {
 
 
   /** retain fraction of large gradient data in GOSS */
-  def setTopFraction(value: Double): this.type = {
-    boostConf.setTopFraction(value)
+  def setTopRate(value: Double): this.type = {
+    boostConf.setTopRate(value)
     this
   }
 
-  def getTopFraction: Double = boostConf.getTopFraction
+  def getTopRate: Double = boostConf.getTopRate
 
 
   /** retain fraction of small gradient data in GOSS */
-  def setOtherFraction(value: Double): this.type = {
-    boostConf.setOtherFraction(value)
+  def setOtherRate(value: Double): this.type = {
+    boostConf.setOtherRate(value)
     this
   }
 
-  def getOtherFraction: Double = boostConf.getOtherFraction
+  def getOtherRate: Double = boostConf.getOtherRate
 
 
   /** the maximum number of non-zero histogram bins to search split for categorical columns by brute force */
@@ -322,13 +322,22 @@ class GBM extends Logging with Serializable {
   def getBaseModelParallelism: Int = boostConf.getBaseModelParallelism
 
 
-  /** whether to sample partitions instead of instances if possible */
-  def setSampleBlocks(value: Boolean): this.type = {
-    boostConf.setSampleBlocks(value)
+  /** method of data sampling */
+  def setSubSampleType(value: String): this.type = {
+    boostConf.setSubSampleType(value)
     this
   }
 
-  def getSampleBlocks: Boolean = boostConf.getSampleBlocks
+  def getSubSampleType: String = boostConf.getSubSampleType
+
+
+  /** method to compute histograms */
+  def setHistogramComputationType(value: String): this.type = {
+    boostConf.setHistogramComputationType(value)
+    this
+  }
+
+  def getHistogramComputationType: String = boostConf.getHistogramComputationType
 
 
   /** size of block */
@@ -405,7 +414,7 @@ class GBM extends Logging with Serializable {
     if (getBoostType == GBM.Dart) {
       require(getMaxDrop >= getMinDrop)
     } else if (getBoostType == GBM.Goss) {
-      require(getTopFraction + getOtherFraction <= 1)
+      require(getTopRate + getOtherRate <= 1)
     }
 
     val sc = data.sparkContext
@@ -459,6 +468,10 @@ private[gbm] object GBM extends Logging {
 
   val GBTree = "gbtree"
   val Dart = "dart"
+
+  val Instance = "instance"
+  val Block = "block"
+  val Partition = "partition"
   val Goss = "goss"
 
   val Width = "width"
@@ -620,20 +633,20 @@ private[gbm] object GBM extends Logging {
     // raw scores and checkpointers
     var trainRawBlocks = computeRawBlocks[C, B, H](trainBlocks, treesBuff.toArray, weightsBuff.toArray, boostConf)
       .setName("Train Raw Blocks (Initial)")
-    val trainRawBlockCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
+    val trainRawBlocksCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
     if (treesBuff.nonEmpty) {
-      trainRawBlockCheckpointer.update(trainRawBlocks)
+      trainRawBlocksCheckpointer.update(trainRawBlocks)
     }
 
     var testRawBlocks = sc.emptyRDD[ArrayBlock[H]]
-    val testRawBlockCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
+    val testRawBlocksCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
     if (validation) {
       testRawBlocks = computeRawBlocks[C, B, H](testBlocks, treesBuff.toArray, weightsBuff.toArray, boostConf)
         .setName("Test Raw Blocks (Initial)")
       if (treesBuff.nonEmpty) {
-        testRawBlockCheckpointer.update(testRawBlocks)
+        testRawBlocksCheckpointer.update(testRawBlocks)
       }
     }
 
@@ -686,7 +699,7 @@ private[gbm] object GBM extends Logging {
         // update train data predictions
         trainRawBlocks = updateRawBlocks[C, B, H](trainBlocks, trainRawBlocks, trees, weightsBuff.toArray, boostConf, keepWeights)
           .setName(s"Train Raw Blocks (Iteration $iter)")
-        trainRawBlockCheckpointer.update(trainRawBlocks)
+        trainRawBlocksCheckpointer.update(trainRawBlocks)
 
 
         if (boostConf.getEvalFunc.isEmpty) {
@@ -705,7 +718,7 @@ private[gbm] object GBM extends Logging {
           // update test data predictions
           testRawBlocks = updateRawBlocks[C, B, H](testBlocks, testRawBlocks, trees, weightsBuff.toArray, boostConf, keepWeights)
             .setName(s"Test Raw Blocks (Iteration $iter)")
-          testRawBlockCheckpointer.update(testRawBlocks)
+          testRawBlocksCheckpointer.update(testRawBlocks)
 
           // evaluate on test data
           val testMetrics = evaluate(testBlocks, testRawBlocks, boostConf)
@@ -739,11 +752,11 @@ private[gbm] object GBM extends Logging {
     }
 
     trainBlocks.unpersist(blocking = false)
-    trainRawBlockCheckpointer.cleanup()
+    trainRawBlocksCheckpointer.clear
 
     if (validation) {
       testBlocks.unpersist(blocking = false)
-      testRawBlockCheckpointer.cleanup()
+      testRawBlocksCheckpointer.clear
     }
 
     new GBMModel(boostConf.getObjFunc, discretizer, rawBase,
@@ -772,9 +785,6 @@ private[gbm] object GBM extends Logging {
 
     boostConf.getBoostType match {
       case GBTree =>
-        weights.appendAll(Iterator.fill(trees.length)(neh.fromDouble(boostConf.getStepSize)))
-
-      case Goss =>
         weights.appendAll(Iterator.fill(trees.length)(neh.fromDouble(boostConf.getStepSize)))
 
       case Dart if dropped.isEmpty =>
@@ -932,83 +942,65 @@ private[gbm] object GBM extends Logging {
           raw
     }
 
-    val computeGrad =
-      (weight: H, label: Array[H], rawSeq: Array[H]) => {
-        val raw = neh.toDouble(computeRaw(rawSeq))
-        val score = boostConf.getObjFunc.transform(raw)
-        val (grad, hess) = boostConf.getObjFunc.compute(neh.toDouble(label), score)
-        require(grad.length == rawSize && hess.length == rawSize)
+    val computeGrad = (weight: H, label: Array[H], rawSeq: Array[H]) => {
+      val raw = neh.toDouble(computeRaw(rawSeq))
+      val score = boostConf.getObjFunc.transform(raw)
+      val (grad, hess) = boostConf.getObjFunc.compute(neh.toDouble(label), score)
+      require(grad.length == rawSize && hess.length == rawSize)
 
-        val array = Array.ofDim[H](rawSize << 1)
-        var i = 0
-        while (i < rawSize) {
-          val j = i << 1
-          array(j) = neh.fromDouble(grad(i)) * weight
-          array(j + 1) = neh.fromDouble(hess(i)) * weight
-          i += 1
-        }
-        array
+      val array = Array.ofDim[H](rawSize << 1)
+      var i = 0
+      while (i < rawSize) {
+        val j = i << 1
+        array(j) = neh.fromDouble(grad(i)) * weight
+        array(j + 1) = neh.fromDouble(hess(i)) * weight
+        i += 1
       }
+      array
+    }
 
-    val computeGradBlock =
-      (block: InstanceBlock[C, B, H], rawBlock: ArrayBlock[H]) => {
-        require(block.size == rawBlock.size)
+    val computeGradBlock = (block: InstanceBlock[C, B, H], rawBlock: ArrayBlock[H]) => {
+      require(block.size == rawBlock.size)
 
-        val iter = block.weightIterator
-          .zip(block.labelIterator)
-          .zip(rawBlock.iterator)
-          .map { case ((weight, label), rawSeq) => computeGrad(weight, label, rawSeq) }
+      val iter = block.weightIterator
+        .zip(block.labelIterator)
+        .zip(rawBlock.iterator)
+        .map { case ((weight, label), rawSeq) => computeGrad(weight, label, rawSeq) }
 
-        ArrayBlock.build[H](iter)
-      }
+      ArrayBlock.build[H](iter)
+    }
 
 
     val recoder = new ResourceRecoder
 
-    // To alleviate memory footprint in caching layer, different schemes are designed.
+    // To alleviate memory footprint in caching layer, different schemas of intermediate dataset are designed.
     // Each `prepareTreeInput**` method will internally cache necessary datasets in a compact fashion.
-    // Those cached datasets are holden in buffer `persisted`, and will be freed after training.
-    val data = if (boostConf.getBoostType == Goss) {
-      adaptTreeInputsForGoss[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
+    // These cached datasets are holden in `recoder`, and will be freed after training.
+    val data = (boostConf.getSubSampleType, boostConf.getSubSampleRate == 1) match {
+      case (Goss, _) =>
+        adaptTreeInputsForGoss[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
 
-    } else if (boostConf.getSubSample == 1) {
-      adaptTreeInputsForNonSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
+      case (_, true) =>
+        adaptTreeInputsForNonSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
 
-    } else if (boostConf.getSampleBlocks) {
-      adaptTreeInputsForBlockSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
+      case (Block, _) =>
+        adaptTreeInputsForBlockSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
 
-    } else {
-      adaptTreeInputsForInstanceSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGrad, recoder)
+      case (Partition, _) =>
+        adaptTreeInputsForPartitionSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
+
+      case (Instance, _) =>
+        adaptTreeInputsForInstanceSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGrad, recoder)
     }
 
+    val selector = ColumSelector.create(boostConf.getColSampleRateByTree, boostConf.getNumCols, numBaseModels, boostConf.getRawSize, boostConf.getSeed.toInt + iteration)
+    logInfo(s"Column Selectors: $selector")
 
-    val baseConfig = if (boostConf.getColSampleByTree == 1) {
-      new BaseConfig(iteration, numTrees, Array.empty)
+    val baseConfig = new BaseConfig(iteration, numTrees, selector)
 
-    } else if (boostConf.getNumCols * boostConf.getColSampleByTree > 32) {
-      val rng = new Random(boostConf.getSeed.toInt + iteration)
-      val maximum = (Int.MaxValue * boostConf.getColSampleByTree).ceil.toInt
-      val selectors: Array[ColumSelector] = Array.range(0, numBaseModels).flatMap { i =>
-        val seed = rng.nextInt
-        Iterator.fill(boostConf.getRawSize)(HashSelector(maximum, seed))
-      }
-      new BaseConfig(iteration, numTrees, selectors)
+    val trees = Tree.train[T, N, C, B, H](data, boostConf, baseConfig)
 
-    } else {
-      val rng = new Random(boostConf.getSeed.toInt + iteration)
-      val numSelected = (boostConf.getNumCols * boostConf.getColSampleByTree).ceil.toInt
-      val selectors: Array[ColumSelector] = Array.range(0, numBaseModels).flatMap { i =>
-        val selected = rng.shuffle(Seq.range(0, boostConf.getNumCols)).take(numSelected).toArray.sorted
-        Iterator.fill(boostConf.getRawSize)(SetSelector(selected))
-      }
-      new BaseConfig(iteration, numTrees, selectors)
-    }
-
-    logInfo(s"Column Selectors: ${Array.range(0, numTrees).map(baseConfig.getSelector).mkString(",")}")
-
-    val trees = Tree.trainWithDataParallelism[T, N, C, B, H](data, boostConf, baseConfig)
-
-    recoder.cleanup()
+    recoder.clear()
 
     trees
   }
@@ -1074,7 +1066,7 @@ private[gbm] object GBM extends Logging {
       case (s1, s2) => s1.compress.merge(s2.compress).compress
     }, depth = boostConf.getAggregationDepth)
 
-    val threshold = neh.fromDouble(summary.query(1 - boostConf.getTopFraction).get)
+    val threshold = neh.fromDouble(summary.query(1 - boostConf.getTopRate).get)
     logInfo(s"Iteration $iteration: threshold for top gradients: ${neh.sqrt(threshold)}, " +
       s"duration ${(System.nanoTime - start) / 1e9} seconds")
 
@@ -1083,7 +1075,8 @@ private[gbm] object GBM extends Logging {
     val seedOffset = boostConf.getSeed + iteration
 
     val baseIdBlocks = gradBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-      val rngs = Array.tabulate(numBaseModels)(i => new XORShiftRandom(seedOffset * partId + i))
+      val rng = new Random(seedOffset + partId)
+      val rngs = Array.tabulate(numBaseModels)(_ => new XORShiftRandom(rng.nextLong))
 
       val topBaseId = Array(int.negate(int.one))
 
@@ -1200,10 +1193,11 @@ private[gbm] object GBM extends Logging {
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
     val seedOffset = boostConf.getSeed + iteration
-    val subSample = boostConf.getSubSample
+    val subSample = boostConf.getSubSampleRate
 
     val gradBlocks = blocks.zip(rawBlocks).mapPartitionsWithIndex { case (partId, iter) =>
-      val rngs = Array.tabulate(numBaseModels)(i => new XORShiftRandom(seedOffset * partId + i))
+      val rng = new Random(seedOffset + partId)
+      val rngs = Array.tabulate(numBaseModels)(_ => new XORShiftRandom(rng.nextLong))
 
       val emptyValue = (ArrayBlock.empty[H], net.emptyArray)
 
@@ -1225,7 +1219,7 @@ private[gbm] object GBM extends Logging {
     recoder.append(gradBlocks)
 
 
-    val computeTreeId = if (rawSize == 1) {
+    val computeTreeIds = if (rawSize == 1) {
       baseId: Array[T] => baseId
     } else {
       baseId: Array[T] =>
@@ -1238,7 +1232,7 @@ private[gbm] object GBM extends Logging {
     blocks.zip(gradBlocks).flatMap { case (block, (gradBlock, baseId)) =>
       if (baseId.nonEmpty) {
         require(block.size == gradBlock.size)
-        val treeId = computeTreeId(baseId)
+        val treeId = computeTreeIds(baseId)
         block.vectorIterator
           .zip(gradBlock.iterator)
           .map { case (bin, grad) => (bin, treeId, grad) }
@@ -1248,6 +1242,66 @@ private[gbm] object GBM extends Logging {
         Iterator.empty
       }
     }.setName(s"Gradients with TreeIds (iteration $iteration) (Block-Based Sampled)")
+  }
+
+
+  def adaptTreeInputsForPartitionSampling[T, N, C, B, H](blocks: RDD[InstanceBlock[C, B, H]],
+                                                         rawBlocks: RDD[ArrayBlock[H]],
+                                                         boostConf: BoostConfig,
+                                                         iteration: Int,
+                                                         computeGradBlock: (InstanceBlock[C, B, H], ArrayBlock[H]) => ArrayBlock[H],
+                                                         recoder: ResourceRecoder)
+                                                        (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                                         cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                                         cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                         cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+    val rawSize = boostConf.getRawSize
+    val numBaseModels = boostConf.getBaseModelParallelism
+    val subSample = boostConf.getSubSampleRate
+    val seedOffset = boostConf.getSeed + iteration
+
+    val gradBlocks = blocks.zip(rawBlocks).mapPartitionsWithIndex { case (partId, iter) =>
+      val rng = new Random(seedOffset + partId)
+      val selected = Iterator.range(0, numBaseModels).exists(_ => rng.nextDouble < subSample)
+
+      if (selected) {
+        iter.map { case (block, rawBlock) => computeGradBlock(block, rawBlock) }
+      } else {
+        Iterator.empty
+      }
+    }
+
+    gradBlocks.setName(s"GradientBlocks (iteration $iteration)")
+    gradBlocks.persist(boostConf.getStorageLevel)
+    recoder.append(gradBlocks)
+
+    val computeTreeIds = if (rawSize == 1) {
+      baseId: Array[T] => baseId
+    } else {
+      baseId: Array[T] =>
+        baseId.flatMap { i =>
+          val offset = rawSize * int.toInt(i)
+          Iterator.range(offset, offset + rawSize).map(int.fromInt)
+        }
+    }
+
+    blocks.zip(gradBlocks).mapPartitionsWithIndex { case (partId, iter) =>
+      val rng = new Random(seedOffset + partId)
+      val baseIds = Iterator.range(0, numBaseModels).filter(_ => rng.nextDouble < subSample).map(int.fromInt).toArray
+
+      if (baseIds.nonEmpty) {
+        val treeIds = computeTreeIds(baseIds)
+        iter.flatMap { case (block, gradBlock) =>
+          require(block.size == gradBlock.size)
+          block.vectorIterator
+            .zip(gradBlock.iterator)
+            .map { case (bin, grad) => (bin, treeIds, grad) }
+        }
+      } else {
+        Iterator.empty
+      }
+    }.setName(s"Gradients with TreeIds (iteration $iteration) (Partition-Based Sampled)")
   }
 
 
@@ -1264,13 +1318,12 @@ private[gbm] object GBM extends Logging {
                                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
-
     val seedOffset = boostConf.getSeed + iteration
-
-    val subSample = boostConf.getSubSample
+    val subSample = boostConf.getSubSampleRate
 
     val gradBlocks = blocks.zip(rawBlocks).mapPartitionsWithIndex { case (partId, iter) =>
-      val rngs = Array.tabulate(numBaseModels)(i => new XORShiftRandom(seedOffset + partId + i))
+      val rng = new Random(seedOffset + partId)
+      val rngs = Array.tabulate(numBaseModels)(_ => new XORShiftRandom(rng.nextLong))
 
       val emptyValue = (neh.emptyArray, net.emptyArray)
 
@@ -1304,7 +1357,7 @@ private[gbm] object GBM extends Logging {
     recoder.append(gradBlocks)
 
 
-    val computeTreeId = if (rawSize == 1) {
+    val computeTreeIds = if (rawSize == 1) {
       baseId: Array[T] => baseId
     } else {
       baseId: Array[T] =>
@@ -1323,7 +1376,7 @@ private[gbm] object GBM extends Logging {
         .zip(gradBlock.iterator)
         .flatMap { case ((bin, baseId), grad) =>
           if (baseId.nonEmpty) {
-            val treeId = computeTreeId(baseId)
+            val treeId = computeTreeIds(baseId)
             Iterator.single(bin, treeId, grad)
           } else {
             Iterator.empty

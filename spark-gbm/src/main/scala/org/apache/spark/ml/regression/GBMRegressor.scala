@@ -84,11 +84,11 @@ class GBMRegressor(override val uid: String) extends
 
   def setRankCols(value: Array[Int]): this.type = set(rankCols, value)
 
-  def setSubSample(value: Double): this.type = set(subSample, value)
+  def setSubSampleRate(value: Double): this.type = set(subSampleRate, value)
 
-  def setColSampleByTree(value: Double): this.type = set(colSampleByTree, value)
+  def setColSampleRateByTree(value: Double): this.type = set(colSampleRateByTree, value)
 
-  def setColSampleByLevel(value: Double): this.type = set(colSampleByLevel, value)
+  def setColSampleRateByLevel(value: Double): this.type = set(colSampleRateByLevel, value)
 
   def setMinGain(value: Double): this.type = set(minGain, value)
 
@@ -108,9 +108,9 @@ class GBMRegressor(override val uid: String) extends
 
   def setMaxDrop(value: Int): this.type = set(maxDrop, value)
 
-  def setTopFraction(value: Double): this.type = set(topFraction, value)
+  def setTopFraction(value: Double): this.type = set(topRate, value)
 
-  def setOtherFraction(value: Double): this.type = set(otherFraction, value)
+  def setOtherFraction(value: Double): this.type = set(otherRate, value)
 
   def setInitialModelPath(value: String): this.type = set(initialModelPath, value)
 
@@ -136,7 +136,9 @@ class GBMRegressor(override val uid: String) extends
 
   def setTrialParallelism(value: Double): this.type = set(trialParallelism, value)
 
-  def setSampleBlocks(value: Boolean): this.type = set(sampleBlocks, value)
+  def setSubSampleType(value: String): this.type  = set(subSampleType, value)
+
+  def setHistogramComputationType(value: String): this.type  = set(histogramComputationType, value)
 
   def setBaseModelParallelism(value: Int): this.type = set(baseModelParallelism, value)
 
@@ -202,13 +204,6 @@ class GBMRegressor(override val uid: String) extends
       lit(1.0)
     }
 
-    //    val baseScore_ = if ($(baseScore).nonEmpty) {
-    //      require($(baseScore).length == 1)
-    //      $(baseScore)
-    //    } else {
-    //      val average = dataset.select(avg(col($(labelCol)) * w)).first.getDouble(0)
-    //      Array(average)
-    //    }
 
     val gbm = new GBM
     gbm.setMaxIter($(maxIter))
@@ -226,9 +221,9 @@ class GBMRegressor(override val uid: String) extends
       .setCallbackFunc(callBackFunc.toArray)
       .setCatCols($(catCols).toSet)
       .setRankCols($(rankCols).toSet)
-      .setSubSample($(subSample))
-      .setColSampleByTree($(colSampleByTree))
-      .setColSampleByLevel($(colSampleByLevel))
+      .setSubSampleRate($(subSampleRate))
+      .setColSampleRateByTree($(colSampleRateByTree))
+      .setColSampleRateByLevel($(colSampleRateByLevel))
       .setCheckpointInterval($(checkpointInterval))
       .setStorageLevel(StorageLevel.fromString($(storageLevel)))
       .setAggregationDepth($(aggregationDepth))
@@ -238,14 +233,15 @@ class GBMRegressor(override val uid: String) extends
       .setDropSkip($(dropSkip))
       .setMinDrop($(minDrop))
       .setMaxDrop($(maxDrop))
-      .setTopFraction($(topFraction))
-      .setOtherFraction($(otherFraction))
+      .setTopRate($(topRate))
+      .setOtherRate($(otherRate))
       .setMaxBruteBins($(maxBruteBins))
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setReduceParallelism($(reduceParallelism))
       .setTrialParallelism($(trialParallelism))
-      .setSampleBlocks($(sampleBlocks))
+      .setSubSampleType($(subSampleType))
+      .setHistogramComputationType($(histogramComputationType))
       .setBaseModelParallelism($(baseModelParallelism))
       .setBlockSize($(blockSize))
       .setInitialModel(initialModel)

@@ -63,10 +63,10 @@ private[gbm] object Tree extends Serializable with Logging {
 
 
       // compute histograms
-      val hists = histogramComputer.compute(data.zip(nodeIdBlocks.flatMap(_.iterator)), boostConf, baseConf, splits, depth)
+      val histograms = histogramComputer.compute(data.zip(nodeIdBlocks.flatMap(_.iterator)), boostConf, baseConf, splits, depth)
 
       // find best splits
-      splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, remainingLeaves, depth)
+      splits = findSplits[T, N, C, B, H](histograms, boostConf, baseConf, remainingLeaves, depth)
 
       histogramComputer.clear()
 
@@ -236,10 +236,10 @@ private[gbm] object Tree extends Serializable with Logging {
   /**
     * Search the optimal splits on all leaves
     *
-    * @param nodeHists histogram data of leaves nodes
+    * @param nodeHistograms histogram data of leaves nodes
     * @return optimal splits for each node
     */
-  def findSplits[T, N, C, B, H](nodeHists: RDD[((T, N, C), KVVector[B, H])],
+  def findSplits[T, N, C, B, H](nodeHistograms: RDD[((T, N, C), KVVector[B, H])],
                                 boostConf: BoostConfig,
                                 baseConf: BaseConfig,
                                 remainingLeaves: Array[Int],
@@ -249,15 +249,16 @@ private[gbm] object Tree extends Serializable with Logging {
                                 cc: ClassTag[C], inc: Integral[C],
                                 cb: ClassTag[B], inb: Integral[B],
                                 ch: ClassTag[H], nuh: Numeric[H], fdh: NumericExt[H]): Map[(T, N), Split] = {
-    val sc = nodeHists.sparkContext
+    val sc = nodeHistograms.sparkContext
 
     val bcRemainingLeaves = sc.broadcast(remainingLeaves)
 
     // column sampling by level
-    val sampled = if (boostConf.getColSampleRateByLevel == 1 || boostConf.getHistogramComputationType == Vote) {
-      nodeHists
+    val sampled = if (boostConf.getHistogramComputationType == Subtract && boostConf.getColSampleRateByLevel < 1) {
+      // In `SubtractHistogramComputer`, level-sampling is not applied
+      nodeHistograms.sample(false, boostConf.getColSampleRateByLevel, baseConf.iteration + depth)
     } else {
-      nodeHists.sample(false, boostConf.getColSampleRateByLevel, baseConf.iteration + depth)
+      nodeHistograms
     }
 
     val parallelism = boostConf.getRealParallelism(boostConf.getTrialParallelism, sc.defaultParallelism)
@@ -303,7 +304,7 @@ private[gbm] object Tree extends Serializable with Logging {
               val rem = bcRemainingLeaves.value(int.toInt(treeId))
               array.sortBy(_._2.gain).takeRight(rem)
             }.toArray
-          
+
           Iterator.single((splits2, metrics))
 
         } else {

@@ -45,7 +45,6 @@ private[gbm] class BasicHistogramComputer[T, N, C, B, H] extends HistogramComput
                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     val sc = data.sparkContext
-
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
     val treeNodeIds = if (depth == 0) {
@@ -62,13 +61,20 @@ private[gbm] class BasicHistogramComputer[T, N, C, B, H] extends HistogramComput
     val partitioner = new IDRangePratitioner[T, N, C](parallelism, boostConf.getNumCols, treeNodeIds)
     logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, partitioner $partitioner")
 
+
+    val newBaseConf = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
+
     val minNodeId = inn.fromInt(1 << depth)
-    HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), partitioner)
+    HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, newBaseConf, (n: N) => inn.gteq(n, minNodeId), partitioner)
   }
 }
 
 
 private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramComputer[T, N, C, B, H] {
+
+  private var delta = 1.0
+
+  private var prevHistograms = Option.empty[RDD[((T, N, C), KVVector[B, H])]]
 
   private var checkpointer = Option.empty[Checkpointer[((T, N, C), KVVector[B, H])]]
 
@@ -84,9 +90,7 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     val sc = data.sparkContext
-
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
-
     val minNodeId = inn.fromInt(1 << depth)
 
     val (treeIds, prevPartitioner) = if (depth == 0) {
@@ -94,33 +98,57 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
       (Array.tabulate(baseConf.numTrees)(int.fromInt), None)
 
     } else {
-      (splits.keysIterator.map(_._1).toArray.distinct.sorted, checkpointer.get.last.partitioner)
+      (splits.keysIterator.map(_._1).toArray.distinct.sorted, prevHistograms.get.partitioner)
     }
 
     val partitioner = HistogramComputer.updatePartitioner[T, N, C](boostConf, treeIds, depth, parallelism, prevPartitioner)
     logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
 
-    val hists = if (depth == 0) {
+    val histograms = if (depth == 0) {
       // direct compute the histogram of roots
       HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, baseConf, (n: N) => true, partitioner)
 
     } else {
       // compute the histogram of right leaves
-      val rightHists = HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, baseConf,
+      val rightHistograms = HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, baseConf,
         (n: N) => inn.gteq(n, minNodeId) && inn.equiv(inn.rem(n, inn.fromInt(2)), inn.one), partitioner)
+        .setName(s"Right Leaves Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
 
       // compute the histogram of both left leaves and right leaves by subtraction
-      HistogramComputer.subtractHistograms[T, N, C, B, H](checkpointer.get.last, rightHists, boostConf, partitioner)
+      HistogramComputer.subtractHistograms[T, N, C, B, H](prevHistograms.get, rightHistograms, boostConf, partitioner)
     }
-    hists.setName(s"Histograms (Iteration ${baseConf.iteration}, depth $depth)")
 
-    checkpointer.get.update(hists)
-    hists
+    val expectedSize = (baseConf.numTrees << depth) * boostConf.getNumCols * boostConf.getColSampleRateByTree * delta
+
+    // cut off lineage if size is small
+    if (expectedSize < (1 << 16)) {
+      val numPartitions = histograms.getNumPartitions
+      val collected = histograms.collect()
+
+      val exactSize = collected.length
+      delta *= exactSize / expectedSize
+      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize")
+
+      val smallHistograms = sc.parallelize(collected, numPartitions)
+        .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
+
+      prevHistograms = Some(smallHistograms)
+      smallHistograms
+
+    } else {
+
+      histograms.setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
+      prevHistograms = Some(histograms)
+      checkpointer.get.update(histograms)
+      histograms
+    }
   }
 
   override def destroy(): Unit = {
     checkpointer.foreach(_.clear())
     checkpointer = None
+    prevHistograms = None
+    delta = 1.0
   }
 }
 
@@ -128,6 +156,8 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
 private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramComputer[T, N, C, B, H] {
 
   private var recoder = Option.empty[ResourceRecoder]
+
+  private val delta = Array(1.0)
 
   override def compute(data: RDD[((KVVector[C, B], Array[T], Array[H]), Array[N])],
                        boostConf: BoostConfig,
@@ -141,7 +171,6 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     val sc = data.sparkContext
-
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
     val treeNodeIds = if (depth == 0) {
@@ -160,7 +189,7 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
     val partitioner = new IDRangePratitioner[T, N, C](parallelism, boostConf.getNumCols, treeNodeIds)
     logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, partitioner $partitioner")
 
-    HistogramComputer.computeHistogramsWithVoting[T, N, C, B, H](data, boostConf, baseConf, depth, partitioner, recoder.get)
+    HistogramComputer.computeHistogramsWithVoting[T, N, C, B, H](data, boostConf, baseConf, depth, partitioner, recoder.get, delta)
   }
 
   override def clear(): Unit = {
@@ -170,11 +199,12 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
   override def destroy(): Unit = {
     recoder.foreach(_.clear())
     recoder = None
+    delta(0) = 1.0
   }
 }
 
 
-private[gbm] object HistogramComputer {
+private[gbm] object HistogramComputer extends Logging {
 
 
   /**
@@ -279,6 +309,7 @@ private[gbm] object HistogramComputer {
                                        cc: ClassTag[C], inc: Integral[C],
                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
+
     computeLocalHistograms[T, N, C, B, H](data, boostConf, baseConf, f)
       .reduceByKey(partitioner, _ plus _)
   }
@@ -287,12 +318,12 @@ private[gbm] object HistogramComputer {
   /**
     * Histogram subtraction
     *
-    * @param nodeHists  histogram data of parent nodes
-    * @param rightHists histogram data of right leaves
+    * @param nodeHistograms  histogram data of parent nodes
+    * @param rightHistograms histogram data of right leaves
     * @return histogram data of both left and right leaves
     */
-  def subtractHistograms[T, N, C, B, H](nodeHists: RDD[((T, N, C), KVVector[B, H])],
-                                        rightHists: RDD[((T, N, C), KVVector[B, H])],
+  def subtractHistograms[T, N, C, B, H](nodeHistograms: RDD[((T, N, C), KVVector[B, H])],
+                                        rightHistograms: RDD[((T, N, C), KVVector[B, H])],
                                         boostConf: BoostConfig,
                                         partitioner: Partitioner)
                                        (implicit ct: ClassTag[T], int: Integral[T],
@@ -300,11 +331,12 @@ private[gbm] object HistogramComputer {
                                         cc: ClassTag[C], inc: Integral[C],
                                         cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
+
     val threshold = neh.fromDouble(boostConf.getMinNodeHess * 2)
 
     // Only if the partitioner is a SkipNodePratitioner or DepthPratitioner, we can preserves
     // the partitioning after changing the nodeId in key
-    val preserve1 = nodeHists.partitioner match {
+    val preserve1 = nodeHistograms.partitioner match {
       case Some(_: SkipNodePratitioner[_, _, _]) => true
       case Some(_: DepthPratitioner[_, _, _]) => true
       case _ => false
@@ -316,7 +348,7 @@ private[gbm] object HistogramComputer {
       case _ => false
     }
 
-    nodeHists.mapPartitions(f = { iter =>
+    nodeHistograms.mapPartitions(f = { iter =>
       iter.map { case ((treeId, parentNodeId, colId), parentHist) =>
         val leftNodeId = inn.plus(parentNodeId, parentNodeId)
         val rightNodeId = inn.plus(leftNodeId, inn.one)
@@ -324,7 +356,7 @@ private[gbm] object HistogramComputer {
       }
     }, preserve1)
 
-      .join(rightHists, partitioner)
+      .join(rightHistograms, partitioner)
 
       .mapPartitions(f = { iter =>
 
@@ -360,99 +392,105 @@ private[gbm] object HistogramComputer {
                                                  baseConf: BaseConfig,
                                                  depth: Int,
                                                  partitioner: Partitioner,
-                                                 recoder: ResourceRecoder)
+                                                 recoder: ResourceRecoder,
+                                                 delta: Array[Double])
                                                 (implicit ct: ClassTag[T], int: Integral[T],
                                                  cn: ClassTag[N], inn: Integral[N],
                                                  cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                  cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                                  ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
-    import PairRDDFunctions._
 
     val sc = data.sparkContext
-
-    val numBaseModels = baseConf.numTrees / boostConf.getRawSize
-    val levelSelector = ColumSelector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols, numBaseModels, boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
-    val unionSelector = ColumSelector.union(Array(baseConf.selector, levelSelector))
-    val baseConf2 = new BaseConfig(baseConf.iteration, baseConf.numTrees, unionSelector)
-
     val minNodeId = inn.fromInt(1 << depth)
     val parallelism = partitioner.numPartitions
     val topK = boostConf.getTopK
     val top2K = topK << 1
 
-    val expectedNumTops = baseConf2.numTrees * (1 << depth) * top2K
-    val sorted = expectedNumTops > (1 << 16)
+    val newBaseConf = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
 
-    val localHistograms = computeLocalHistograms[T, N, C, B, H](data, boostConf, baseConf2, (n: N) => inn.gteq(n, minNodeId), sorted)
-      .setName(s"Local Histograms${if (sorted) " (Sorted)" else ""}")
+    val localHistograms = computeLocalHistograms[T, N, C, B, H](data, boostConf, newBaseConf, (n: N) => inn.gteq(n, minNodeId), true)
+      .setName(s"Local Histograms (Iteration: ${baseConf.iteration}, depth: $depth) (Sorted)")
     localHistograms.persist(boostConf.getStorageLevel)
     recoder.append(localHistograms)
 
+    val localVoted = localHistograms.mapPartitions { iter =>
+      val gainIter = iter.flatMap { case ((treeId, nodeId, colId), hist) =>
+        val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, newBaseConf)
+        split.map(s => ((treeId, nodeId), (-s.gain, colId)))
+      }
 
-    val voted = localHistograms.flatMap { case ((treeId, nodeId, colId), hist) =>
-      val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf2)
-      split.map(s => ((treeId, nodeId), (-s.gain, colId)))
+      Utils.aggregateIterByKey[(T, N), (Float, C), BoundedPriorityQueue[(Float, C)]](gainIter,
+        () => new BoundedPriorityQueue[(Float, C)](topK), _ += _)
 
-    }.aggregatePartitionsByKey(new BoundedPriorityQueue[(Float, C)](topK))(
-      seqOp = _ += _,
-      combOp = _ ++= _
-    ).setName("Local TopK")
+        .map { case ((treeId, nodeId), queue) =>
+          val colIds = queue.iterator.map(_._2).toArray.sorted
+          val size = inc.toInt(colIds.last) + 1
+          val vec = KVVector.sparse[C, Int](size, colIds, Array.fill(colIds.length)(1))
+          ((treeId, nodeId), vec.compressed)
+        }
+    }.setName("Local Voted TopK")
 
-      .aggregateByKey(KVVector.empty[C, Int], parallelism)(
-        seqOp = {
-          case (votes, localTopK) =>
-            var v = votes
-            localTopK.iterator.foreach { case (_, colId) => v = v.plus(colId, 1) }
-            v
-        }, combOp = _ plus _
-
-      ).setName("Global Votes")
-
+    val globalVoted = localVoted.reduceByKey(_ plus _, parallelism)
       .flatMap { case ((treeId, nodeId), votes) =>
         votes.activeIter.toArray
-          .sortBy(_._2).takeRight(top2K)
-          .iterator.map { case (colId, _) =>
-          ((treeId, nodeId, colId), true)
-        }
-      }.setName("Global Top2K")
+          .sortBy(_._2).takeRight(top2K).iterator
+          .map { case (colId, _) => ((treeId, nodeId, colId), true) }
+      }.setName("Global Voted Top2K")
 
 
-    if (sorted) {
+    val expectedSize = (newBaseConf.numTrees << depth) * top2K * delta.head
+
+
+    // the following lines functionally equals to :
+    //  localHistograms.join(globalVoted, partitioner)
+    //    .mapValues(_._1)
+    //    .reduceByKey(partitioner, _ plus _)
+    // we apply `broadcast` and `zipPartitions` to avoid join shuffle of 'localHistograms'
+
+    if (expectedSize < (1 << 16)) {
+
+      val array = globalVoted.map(_._1).collect().sorted
+      val treeIds = CompactArray.build[T](array.iterator.map(_._1))
+      val nodeIds = CompactArray.build[N](array.iterator.map(_._2))
+      val colIds = array.map(_._3)
+
+      val exactSize = array.length
+      delta(0) *= exactSize / expectedSize
+      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize")
+
+      val bcIds = sc.broadcast((treeIds, nodeIds, colIds))
+      recoder.append(bcIds)
+
+      localHistograms.mapPartitions { iter =>
+        val (treeIds, nodeIds, colIds) = bcIds.value
+        val topIter = treeIds.iterator
+          .zip(nodeIds.iterator)
+          .zip(colIds.iterator)
+          .map { case ((treeId, nodeId), colId) => ((treeId, nodeId, colId), true) }
+
+        Utils.innerJoinSortedIters(iter, topIter)
+          .map { case ((treeId, nodeId, colId), hist, _) => ((treeId, nodeId, colId), hist) }
+      }.reduceByKey(partitioner, _ plus _)
+
+    } else {
+
       import RDDFunctions._
 
-      // the following lines in this block is functionally the same as :
-      //  localHistograms.join(voted, partitioner)
-      //    .mapValues(_._1)
-      //    .reduceByKey(partitioner, _ plus _)
-      // we use `zipPartitions` here to avoid shuffle of #localHistograms in `join`
-
-      val voted2 = voted.repartitionAndSortWithinPartitions(new HashPartitioner(1))
+      val voted2 = globalVoted.repartitionAndSortWithinPartitions(new HashPartitioner(1))
         .setName("Global Top2K (Single Sorted Partition)")
       require(voted2.getNumPartitions == 1)
       voted2.persist(boostConf.getStorageLevel)
       recoder.append(voted2)
-
 
       val numPartitions = localHistograms.getNumPartitions
       val voted3 = voted2.reorgPartitions(Array.ofDim[Int](numPartitions))
         .setName("Global Top2K (Duplicated Sorted Partitions)")
       require(voted3.getNumPartitions == numPartitions)
 
-
       localHistograms.zipPartitions(voted3)(f = {
         case (iter1, iter2) => Utils.innerJoinSortedIters(iter1, iter2)
       }).map(t => (t._1, t._2))
         .reduceByKey(partitioner, _ plus _)
-
-    } else {
-      val set = voted.map(_._1).collect().toSet
-      val bcSet = sc.broadcast(set)
-      recoder.append(bcSet)
-
-      localHistograms.mapPartitions { iter =>
-        val set = bcSet.value
-        iter.filter { case (ids, _) => set.contains(ids) }
-      }.reduceByKey(partitioner, _ plus _)
     }
   }
 
@@ -515,7 +553,7 @@ private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
   require(numCols > 0)
   require(treeIds.nonEmpty)
   require(treeIds.forall(t => int.gteq(t, int.zero)))
-  require(Iterator.range(0, treeIds.length - 1).forall(i => int.lt(treeIds(i), treeIds(i + 1))))
+  require(Utils.validateOrdering(treeIds))
 
   private val hash = numPartitions * (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
 
@@ -572,7 +610,7 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
   require(depth > 1)
   require(treeIds.nonEmpty)
   require(treeIds.forall(t => int.gteq(t, int.zero)))
-  require(Iterator.range(0, treeIds.length - 1).forall(i => int.lt(treeIds(i), treeIds(i + 1))))
+  require(Utils.validateOrdering(treeIds))
 
   private val lowerBound: Int = 1 << depth
 
@@ -642,7 +680,8 @@ private[gbm] class IDRangePratitioner[T, N, C](val numPartitions: Int,
   require(numPartitions > 0)
   require(numCols > 0)
   require(treeNodeIds.nonEmpty)
-  require(Iterator.range(0, treeNodeIds.length - 1).forall(i => order.lt(treeNodeIds(i), treeNodeIds(i + 1))))
+  require(treeNodeIds.forall { case (treeId, nodeId) => int.gteq(treeId, int.zero) && inn.gteq(nodeId, inn.zero) })
+  require(Utils.validateOrdering[(T, N)](treeNodeIds)(order))
 
   private val hash = {
     val treeIds = treeNodeIds.map(_._1)

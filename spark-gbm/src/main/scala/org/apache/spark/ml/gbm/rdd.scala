@@ -13,17 +13,26 @@ import org.apache.spark.util.collection.ExternalSorter
 import org.apache.spark.util.random.XORShiftRandom
 
 
-private[gbm] class M2NRDDPartition[T](val index: Int,
-                                      val prevs: Array[Partition]) extends Partition
+/**
+  * Partition of `PartitionReorganizedRDD`
+  */
+private[gbm] class PartitionReorganizedRDDPartition[T](val index: Int,
+                                                       val prevs: Array[Partition]) extends Partition
 
 
-private[gbm] class M2NRDD[T: ClassTag](@transient val parent: RDD[T],
-                                       val partIds: Array[Array[Int]]) extends RDD[T](parent) {
+/**
+  * Reorganize and concatenate current partitions to form new partitions.
+  * E.g `partIds` = Array(Array(0,0), Array(3,4)), will create a new RDD with 2 partitions,
+  * the first one is two copies of current part0, and the second one is composed of current part3 and part4.
+  * @param partIds indicate how to form new partitions
+  */
+private[gbm] class PartitionReorganizedRDD[T: ClassTag](@transient val parent: RDD[T],
+                                                        val partIds: Array[Array[Int]]) extends RDD[T](parent) {
   require(partIds.iterator.flatten
     .forall(p => p >= 0 && p < parent.getNumPartitions))
 
   override def compute(split: Partition, context: TaskContext): Iterator[T] = {
-    val part = split.asInstanceOf[M2NRDDPartition[T]]
+    val part = split.asInstanceOf[PartitionReorganizedRDDPartition[T]]
     part.prevs.iterator.flatMap { prev =>
       firstParent[T].iterator(prev, context)
     }
@@ -32,12 +41,12 @@ private[gbm] class M2NRDD[T: ClassTag](@transient val parent: RDD[T],
   override protected def getPartitions: Array[Partition] = {
     partIds.zipWithIndex.map { case (partId, i) =>
       val prevs = partId.map { pid => firstParent[T].partitions(pid) }
-      new M2NRDDPartition(i, prevs)
+      new PartitionReorganizedRDDPartition(i, prevs)
     }
   }
 
   override def getPreferredLocations(split: Partition): Seq[String] = {
-    val prefs = split.asInstanceOf[M2NRDDPartition[T]].prevs
+    val prefs = split.asInstanceOf[PartitionReorganizedRDDPartition[T]].prevs
       .map { prev => firstParent[T].preferredLocations(prev) }
 
     val intersect = prefs.reduce((p1, p2) => p1.intersect(p2))
@@ -56,17 +65,28 @@ private[gbm] class M2NRDD[T: ClassTag](@transient val parent: RDD[T],
 }
 
 
+
 private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable {
 
+  /**
+    * Reorganize and concatenate current partitions to form new partitions.
+    * Note: This may harms task locality.
+    */
   def reorgPartitions(partIds: Array[Array[Int]]): RDD[T] = {
-    new M2NRDD[T](self, partIds)
+    new PartitionReorganizedRDD[T](self, partIds)
   }
+
 
   def reorgPartitions(partIds: Array[Int]): RDD[T] = {
     val array = partIds.map(p => Array(p))
     reorgPartitions(array)
   }
 
+
+  /**
+    * for partition with weight = 1, directly sample it instead of rows.
+    * for partition with weight < 1, perform row sampling.
+    */
   def samplePartitions(weights: Map[Int, Double], seed: Long): RDD[T] = {
     val (partIdArr, weightArr) = weights.toArray.unzip
 
@@ -83,6 +103,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
         }
       }
   }
+
 
   def samplePartitions(fraction: Double, seed: Long): RDD[T] = {
     require(fraction > 0 && fraction <= 1)
@@ -108,6 +129,10 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
     samplePartitions(weights.toMap, seed)
   }
 
+
+  /**
+    * Enlarge the number of partitions without shuffle, by traversing parent partitions several times.
+    */
   def extendPartitions(numPartitions: Int): RDD[T] = {
     val prevNumPartitions = self.getNumPartitions
     require(numPartitions >= prevNumPartitions)
@@ -147,7 +172,9 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
 private[gbm] object RDDFunctions {
 
   /** Implicit conversion from an RDD to RDDFunctions. */
-  implicit def fromRDD[T: ClassTag](rdd: RDD[T]): RDDFunctions[T] = new RDDFunctions[T](rdd)
+  implicit def fromRDD[T: ClassTag](rdd: RDD[T]): RDDFunctions[T] = {
+    new RDDFunctions[T](rdd)
+  }
 }
 
 
@@ -155,6 +182,10 @@ private[gbm] class PairRDDFunctions[K, V](self: RDD[(K, V)])
                                          (implicit ct: ClassTag[K], cv: ClassTag[V])
   extends Logging with Serializable {
 
+  /**
+    * Perform `aggregateByKey` within partitions.
+    * If ordering is provided, sorted the result partitions.
+    */
   def aggregatePartitionsByKey[C: ClassTag](zeroValue: C,
                                             ordering: Option[Ordering[K]])
                                            (seqOp: (C, V) => C,
@@ -167,14 +198,11 @@ private[gbm] class PairRDDFunctions[K, V](self: RDD[(K, V)])
     val createZero = () => cachedSerializer.deserialize[C](ByteBuffer.wrap(zeroArray))
 
     val mergeValue = self.context.clean(seqOp)
-
     val createCombiner = (v: V) => mergeValue(createZero(), v)
     val mergeCombiners = combOp
 
     require(mergeCombiners != null, "mergeCombiners must be defined")
-    if (ct.runtimeClass.isArray) {
-      throw new SparkException("Cannot use map-side combining with array keys.")
-    }
+    require(!ct.runtimeClass.isArray, "Cannot use map-side combining with array keys.")
 
     val aggregator = new Aggregator[K, V, C](
       self.context.clean(createCombiner),
@@ -187,16 +215,21 @@ private[gbm] class PairRDDFunctions[K, V](self: RDD[(K, V)])
       if (ordering.nonEmpty) {
         val sorter = new ExternalSorter[K, V, C](context, Some(aggregator), None, ordering)
         sorter.insertAll(iter)
-        new InterruptibleIterator(context, sorter.iterator).map(t => (t._1, t._2))
+        val outIter = sorter.iterator.asInstanceOf[Iterator[(K, C)]]
+        new InterruptibleIterator(context, outIter)
 
       } else {
-        new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))
+        val outIter = aggregator.combineValuesByKey(iter, context)
+        new InterruptibleIterator(context, outIter)
       }
 
     }, preservesPartitioning = true)
   }
 
 
+  /**
+    * Perform `aggregateByKey` within partitions, and ignore output ordering.
+    */
   def aggregatePartitionsByKey[C: ClassTag](zeroValue: C)
                                            (seqOp: (C, V) => C,
                                             combOp: (C, C) => C): RDD[(K, C)] = {
@@ -205,6 +238,9 @@ private[gbm] class PairRDDFunctions[K, V](self: RDD[(K, V)])
 }
 
 private[gbm] object PairRDDFunctions {
+
   /** Implicit conversion from an RDD to PairRDDFunctions. */
-  implicit def fromRDD[K: ClassTag, V: Ordering : ClassTag](rdd: RDD[(K, V)]): PairRDDFunctions[K, V] = new PairRDDFunctions[K, V](rdd)
+  implicit def fromRDD[K: ClassTag, V: Ordering : ClassTag](rdd: RDD[(K, V)]): PairRDDFunctions[K, V] = {
+    new PairRDDFunctions[K, V](rdd)
+  }
 }

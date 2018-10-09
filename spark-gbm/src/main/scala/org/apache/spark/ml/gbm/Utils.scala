@@ -5,7 +5,7 @@ import java.{util => ju}
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.util.{Failure, Random, Success}
+import scala.util.{Failure, Random, Success, Try}
 
 import org.apache.hadoop.fs.Path
 
@@ -19,14 +19,21 @@ import org.apache.spark.storage.StorageLevel
 import org.apache.spark.unsafe.hash.Murmur3_x86_32
 
 
-trait ColumSelector extends Serializable {
+/**
+  * Indicator that indicate where a tree contains a column in column-sampling (ByTree or/and ByLevel)
+  */
+private[gbm] trait ColumSelector extends Serializable {
   def contains[T, C](treeId: T, colId: C)
                     (implicit int: Integral[T], inc: Integral[C]): Boolean
 }
 
 
-object ColumSelector extends Serializable {
+private[gbm] object ColumSelector extends Serializable {
 
+  /**
+    * Initialize a new selector based on given parameters.
+    * Note: Trees in a same base model should share the same selector.
+    */
   def create(colSampleRate: Double,
              numCols: Int,
              numBaseModels: Int,
@@ -34,7 +41,7 @@ object ColumSelector extends Serializable {
              seed: Long): ColumSelector = {
 
     if (colSampleRate == 1) {
-      TotalSelector()
+      TrueSelector()
 
     } else if (numCols * colSampleRate > 32) {
       val rng = new Random(seed)
@@ -48,6 +55,8 @@ object ColumSelector extends Serializable {
       HashSelector(maximum, seeds)
 
     } else {
+      // When size of selected columns is small, it is hard for hashing to perform robust sampling,
+      // we then switch to `SetSelector` for exactly sampling.
       val rng = new Random(seed)
       val numSelected = (numCols * colSampleRate).ceil.toInt
 
@@ -60,23 +69,37 @@ object ColumSelector extends Serializable {
     }
   }
 
-  def union(selectors: Array[ColumSelector]): ColumSelector = {
-    UnionSelector(selectors)
+  /**
+    * Merge several selectors into one, will skip redundant `TrueSelector`.
+    */
+  def union(selectors: ColumSelector*): ColumSelector = {
+    require(selectors.nonEmpty)
+
+    val nonTrues = selectors.flatMap {
+      case s: TrueSelector => Iterator.empty
+      case s => Iterator.single(s)
+    }
+
+    if (nonTrues.nonEmpty) {
+      UnionSelector(nonTrues)
+    } else {
+      TrueSelector()
+    }
   }
 }
 
 
-case class TotalSelector() extends ColumSelector {
+private[gbm] case class TrueSelector() extends ColumSelector {
 
   override def contains[T, C](treeId: T, colId: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = true
 
-  override def toString: String = "TotalSelector"
+  override def toString: String = "TrueSelector"
 }
 
 
-case class HashSelector(maximum: Int,
-                        seeds: Array[Int]) extends ColumSelector {
+private[gbm] case class HashSelector(maximum: Int,
+                                     seeds: Array[Int]) extends ColumSelector {
   require(maximum >= 0)
 
   override def contains[T, C](treeId: T, colId: C)
@@ -84,23 +107,24 @@ case class HashSelector(maximum: Int,
     Murmur3_x86_32.hashLong(inc.toLong(colId), seeds(int.toInt(treeId))).abs < maximum
   }
 
-  override def toString: String = s"HashSelector(maximum: $maximum, seed: ${seeds.mkString("[", ",", "]")})"
+  override def toString: String = s"HashSelector(maximum: $maximum, seeds: ${seeds.mkString("[", ",", "]")})"
 }
 
 
-case class SetSelector(sets: Array[Array[Int]]) extends ColumSelector {
-  require(sets.nonEmpty && sets.forall(_.nonEmpty))
+private[gbm] case class SetSelector(sets: Array[Array[Int]]) extends ColumSelector {
+  require(sets.nonEmpty)
+  require(sets.forall(set => set.nonEmpty && Utils.validateOrdering[Int](set)))
 
   override def contains[T, C](treeId: T, colId: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
     ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toInt(colId)) >= 0
   }
 
-  override def toString: String = s"SetSelector(sets: ${sets.mkString("[", ",", "]")})"
+  override def toString: String = s"SetSelector(sets: ${sets.mkString("{", ",", "}")})"
 }
 
 
-case class UnionSelector(selectors: Array[ColumSelector]) extends ColumSelector {
+private[gbm] case class UnionSelector(selectors: Seq[ColumSelector]) extends ColumSelector {
   override def contains[T, C](treeId: T, colId: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
     selectors.forall(_.contains[T, C](treeId, colId))
@@ -193,10 +217,6 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     }
   }
 
-  def last: RDD[T] = persistedQueue.last
-
-  def lastOption: Option[RDD[T]] = persistedQueue.lastOption
-
   def clear(): Unit = {
     while (persistedQueue.nonEmpty) {
       persistedQueue.dequeue.unpersist(false)
@@ -278,12 +298,15 @@ private[gbm] class ResourceRecoder extends Logging {
 }
 
 
-object Utils extends Logging {
+private[gbm] object Utils extends Logging {
 
-  def getTypeByRange(value: Int): String = {
-    if (value <= Byte.MaxValue) {
+  /**
+    * Choose the most compact Integer Type according to the range
+    */
+  def getTypeByRange(range: Int): String = {
+    if (range <= Byte.MaxValue) {
       "Byte"
-    } else if (value <= Short.MaxValue) {
+    } else if (range <= Short.MaxValue) {
       "Short"
     } else {
       "Int"
@@ -291,30 +314,134 @@ object Utils extends Logging {
   }
 
 
-  def outerJoinSortedIters[K, V1, V2](iter1: Iterator[(K, V1)],
-                                      iter2: Iterator[(K, V2)])
+  /**
+    * Validate the ordering, and return the same iterator
+    */
+  def validateOrdering[K](iterator: Iterator[K],
+                          ascending: Boolean,
+                          strictly: Boolean)
+                         (implicit ork: Ordering[K]): Iterator[K] = new Iterator[K]() {
+    private var k = Option.empty[K]
+
+    private val check = (ascending, strictly) match {
+      case (true, true) => (i: K, j: K) => require(ork.compare(i, j) < 0, s"($i, $j) breaks strictly ascending")
+      case (true, false) => (i: K, j: K) => require(ork.compare(i, j) <= 0, s"($i, $j) breaks ascending (non-descending)")
+      case (false, true) => (i: K, j: K) => require(ork.compare(i, j) > 0, s"($i, $j) breaks strictly descending")
+      case (false, false) => (i: K, j: K) => require(ork.compare(i, j) >= 0, s"($i, $j) breaks descending (non-ascending)")
+    }
+
+    {
+      update()
+    }
+
+    private def update(): Unit = {
+      if (iterator.hasNext) {
+        val t = iterator.next
+        if (k.nonEmpty) {
+          check(k.get, t)
+        }
+        k = Some(t)
+      } else {
+        k = None
+      }
+    }
+
+    override def hasNext: Boolean = {
+      k.nonEmpty
+    }
+
+    override def next(): K = {
+      val t = k.get
+      update()
+      t
+    }
+  }
+
+
+  /**
+    * Validate the ordering, and return true if ordering is obeyed.
+    */
+  def validateOrdering[K](array: Array[K],
+                          ascending: Boolean = true,
+                          strictly: Boolean = true)
+                         (implicit ork: Ordering[K]): Boolean = {
+    Try(validateOrdering[K](array.iterator, ascending, strictly)(ork).size).isSuccess
+  }
+
+
+  /**
+    * Validate the ordering of keys, and return the same iterator
+    */
+  def validateKeyOrdering[K, V](iterator: Iterator[(K, V)],
+                                ascending: Boolean,
+                                strictly: Boolean)
+                               (implicit ork: Ordering[K]): Iterator[(K, V)] = new Iterator[(K, V)]() {
+    private var kv = Option.empty[(K, V)]
+
+    private val check = (ascending, strictly) match {
+      case (true, true) => (i: K, j: K) => require(ork.compare(i, j) < 0, s"($i, $j) breaks strictly ascending")
+      case (true, false) => (i: K, j: K) => require(ork.compare(i, j) <= 0, s"($i, $j) breaks ascending (non-descending)")
+      case (false, true) => (i: K, j: K) => require(ork.compare(i, j) > 0, s"($i, $j) breaks strictly descending")
+      case (false, false) => (i: K, j: K) => require(ork.compare(i, j) >= 0, s"($i, $j) breaks descending (non-ascending)")
+    }
+
+    {
+      update()
+    }
+
+    private def update(): Unit = {
+      if (iterator.hasNext) {
+        val t = iterator.next
+        if (kv.nonEmpty) {
+          check(kv.get._1, t._1)
+        }
+        kv = Some(t)
+      } else {
+        kv = None
+      }
+    }
+
+    override def hasNext: Boolean = {
+      kv.nonEmpty
+    }
+
+    override def next(): (K, V) = {
+      val t = kv.get
+      update()
+      t
+    }
+  }
+
+
+  /**
+    * Outer join of two Strictly Ascending iterators
+    */
+  def outerJoinSortedIters[K, V1, V2](iterator1: Iterator[(K, V1)],
+                                      iterator2: Iterator[(K, V2)])
                                      (implicit ork: Ordering[K]): Iterator[(K, Option[V1], Option[V2])] = new Iterator[(K, Option[V1], Option[V2])]() {
 
-    var kv1 = Option.empty[(K, V1)]
-    var kv2 = Option.empty[(K, V2)]
+    private val iterator1_ = validateKeyOrdering(iterator1, true, true)(ork)
+    private val iterator2_ = validateKeyOrdering(iterator2, true, true)(ork)
+
+    private var kv1 = Option.empty[(K, V1)]
+    private var kv2 = Option.empty[(K, V2)]
 
     {
       updateKV1()
       updateKV2()
     }
 
-    def updateKV1(): Unit = {
-      kv1 = if (iter1.hasNext) {
-        Some(iter1.next)
+    private def updateKV1(): Unit = {
+      kv1 = if (iterator1_.hasNext) {
+        Some(iterator1_.next)
       } else {
         None
       }
     }
 
-
-    def updateKV2(): Unit = {
-      kv2 = if (iter2.hasNext) {
-        Some(iter2.next)
+    private def updateKV2(): Unit = {
+      kv2 = if (iterator2_.hasNext) {
+        Some(iterator2_.next)
       } else {
         None
       }
@@ -355,26 +482,31 @@ object Utils extends Logging {
         updateKV2()
         t
     }
-
   }
 
 
-  def innerJoinSortedIters[K, V1, V2](iter1: Iterator[(K, V1)],
-                                      iter2: Iterator[(K, V2)])
+  /**
+    * Inner join of two Strictly Ascending iterators
+    */
+  def innerJoinSortedIters[K, V1, V2](iterator1: Iterator[(K, V1)],
+                                      iterator2: Iterator[(K, V2)])
                                      (implicit ork: Ordering[K]): Iterator[(K, V1, V2)] = new Iterator[(K, V1, V2)]() {
 
-    var kv1 = Option.empty[(K, V1)]
-    var kv2 = Option.empty[(K, V2)]
-    var cmp = 0
+    private val iterator1_ = validateKeyOrdering(iterator1, true, true)(ork)
+    private val iterator2_ = validateKeyOrdering(iterator2, true, true)(ork)
+
+    private var kv1 = Option.empty[(K, V1)]
+    private var kv2 = Option.empty[(K, V2)]
+    private var cmp = 0
 
     {
-      updateKV()
+      update()
     }
 
-    def updateKV1(): Unit = {
+    private def updateKV1(): Unit = {
       cmp = -1
-      while (iter1.hasNext && cmp < 0) {
-        kv1 = Some(iter1.next)
+      while (iterator1_.hasNext && cmp < 0) {
+        kv1 = Some(iterator1_.next)
         cmp = ork.compare(kv1.get._1, kv2.get._1)
       }
 
@@ -383,11 +515,10 @@ object Utils extends Logging {
       }
     }
 
-
-    def updateKV2(): Unit = {
+    private def updateKV2(): Unit = {
       cmp = 1
-      while (iter2.hasNext && cmp > 0) {
-        kv2 = Some(iter2.next)
+      while (iterator2_.hasNext && cmp > 0) {
+        kv2 = Some(iterator2_.next)
         cmp = ork.compare(kv1.get._1, kv2.get._1)
       }
 
@@ -396,16 +527,15 @@ object Utils extends Logging {
       }
     }
 
-
-    def updateKV(): Unit = {
-      kv1 = if (iter1.hasNext) {
-        Some(iter1.next)
+    private def update(): Unit = {
+      kv1 = if (iterator1_.hasNext) {
+        Some(iterator1_.next)
       } else {
         None
       }
 
-      kv2 = if (iter2.hasNext) {
-        Some(iter2.next)
+      kv2 = if (iterator2_.hasNext) {
+        Some(iterator2_.next)
       } else {
         None
       }
@@ -428,14 +558,127 @@ object Utils extends Logging {
 
     override def next(): (K, V1, V2) = {
       val t = (kv1.get._1, kv1.get._2, kv2.get._2)
-      updateKV()
+      update()
       t
     }
   }
 
 
   /**
-    * traverse all the elements of a vector
+    * Perform reduce operation by continuous identical keys
+    * E.g, keys = (1,1,1,5,5,2,2,1), will reduce on keysets (1,1,1),(5,5),(2,2),(1)
+    */
+  def reduceIterByKey[K, V](iterator: Iterator[(K, V)],
+                            func: (V, V) => V)
+                           (implicit ork: Ordering[K]): Iterator[(K, V)] = new Iterator[(K, V)]() {
+
+    private var kv1 = Option.empty[(K, V)]
+    private var kv2 = Option.empty[(K, V)]
+    private var cmp = 0
+
+    {
+      update()
+    }
+
+    private def update(): Unit = {
+
+      if (kv1.isEmpty && iterator.hasNext) {
+        kv1 = Some(iterator.next)
+      } else if (kv2.nonEmpty) {
+        kv1 = kv2
+      } else {
+        kv1 = None
+      }
+
+      kv2 = None
+
+      if (kv1.nonEmpty) {
+        cmp = 0
+        while (cmp == 0 && iterator.hasNext) {
+          kv2 = Some(iterator.next)
+          cmp = ork.compare(kv1.get._1, kv2.get._1)
+          if (cmp == 0) {
+            kv1 = Some(kv1.get._1, func(kv1.get._2, kv2.get._2))
+          }
+        }
+
+        if (cmp == 0) {
+          kv2 = None
+        }
+      }
+    }
+
+    override def hasNext: Boolean = {
+      kv1.nonEmpty
+    }
+
+    override def next(): (K, V) = {
+      val t = kv1.get
+      update()
+      t
+    }
+  }
+
+
+  /**
+    * Perform aggregate operation by continuous identical keys
+    * E.g, keys = (1,1,1,5,5,2,2,1), will aggregate on keysets (1,1,1),(5,5),(2,2),(1)
+    */
+  def aggregateIterByKey[K, V, C](iterator: Iterator[(K, V)],
+                                  createZero: () => C,
+                                  func: (C, V) => C)
+                                 (implicit ork: Ordering[K]): Iterator[(K, C)] = new Iterator[(K, C)]() {
+
+    private var kc = Option.empty[(K, C)]
+    private var kv = Option.empty[(K, V)]
+    private var cmp = 0
+
+    {
+      update()
+    }
+
+    private def update(): Unit = {
+      if (kc.isEmpty && iterator.hasNext) {
+        val t = iterator.next
+        kc = Some(t._1, func(createZero(), t._2))
+      } else if (kv.nonEmpty) {
+        kc = Some(kv.get._1, func(createZero(), kv.get._2))
+      } else {
+        kc = None
+      }
+
+      kv = None
+
+      if (kc.nonEmpty) {
+        cmp = 0
+        while (cmp == 0 && iterator.hasNext) {
+          kv = Some(iterator.next)
+          cmp = ork.compare(kv.get._1, kc.get._1)
+          if (cmp == 0) {
+            kc = Some(kv.get._1, func(kc.get._2, kv.get._2))
+          }
+        }
+
+        if (cmp == 0) {
+          kv = None
+        }
+      }
+    }
+
+    override def hasNext: Boolean = {
+      kc.nonEmpty
+    }
+
+    override def next(): (K, C) = {
+      val t = kc.get
+      update()
+      t
+    }
+  }
+
+
+  /**
+    * Traverse all the elements of a vector
     */
   def getTotalIter(vec: Vector): Iterator[(Int, Double)] = {
     vec match {
@@ -471,7 +714,7 @@ object Utils extends Logging {
 
 
   /**
-    * traverse only the non-zero elements of a vector
+    * Traverse only the non-zero elements of a vector
     */
   def getActiveIter(vec: Vector): Iterator[(Int, Double)] = {
     vec match {
@@ -489,7 +732,7 @@ object Utils extends Logging {
 
 
   /**
-    * helper function to save dataframes
+    * Helper function to save dataframes
     */
   def saveDataFrames(dataframes: Array[DataFrame],
                      names: Array[String],
@@ -503,7 +746,7 @@ object Utils extends Logging {
 
 
   /**
-    * helper function to load dataframes
+    * Helper function to load dataframes
     */
   def loadDataFrames(spark: SparkSession,
                      names: Array[String],
@@ -552,9 +795,10 @@ object Utils extends Logging {
         classOf[NodeData],
 
         classOf[ColumSelector],
-        classOf[TotalSelector],
+        classOf[TrueSelector],
         classOf[HashSelector],
         classOf[SetSelector],
+        classOf[UnionSelector],
 
         classOf[ObjFunc],
         classOf[ScalarObjFunc],
@@ -633,14 +877,6 @@ object Utils extends Logging {
         classOf[SparseKVVector[Int, Float]],
         classOf[SparseKVVector[Int, Double]],
 
-        classOf[ArrayBlock[Any]],
-        classOf[ArrayBlock[Byte]],
-        classOf[ArrayBlock[Short]],
-        classOf[ArrayBlock[Int]],
-        classOf[ArrayBlock[Long]],
-        classOf[ArrayBlock[Float]],
-        classOf[ArrayBlock[Double]],
-
         classOf[KVMatrix[Any, Any]],
         classOf[KVMatrix[Byte, Byte]],
         classOf[KVMatrix[Byte, Short]],
@@ -651,6 +887,22 @@ object Utils extends Logging {
         classOf[KVMatrix[Int, Byte]],
         classOf[KVMatrix[Int, Short]],
         classOf[KVMatrix[Int, Int]],
+
+        classOf[ArrayBlock[Any]],
+        classOf[ArrayBlock[Byte]],
+        classOf[ArrayBlock[Short]],
+        classOf[ArrayBlock[Int]],
+        classOf[ArrayBlock[Long]],
+        classOf[ArrayBlock[Float]],
+        classOf[ArrayBlock[Double]],
+
+        classOf[CompactArray[Any]],
+        classOf[CompactArray[Byte]],
+        classOf[CompactArray[Short]],
+        classOf[CompactArray[Int]],
+        classOf[CompactArray[Long]],
+        classOf[CompactArray[Float]],
+        classOf[CompactArray[Double]],
 
         classOf[InstanceBlock[Any, Any, Any]],
         classOf[InstanceBlock[Byte, Byte, Float]],
@@ -729,7 +981,6 @@ object Utils extends Logging {
         classOf[DepthPratitioner[Int, Int, Byte]],
         classOf[DepthPratitioner[Int, Int, Short]],
         classOf[DepthPratitioner[Int, Int, Int]],
-
 
         classOf[IDRangePratitioner[Any, Any, Any]],
         classOf[IDRangePratitioner[Byte, Byte, Byte]],

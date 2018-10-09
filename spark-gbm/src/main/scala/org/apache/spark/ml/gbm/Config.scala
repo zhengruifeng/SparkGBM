@@ -674,5 +674,25 @@ private[gbm] class BaseConfig(val iteration: Int,
                               val selector: ColumSelector) extends Serializable
 
 
+private[gbm] object BaseConfig extends Serializable {
 
+  /**
+    * The default `BaseConfig` passed in `Tree` contains selector for tree-wise column sampling.
+    * Call this function to merge level-wise column sampling if needed.
+    */
+  def mergeLevelSampling(boostConf: BoostConfig,
+                         baseConf: BaseConfig,
+                         depth: Int): BaseConfig = {
+
+    if (boostConf.getColSampleRateByLevel == 1) {
+      baseConf
+    } else {
+      val numBaseModels = baseConf.numTrees / boostConf.getRawSize
+      val levelSelector = ColumSelector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols, numBaseModels,
+        boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
+      val unionSelector = ColumSelector.union(baseConf.selector, levelSelector)
+      new BaseConfig(baseConf.iteration, baseConf.numTrees, unionSelector)
+    }
+  }
+}
 

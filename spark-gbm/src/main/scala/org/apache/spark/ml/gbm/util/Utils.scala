@@ -1,301 +1,13 @@
-package org.apache.spark.ml.gbm
-
-import java.{util => ju}
-
-import scala.collection.mutable
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
-import scala.util.{Failure, Random, Success, Try}
+package org.apache.spark.ml.gbm.util
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark._
-import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
-import org.apache.spark.ml.linalg._
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.apache.spark.storage.StorageLevel
-import org.apache.spark.unsafe.hash.Murmur3_x86_32
-
-
-/**
-  * Indicator that indicate where a tree contains a column in column-sampling (ByTree or/and ByLevel)
-  */
-private[gbm] trait ColumSelector extends Serializable {
-  def contains[T, C](treeId: T, colId: C)
-                    (implicit int: Integral[T], inc: Integral[C]): Boolean
-}
-
-
-private[gbm] object ColumSelector extends Serializable {
-
-  /**
-    * Initialize a new selector based on given parameters.
-    * Note: Trees in a same base model should share the same selector.
-    */
-  def create(colSampleRate: Double,
-             numCols: Int,
-             numBaseModels: Int,
-             rawSize: Int,
-             seed: Long): ColumSelector = {
-
-    if (colSampleRate == 1) {
-      TrueSelector()
-
-    } else if (numCols * colSampleRate > 32) {
-      val rng = new Random(seed)
-      val maximum = (Int.MaxValue * colSampleRate).ceil.toInt
-
-      val seeds = Array.range(0, numBaseModels).flatMap { i =>
-        val s = rng.nextInt
-        Iterator.fill(rawSize)(s)
-      }
-
-      HashSelector(maximum, seeds)
-
-    } else {
-      // When size of selected columns is small, it is hard for hashing to perform robust sampling,
-      // we then switch to `SetSelector` for exactly sampling.
-      val rng = new Random(seed)
-      val numSelected = (numCols * colSampleRate).ceil.toInt
-
-      val sets = Array.range(0, numBaseModels).flatMap { i =>
-        val selected = rng.shuffle(Seq.range(0, numCols)).take(numSelected).toArray.sorted
-        Iterator.fill(rawSize)(selected)
-      }
-
-      SetSelector(sets)
-    }
-  }
-
-  /**
-    * Merge several selectors into one, will skip redundant `TrueSelector`.
-    */
-  def union(selectors: ColumSelector*): ColumSelector = {
-    require(selectors.nonEmpty)
-
-    val nonTrues = selectors.flatMap {
-      case s: TrueSelector => Iterator.empty
-      case s => Iterator.single(s)
-    }
-
-    if (nonTrues.nonEmpty) {
-      UnionSelector(nonTrues)
-    } else {
-      TrueSelector()
-    }
-  }
-}
-
-
-private[gbm] case class TrueSelector() extends ColumSelector {
-
-  override def contains[T, C](treeId: T, colId: C)
-                             (implicit int: Integral[T], inc: Integral[C]): Boolean = true
-
-  override def toString: String = "TrueSelector"
-}
-
-
-private[gbm] case class HashSelector(maximum: Int,
-                                     seeds: Array[Int]) extends ColumSelector {
-  require(maximum >= 0)
-
-  override def contains[T, C](treeId: T, colId: C)
-                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    Murmur3_x86_32.hashLong(inc.toLong(colId), seeds(int.toInt(treeId))).abs < maximum
-  }
-
-  override def toString: String = s"HashSelector(maximum: $maximum, seeds: ${seeds.mkString("[", ",", "]")})"
-}
-
-
-private[gbm] case class SetSelector(sets: Array[Array[Int]]) extends ColumSelector {
-  require(sets.nonEmpty)
-  require(sets.forall(set => set.nonEmpty && Utils.validateOrdering[Int](set)))
-
-  override def contains[T, C](treeId: T, colId: C)
-                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toInt(colId)) >= 0
-  }
-
-  override def toString: String = s"SetSelector(sets: ${sets.mkString("{", ",", "}")})"
-}
-
-
-private[gbm] case class UnionSelector(selectors: Seq[ColumSelector]) extends ColumSelector {
-  override def contains[T, C](treeId: T, colId: C)
-                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    selectors.forall(_.contains[T, C](treeId, colId))
-  }
-
-  override def toString: String = s"UnionSelector(selectors: ${selectors.mkString("[", ",", "]")})"
-}
-
-
-/**
-  * This class helps with persisting and checkpointing RDDs.
-  *
-  * Specifically, this abstraction automatically handles persisting and (optionally) checkpointing,
-  * as well as unpersisting and removing checkpoint files.
-  *
-  * Users should call update() when a new Dataset has been created,
-  * before the Dataset has been materialized.  After updating [[Checkpointer]], users are
-  * responsible for materializing the Dataset to ensure that persisting and checkpointing actually
-  * occur.
-  *
-  * When update() is called, this does the following:
-  *  - Persist new Dataset (if not yet persisted), and put in queue of persisted Datasets.
-  *  - Unpersist Datasets from queue until there are at most 2 persisted Datasets.
-  *  - If using checkpointing and the checkpoint interval has been reached,
-  *     - Checkpoint the new Dataset, and put in a queue of checkpointed Datasets.
-  *     - Remove older checkpoints.
-  *
-  * WARNINGS:
-  *  - This class should NOT be copied (since copies may conflict on which Datasets should be
-  * checkpointed).
-  *  - This class removes checkpoint files once later Datasets have been checkpointed.
-  * However, references to the older Datasets will still return isCheckpointed = true.
-  *
-  * @param sc                 SparkContext for the Datasets given to this checkpointer
-  * @param checkpointInterval Datasets will be checkpointed at this interval.
-  *                           If this interval was set as -1, then checkpointing will be disabled.
-  * @param storageLevel       caching storageLevel
-  * @tparam T Dataset type, such as Double
-  */
-private[gbm] class Checkpointer[T](val sc: SparkContext,
-                                   val checkpointInterval: Int,
-                                   val storageLevel: StorageLevel,
-                                   val maxPersisted: Int) extends Logging {
-  def this(sc: SparkContext, checkpointInterval: Int, storageLevel: StorageLevel) =
-    this(sc, checkpointInterval, storageLevel, 2)
-
-  require(storageLevel != StorageLevel.NONE)
-  require(maxPersisted > 1)
-
-  /** FIFO queue of past checkpointed Datasets */
-  private val checkpointQueue = mutable.Queue.empty[RDD[T]]
-
-  /** FIFO queue of past persisted Datasets */
-  private val persistedQueue = mutable.Queue.empty[RDD[T]]
-
-  /** Number of times [[update()]] has been called */
-  private var updateCount = 0
-
-  /**
-    * Update with a new Dataset. Handle persistence and checkpointing as needed.
-    * Since this handles persistence and checkpointing, this should be called before the Dataset
-    * has been materialized.
-    *
-    * @param data New Dataset created from previous Datasets in the lineage.
-    */
-  def update(data: RDD[T]): Unit = {
-    data.persist(storageLevel)
-    persistedQueue.enqueue(data)
-    while (persistedQueue.length > maxPersisted) {
-      persistedQueue.dequeue.unpersist(false)
-    }
-    updateCount += 1
-
-    // Handle checkpointing (after persisting)
-    if (checkpointInterval != -1 && updateCount % checkpointInterval == 0
-      && sc.getCheckpointDir.nonEmpty) {
-      // Add new checkpoint before removing old checkpoints.
-      data.checkpoint()
-      checkpointQueue.enqueue(data)
-      // Remove checkpoints before the latest one.
-      var canDelete = true
-      while (checkpointQueue.length > 1 && canDelete) {
-        // Delete the oldest checkpoint only if the next checkpoint exists.
-        if (checkpointQueue.head.isCheckpointed) {
-          removeCheckpointFile(checkpointQueue.dequeue)
-        } else {
-          canDelete = false
-        }
-      }
-    }
-  }
-
-  def clear(): Unit = {
-    while (persistedQueue.nonEmpty) {
-      persistedQueue.dequeue.unpersist(false)
-    }
-    persistedQueue.clear()
-
-    while (checkpointQueue.nonEmpty) {
-      removeCheckpointFile(checkpointQueue.dequeue)
-    }
-    checkpointQueue.clear()
-
-    updateCount = 0
-  }
-
-  /**
-    * Dequeue the oldest checkpointed Dataset, and remove its checkpoint files.
-    * This prints a warning but does not fail if the files cannot be removed.
-    */
-  private def removeCheckpointFile(data: RDD[T]): Unit = {
-    // Since the old checkpoint is not deleted by Spark, we manually delete it
-    data.getCheckpointFile.foreach { file =>
-      Future {
-        val start = System.nanoTime
-        val path = new Path(file)
-        val fs = path.getFileSystem(sc.hadoopConfiguration)
-        fs.delete(path, true)
-        (System.nanoTime - start) / 1e9
-
-      }.onComplete {
-        case Success(v) =>
-          logInfo(s"Successfully remove old checkpoint file: $file, duration $v seconds")
-
-        case Failure(t) =>
-          logWarning(s"Fail to remove old checkpoint file: $file, ${t.toString}")
-      }
-    }
-  }
-}
-
-
-private[gbm] class ResourceRecoder extends Logging {
-
-  private val datasetBuff = mutable.ArrayBuffer.empty[Dataset[_]]
-
-  private val rddBuff = mutable.ArrayBuffer.empty[RDD[_]]
-
-  private val bcBuff = mutable.ArrayBuffer.empty[Broadcast[_]]
-
-  def append(dataset: Dataset[_]): Unit = {
-    datasetBuff.append(dataset)
-  }
-
-  def append(rdd: RDD[_]): Unit = {
-    rddBuff.append(rdd)
-  }
-
-  def append(bc: Broadcast[_]): Unit = {
-    bcBuff.append(bc)
-  }
-
-  def clear(): Unit = {
-    datasetBuff.foreach { dataset =>
-      if (dataset.storageLevel != StorageLevel.NONE) {
-        dataset.unpersist(false)
-      }
-    }
-    datasetBuff.clear()
-
-    rddBuff.foreach { rdd =>
-      if (rdd.getStorageLevel != StorageLevel.NONE) {
-        rdd.unpersist(false)
-      }
-    }
-    rddBuff.clear()
-
-    bcBuff.foreach(_.destroy(false))
-    bcBuff.clear()
-  }
-}
+import org.apache.spark.ml.gbm._
+import org.apache.spark.ml.gbm.linalg._
+import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector}
+import org.apache.spark.sql.{DataFrame, SparkSession}
 
 
 private[gbm] object Utils extends Logging {
@@ -318,8 +30,8 @@ private[gbm] object Utils extends Logging {
     * Validate the ordering, and return the same iterator
     */
   def validateOrdering[K](iterator: Iterator[K],
-                          ascending: Boolean,
-                          strictly: Boolean)
+                          ascending: Boolean = true,
+                          strictly: Boolean = true)
                          (implicit ork: Ordering[K]): Iterator[K] = new Iterator[K]() {
     private var k = Option.empty[K]
 
@@ -359,22 +71,11 @@ private[gbm] object Utils extends Logging {
 
 
   /**
-    * Validate the ordering, and return true if ordering is obeyed.
-    */
-  def validateOrdering[K](array: Array[K],
-                          ascending: Boolean = true,
-                          strictly: Boolean = true)
-                         (implicit ork: Ordering[K]): Boolean = {
-    Try(validateOrdering[K](array.iterator, ascending, strictly)(ork).size).isSuccess
-  }
-
-
-  /**
     * Validate the ordering of keys, and return the same iterator
     */
   def validateKeyOrdering[K, V](iterator: Iterator[(K, V)],
-                                ascending: Boolean,
-                                strictly: Boolean)
+                                ascending: Boolean = true,
+                                strictly: Boolean = true)
                                (implicit ork: Ordering[K]): Iterator[(K, V)] = new Iterator[(K, V)]() {
     private var kv = Option.empty[(K, V)]
 
@@ -417,11 +118,21 @@ private[gbm] object Utils extends Logging {
     * Outer join of two Strictly Ascending iterators
     */
   def outerJoinSortedIters[K, V1, V2](iterator1: Iterator[(K, V1)],
-                                      iterator2: Iterator[(K, V2)])
+                                      iterator2: Iterator[(K, V2)],
+                                      validate: Boolean = true)
                                      (implicit ork: Ordering[K]): Iterator[(K, Option[V1], Option[V2])] = new Iterator[(K, Option[V1], Option[V2])]() {
 
-    private val iterator1_ = validateKeyOrdering(iterator1, true, true)(ork)
-    private val iterator2_ = validateKeyOrdering(iterator2, true, true)(ork)
+    private val iterator1_ = if (validate) {
+      validateKeyOrdering(iterator1)(ork)
+    } else {
+      iterator1
+    }
+
+    private val iterator2_ = if (validate) {
+      validateKeyOrdering(iterator2)(ork)
+    } else {
+      iterator2
+    }
 
     private var kv1 = Option.empty[(K, V1)]
     private var kv2 = Option.empty[(K, V2)]
@@ -489,11 +200,21 @@ private[gbm] object Utils extends Logging {
     * Inner join of two Strictly Ascending iterators
     */
   def innerJoinSortedIters[K, V1, V2](iterator1: Iterator[(K, V1)],
-                                      iterator2: Iterator[(K, V2)])
+                                      iterator2: Iterator[(K, V2)],
+                                      validate: Boolean = true)
                                      (implicit ork: Ordering[K]): Iterator[(K, V1, V2)] = new Iterator[(K, V1, V2)]() {
 
-    private val iterator1_ = validateKeyOrdering(iterator1, true, true)(ork)
-    private val iterator2_ = validateKeyOrdering(iterator2, true, true)(ork)
+    private val iterator1_ = if (validate) {
+      validateKeyOrdering(iterator1)(ork)
+    } else {
+      iterator1
+    }
+
+    private val iterator2_ = if (validate) {
+      validateKeyOrdering(iterator2)(ork)
+    } else {
+      iterator2
+    }
 
     private var kv1 = Option.empty[(K, V1)]
     private var kv2 = Option.empty[(K, V2)]
@@ -1015,5 +736,3 @@ private[gbm] object Utils extends Logging {
     }
   }
 }
-
-

@@ -7,6 +7,9 @@ import scala.reflect.ClassTag
 
 import org.apache.spark.{HashPartitioner, Partitioner}
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm.linalg._
+import org.apache.spark.ml.gbm.rdd._
+import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.BoundedPriorityQueue
 
@@ -250,7 +253,7 @@ private[gbm] object HistogramComputer extends Logging {
             histSums.update((treeId, nodeId), (nuh.plus(g, grad), nuh.plus(h, hess)))
 
             // ignore zero-index bins
-            bins.activeIter
+            bins.activeIterator
               .filter { case (colId, _) => baseConf.selector.contains[T, C](treeId, colId) }
               .map { case (colId, bin) => ((treeId, nodeId, colId), (bin, grad, hess)) }
           }
@@ -275,7 +278,7 @@ private[gbm] object HistogramComputer extends Logging {
       var nzGradSum = nuh.zero
       var nzHessSum = nuh.zero
 
-      hist.activeIter.foreach { case (bin, v) =>
+      hist.activeIterator.foreach { case (bin, v) =>
         if (inb.gt(bin, inb.one)) {
           if (inb.equiv(inb.rem(bin, inb.fromInt(2)), inb.zero)) {
             nzGradSum = nuh.plus(nzGradSum, v)
@@ -287,7 +290,7 @@ private[gbm] object HistogramComputer extends Logging {
 
       hist.minus(inb.zero, nzGradSum)
         .minus(inb.one, nzHessSum)
-        .compressed
+        .compress
     }
   }
 
@@ -361,7 +364,7 @@ private[gbm] object HistogramComputer extends Logging {
       .mapPartitions(f = { iter =>
 
         iter.flatMap { case ((treeId, rightNodeId, colId), (parentHist, rightHist)) =>
-          require(rightHist.len <= parentHist.len)
+          require(rightHist.size <= parentHist.size)
           val leftNodeId = inn.minus(rightNodeId, inn.one)
           val leftHist = parentHist.minus(rightHist)
 
@@ -370,7 +373,7 @@ private[gbm] object HistogramComputer extends Logging {
 
         }.filter { case (_, hist) =>
           // leaves with hess less than minNodeHess * 2 can not grow furthermore
-          val hessSum = hist.activeIter.filter { case (b, _) =>
+          val hessSum = hist.activeIterator.filter { case (b, _) =>
             inb.equiv(inb.rem(b, inb.fromInt(2)), inb.one)
           }.map(_._2).sum
 
@@ -426,13 +429,13 @@ private[gbm] object HistogramComputer extends Logging {
           val colIds = queue.iterator.map(_._2).toArray.sorted
           val size = inc.toInt(colIds.last) + 1
           val vec = KVVector.sparse[C, Int](size, colIds, Array.fill(colIds.length)(1))
-          ((treeId, nodeId), vec.compressed)
+          ((treeId, nodeId), vec.compress)
         }
     }.setName("Local Voted TopK")
 
     val globalVoted = localVoted.reduceByKey(_ plus _, parallelism)
       .flatMap { case ((treeId, nodeId), votes) =>
-        votes.activeIter.toArray
+        votes.activeIterator.toArray
           .sortBy(_._2).takeRight(top2K).iterator
           .map { case (colId, _) => ((treeId, nodeId, colId), true) }
       }.setName("Global Voted Top2K")
@@ -552,8 +555,7 @@ private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
   require(numPartitions > 0)
   require(numCols > 0)
   require(treeIds.nonEmpty)
-  require(treeIds.forall(t => int.gteq(t, int.zero)))
-  require(Utils.validateOrdering(treeIds))
+  require(Utils.validateOrdering[T](treeIds.iterator).forall(t => int.gteq(t, int.zero)))
 
   private val hash = numPartitions * (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
 
@@ -609,8 +611,7 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
   require(numCols > 0)
   require(depth > 1)
   require(treeIds.nonEmpty)
-  require(treeIds.forall(t => int.gteq(t, int.zero)))
-  require(Utils.validateOrdering(treeIds))
+  require(Utils.validateOrdering[T](treeIds.iterator).forall(t => int.gteq(t, int.zero)))
 
   private val lowerBound: Int = 1 << depth
 
@@ -680,8 +681,8 @@ private[gbm] class IDRangePratitioner[T, N, C](val numPartitions: Int,
   require(numPartitions > 0)
   require(numCols > 0)
   require(treeNodeIds.nonEmpty)
-  require(treeNodeIds.forall { case (treeId, nodeId) => int.gteq(treeId, int.zero) && inn.gteq(nodeId, inn.zero) })
-  require(Utils.validateOrdering[(T, N)](treeNodeIds)(order))
+  require(Utils.validateOrdering[(T, N)](treeNodeIds.iterator)
+    .forall { case (treeId, nodeId) => int.gteq(treeId, int.zero) && inn.gteq(nodeId, inn.zero) })
 
   private val hash = {
     val treeIds = treeNodeIds.map(_._1)

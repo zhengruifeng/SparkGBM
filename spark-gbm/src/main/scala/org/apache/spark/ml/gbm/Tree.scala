@@ -4,6 +4,9 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm.linalg._
+import org.apache.spark.ml.gbm.rdd._
+import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
 
 private[gbm] object Tree extends Serializable with Logging {
@@ -280,7 +283,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
         iter.foreach { case ((treeId, nodeId, colId), hist) =>
           metrics(0) += 1
-          metrics(3) += hist.len
+          metrics(3) += hist.size
           metrics(4) += hist.nnz
           if (hist.isDense) {
             metrics(2) += 1

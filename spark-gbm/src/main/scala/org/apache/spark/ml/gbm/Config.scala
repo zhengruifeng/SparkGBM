@@ -1,9 +1,14 @@
 package org.apache.spark.ml.gbm
 
+import java.{util => ju}
+
 import scala.collection.BitSet
+import scala.util.Random
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm.util.Utils
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.unsafe.hash.Murmur3_x86_32
 
 
 class BoostConfig extends Logging with Serializable {
@@ -696,3 +701,119 @@ private[gbm] object BaseConfig extends Serializable {
   }
 }
 
+
+
+/**
+  * Indicator that indicate where a tree contains a column in column-sampling (ByTree or/and ByLevel)
+  */
+private[gbm] trait ColumSelector extends Serializable {
+
+  def contains[T, C](treeId: T, colId: C)
+                    (implicit int: Integral[T], inc: Integral[C]): Boolean
+}
+
+
+private[gbm] object ColumSelector extends Serializable {
+
+  /**
+    * Initialize a new selector based on given parameters.
+    * Note: Trees in a same base model should share the same selector.
+    */
+  def create(colSampleRate: Double,
+             numCols: Int,
+             numBaseModels: Int,
+             rawSize: Int,
+             seed: Long): ColumSelector = {
+
+    if (colSampleRate == 1) {
+      TrueSelector()
+
+    } else if (numCols * colSampleRate > 32) {
+      val rng = new Random(seed)
+      val maximum = (Int.MaxValue * colSampleRate).ceil.toInt
+
+      val seeds = Array.range(0, numBaseModels).flatMap { i =>
+        val s = rng.nextInt
+        Iterator.fill(rawSize)(s)
+      }
+
+      HashSelector(maximum, seeds)
+
+    } else {
+      // When size of selected columns is small, it is hard for hashing to perform robust sampling,
+      // we then switch to `SetSelector` for exactly sampling.
+      val rng = new Random(seed)
+      val numSelected = (numCols * colSampleRate).ceil.toInt
+
+      val sets = Array.range(0, numBaseModels).flatMap { i =>
+        val selected = rng.shuffle(Seq.range(0, numCols)).take(numSelected).toArray.sorted
+        Iterator.fill(rawSize)(selected)
+      }
+
+      SetSelector(sets)
+    }
+  }
+
+  /**
+    * Merge several selectors into one, will skip redundant `TrueSelector`.
+    */
+  def union(selectors: ColumSelector*): ColumSelector = {
+    require(selectors.nonEmpty)
+
+    val nonTrues = selectors.flatMap {
+      case s: TrueSelector => Iterator.empty
+      case s => Iterator.single(s)
+    }
+
+    if (nonTrues.nonEmpty) {
+      UnionSelector(nonTrues)
+    } else {
+      TrueSelector()
+    }
+  }
+}
+
+
+private[gbm] case class TrueSelector() extends ColumSelector {
+
+  override def contains[T, C](treeId: T, colId: C)
+                             (implicit int: Integral[T], inc: Integral[C]): Boolean = true
+
+  override def toString: String = "TrueSelector"
+}
+
+
+private[gbm] case class HashSelector(maximum: Int,
+                                     seeds: Array[Int]) extends ColumSelector {
+  require(maximum >= 0)
+
+  override def contains[T, C](treeId: T, colId: C)
+                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
+    Murmur3_x86_32.hashLong(inc.toLong(colId), seeds(int.toInt(treeId))).abs < maximum
+  }
+
+  override def toString: String = s"HashSelector(maximum: $maximum, seeds: ${seeds.mkString("[", ",", "]")})"
+}
+
+
+private[gbm] case class SetSelector(sets: Array[Array[Int]]) extends ColumSelector {
+  require(sets.nonEmpty)
+  require(sets.forall(set => Utils.validateOrdering[Int](set.iterator).size > 0))
+
+  override def contains[T, C](treeId: T, colId: C)
+                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
+    ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toInt(colId)) >= 0
+  }
+
+  override def toString: String = s"SetSelector(sets: ${sets.mkString("{", ",", "}")})"
+}
+
+
+private[gbm] case class UnionSelector(selectors: Seq[ColumSelector]) extends ColumSelector {
+  override def contains[T, C](treeId: T, colId: C)
+                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
+    selectors.forall(_.contains[T, C](treeId, colId))
+  }
+
+  override def toString: String = s"UnionSelector(selectors: ${selectors.mkString("[", ",", "]")})"
+}

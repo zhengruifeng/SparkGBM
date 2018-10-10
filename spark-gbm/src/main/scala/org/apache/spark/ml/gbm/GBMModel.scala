@@ -4,8 +4,9 @@ import java.io._
 
 import scala.collection.mutable
 
-import org.apache.spark.ml.linalg.{Vector, Vectors}
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.ml.linalg._
+import org.apache.spark.ml.gbm.util.Utils
+import org.apache.spark.sql._
 
 /**
   * Model of GBM

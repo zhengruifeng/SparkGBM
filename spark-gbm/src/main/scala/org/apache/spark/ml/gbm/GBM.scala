@@ -6,6 +6,8 @@ import scala.{specialized => spec}
 import scala.util.Random
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm.linalg._
+import org.apache.spark.ml.gbm.util._
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._

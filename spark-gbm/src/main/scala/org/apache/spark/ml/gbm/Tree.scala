@@ -274,25 +274,28 @@ private[gbm] object Tree extends Serializable with Logging {
       sampled.extendPartitions(parallelism)
     }
 
-    val (splits, Array(numTrials, numSplits, numDenses, sum, nnz)) =
+    val (splits, Array(numTrials, numSplits, numDenses, sumSize, nnz)) =
       repartitioned.mapPartitionsWithIndex { case (partId, iter) =>
         val splits = mutable.OpenHashMap.empty[(T, N), Split]
 
-        // numTrials, numSplits, numDenseHist, sumHistLen, nnz
-        val metrics = Array.ofDim[Double](5)
+        var numTrials = 0L
+        var numSplits = 0L
+        var numDenses = 0L
+        var sumSize = 0L
+        var nnz = 0L
 
         iter.foreach { case ((treeId, nodeId, colId), hist) =>
-          metrics(0) += 1
-          metrics(3) += hist.size
-          metrics(4) += hist.nnz
+          numTrials += 1
+          sumSize += hist.size
+          nnz += hist.nnz
           if (hist.isDense) {
-            metrics(2) += 1
+            numDenses += 1
           }
 
           val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
 
           if (split.nonEmpty) {
-            metrics(1) += 1
+            numSplits += 1
             val prevSplit = splits.get((treeId, nodeId))
             if (prevSplit.isEmpty || prevSplit.get.gain < split.get.gain) {
               splits.update((treeId, nodeId), split.get)
@@ -300,15 +303,18 @@ private[gbm] object Tree extends Serializable with Logging {
           }
         }
 
-        if (partId == 0 || metrics.head > 0) {
-          val splits2 = splits.toArray
-            .groupBy(_._1._1).iterator
+        if (numTrials > 0) {
+          val filtered = splits.toArray.groupBy(_._1._1).iterator
             .flatMap { case (treeId, array) =>
               val rem = bcRemainingLeaves.value(int.toInt(treeId))
               array.sortBy(_._2.gain).takeRight(rem)
             }.toArray
 
-          Iterator.single((splits2, metrics))
+          Iterator.single((filtered, Array(numTrials, numSplits, numDenses, sumSize, nnz)))
+
+        } else if (partId == 0) {
+          // avoid `treeReduce` on empty RDD
+          Iterator.single(Array.empty[((T, N), Split)], Array.ofDim[Long](5))
 
         } else {
           Iterator.empty
@@ -329,8 +335,8 @@ private[gbm] object Tree extends Serializable with Logging {
 
 
     logInfo(s"Depth $depth: $numTrials trials -> $numSplits splits -> ${splits.length} best splits")
-    logInfo(s"Depth $depth: Fraction of sparse histograms: ${1 - numDenses / numTrials}, " +
-      s"sparsity of histogram: ${1 - nnz / sum}")
+    logInfo(s"Depth $depth: Fraction of sparse histograms: ${1 - numDenses.toDouble / numTrials}, " +
+      s"sparsity of histogram: ${1 - nnz.toDouble / sumSize}")
 
     bcRemainingLeaves.destroy(false)
 

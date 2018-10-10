@@ -1050,7 +1050,7 @@ private[gbm] object GBM extends Logging {
     val start = System.nanoTime
     logInfo(s"Iteration $iteration: start to compute the threshold of top gradients")
 
-    val summary = gradBlocks.mapPartitions { iter =>
+    val summary = gradBlocks.mapPartitionsWithIndex { case (partId, iter) =>
       var s = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold,
         QuantileSummaries.defaultRelativeError)
 
@@ -1059,6 +1059,9 @@ private[gbm] object GBM extends Logging {
       s = s.compress
 
       if (s.count > 0) {
+        Iterator.single(s)
+      } else if (partId == 0) {
+        // avoid `treeReduce` on empty RDD
         Iterator.single(s)
       } else {
         Iterator.empty

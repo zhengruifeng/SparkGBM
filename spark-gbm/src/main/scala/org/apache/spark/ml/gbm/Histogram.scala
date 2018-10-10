@@ -272,7 +272,7 @@ private[gbm] object HistogramComputer extends Logging {
           val indexHess = inb.plus(indexGrad, inb.one)
           hist.plus(indexHess, hess)
             .plus(indexGrad, grad)
-      }, combOp = _ plus _
+      }, combOp = _ plus _ compress
 
     ).mapValues { hist =>
       var nzGradSum = nuh.zero
@@ -314,7 +314,7 @@ private[gbm] object HistogramComputer extends Logging {
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     computeLocalHistograms[T, N, C, B, H](data, boostConf, baseConf, f)
-      .reduceByKey(partitioner, _ plus _)
+      .reduceByKey(partitioner, _ plus _ compress)
   }
 
 
@@ -368,8 +368,8 @@ private[gbm] object HistogramComputer extends Logging {
           val leftNodeId = inn.minus(rightNodeId, inn.one)
           val leftHist = parentHist.minus(rightHist)
 
-          ((treeId, leftNodeId, colId), leftHist) ::
-            ((treeId, rightNodeId, colId), rightHist) :: Nil
+          ((treeId, leftNodeId, colId), leftHist.compress) ::
+            ((treeId, rightNodeId, colId), rightHist.compress) :: Nil
 
         }.filter { case (_, hist) =>
           // leaves with hess less than minNodeHess * 2 can not grow furthermore
@@ -435,12 +435,11 @@ private[gbm] object HistogramComputer extends Logging {
     }.setName("Local Voted TopK")
 
 
-    val globalVoted = localVoted.reduceByKey(_ plus _, parallelism)
+    val globalVoted = localVoted.reduceByKey(_ plus _ compress, parallelism)
       .mapValues { votes =>
         votes.activeIterator.toArray.sortBy(_._2)
           .takeRight(top2K).map(_._1).sorted
       }.setName("Global Voted Top2K")
-
 
 
     // RDD 'globalVoted' is usually much smaller than 'localHistograms'.
@@ -450,7 +449,7 @@ private[gbm] object HistogramComputer extends Logging {
     if (expectedSize < (1 << 16)) {
       val collected = globalVoted.collect().sortBy(_._1)
 
-      val exactSize = collected.length
+      val exactSize = collected.iterator.map(_._2.length).sum
       logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize, delta: ${delta.head}")
       delta(0) *= exactSize / expectedSize
 
@@ -461,7 +460,7 @@ private[gbm] object HistogramComputer extends Logging {
       val bcIds = sc.broadcast((treeIds, nodeIds, colIds))
       recoder.append(bcIds)
 
-      localHistograms.mapPartitions { iter =>
+      localHistograms.mapPartitions { localIter =>
         val (treeIds, nodeIds, colIds) = bcIds.value
 
         val flattenIter = treeIds.iterator
@@ -471,9 +470,9 @@ private[gbm] object HistogramComputer extends Logging {
             colIds.map { colId => ((treeId, nodeId, colId), null) }
           }
 
-        Utils.innerJoinSortedIters(iter, flattenIter)
+        Utils.innerJoinSortedIters(localIter, flattenIter)
           .map { case (ids, hist, _) => (ids, hist) }
-      }.reduceByKey(partitioner, _ plus _)
+      }.reduceByKey(partitioner, _ plus _ compress)
 
     } else {
 
@@ -499,7 +498,7 @@ private[gbm] object HistogramComputer extends Logging {
 
           Utils.innerJoinSortedIters(localIter, flattenIter)
             .map { case (ids, hist, _) => (ids, hist) }
-      }).reduceByKey(partitioner, _ plus _)
+      }).reduceByKey(partitioner, _ plus _ compress)
     }
   }
 

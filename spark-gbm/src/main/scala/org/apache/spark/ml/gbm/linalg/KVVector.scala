@@ -1,6 +1,5 @@
 package org.apache.spark.ml.gbm.linalg
 
-import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
@@ -13,6 +12,7 @@ import org.apache.spark.ml.gbm.util.Utils
   * @tparam V Value Type
   */
 private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V] extends Serializable {
+
 
   def size: Int
 
@@ -37,6 +37,7 @@ private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, L
   def slice(sortedIndices: Array[Int])
            (implicit ck: ClassTag[K], ink: Integral[K],
             cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
+
 
   def toArray()
              (implicit ink: Integral[K],
@@ -77,15 +78,23 @@ private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, L
              (implicit ink: Integral[K],
               cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
 
+
   def toSparse()
               (implicit ck: ClassTag[K], ink: Integral[K],
                cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V]
 
+
   def isDense: Boolean
+
 
   def isSparse: Boolean = !isDense
 
+
   def isEmpty: Boolean = size == 0
+
+
+  def nonEmpty: Boolean = !isEmpty
+
 
   /**
     * Compress a vector to alleviate memory footprint.
@@ -116,9 +125,8 @@ private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, L
     */
   def minus(index: K, value: V)
            (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
-            cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
+            cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] =
     plus(index, nuv.negate(value))
-  }
 
 
   /**
@@ -130,35 +138,47 @@ private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, L
            cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
     import nuv._
 
-    (this.isDense, other.isDense) match {
-      case (true, true) =>
-        val Seq(arr1, arr2) = Seq(toArray, other.toArray).sortBy(_.length)
-        Iterator.range(0, arr1.length).foreach(i => arr2(i) += arr1(i))
-        KVVector.dense[K, V](arr2).compress
+    if (this.isEmpty) {
+      other
 
-      case (true, false) =>
-        val arr = if (size >= other.size) {
-          toArray
-        } else {
-          toArray ++ Array.ofDim[V](other.size - size)
-        }
-        other.activeIterator.foreach { case (k, v) => arr(ink.toInt(k)) += v }
-        KVVector.dense[K, V](arr).compress
+    } else if (other.isEmpty) {
+      this
 
-      case (false, true) =>
-        other.plus(this)
+    } else {
 
-      case (false, false) =>
-        val map = mutable.OpenHashMap.empty[K, V]
-        activeIterator.foreach { case (k, v) => map.update(k, v) }
-        other.activeIterator.foreach { case (k, v) =>
-          val v2 = map.getOrElse(k, zero)
-          map.update(k, v + v2)
-        }
+      (this, other) match {
+        case (dv1: DenseKVVector[K, V], dv2: DenseKVVector[K, V]) =>
+          if (dv1.size >= dv2.size) {
+            dv2.activeIterator.foreach { case (k, v) => dv1.values(ink.toInt(k)) += v }
+            dv1
+          } else {
+            dv1.activeIterator.foreach { case (k, v) => dv2.values(ink.toInt(k)) += v }
+            dv2
+          }
 
-        val (indices, values) = map.toArray.sortBy(_._1).unzip
-        val newSize = math.max(size, other.size)
-        KVVector.sparse[K, V](newSize, indices, values).compress
+
+        case (dv: DenseKVVector[K, V], sv: SparseKVVector[K, V]) =>
+          // update vector size if needed
+          var vec = dv.plus(ink.fromInt(sv.size - 1), zero)
+          sv.activeIterator.foreach { case (k, v) => vec = vec.plus(k, v) }
+          vec
+
+
+        case (sv: SparseKVVector[K, V], dv: DenseKVVector[K, V]) =>
+          // update vector size if needed
+          var vec = dv.plus(ink.fromInt(sv.size - 1), zero)
+          sv.activeIterator.foreach { case (k, v) => vec = vec.plus(k, v) }
+          vec
+
+
+        case (sv1: SparseKVVector[K, V], sv2: SparseKVVector[K, V]) =>
+          val (indices, values) =
+            Utils.outerJoinSortedIters(sv1.activeIterator, sv2.activeIterator, false)
+              .map { case (k, v1, v2) => (k, v1.getOrElse(zero) + v2.getOrElse(zero)) }
+              .filter(_._2 != zero).toArray.unzip
+          val newSize = math.max(size, other.size)
+          KVVector.sparse[K, V](newSize, indices, values)
+      }
     }
   }
 
@@ -169,9 +189,8 @@ private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, L
     */
   def minus(other: KVVector[K, V])
            (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
-            cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
+            cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] =
     plus(other.negate)
-  }
 }
 
 
@@ -439,13 +458,8 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
       this
 
     } else {
-      val indexBuilder = mutable.ArrayBuilder.make[K]
-      val valueBuilder = mutable.ArrayBuilder.make[V]
-      activeIterator.foreach { case (i, v) =>
-        indexBuilder += i
-        valueBuilder += v
-      }
-      KVVector.sparse[K, V](size, indexBuilder.result(), valueBuilder.result())
+      val (newIndices, newValues) = activeIterator.toArray.unzip
+      KVVector.sparse[K, V](size, newIndices, newValues)
     }
   }
 

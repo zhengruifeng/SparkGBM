@@ -299,7 +299,7 @@ class ErrorEval(val threshold: Double) extends SimpleEvalFunc {
 
 
 /**
-  * Area under curve
+  * Area under ROC curve
   *
   * @param numBins number of bins for approximate computation
   */

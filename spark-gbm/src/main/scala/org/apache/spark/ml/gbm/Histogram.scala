@@ -129,8 +129,8 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
       val collected = histograms.collect()
 
       val exactSize = collected.length
+      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize, delta: $delta")
       delta *= exactSize / expectedSize
-      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize")
 
       val smallHistograms = sc.parallelize(collected, numPartitions)
         .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
@@ -408,6 +408,7 @@ private[gbm] object HistogramComputer extends Logging {
     val parallelism = partitioner.numPartitions
     val topK = boostConf.getTopK
     val top2K = topK << 1
+    val expectedSize = (baseConf.numTrees << depth) * top2K * delta.head
 
     val newBaseConf = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
 
@@ -433,67 +434,72 @@ private[gbm] object HistogramComputer extends Logging {
         }
     }.setName("Local Voted TopK")
 
+
     val globalVoted = localVoted.reduceByKey(_ plus _, parallelism)
-      .flatMap { case ((treeId, nodeId), votes) =>
-        votes.activeIterator.toArray
-          .sortBy(_._2).takeRight(top2K).iterator
-          .map { case (colId, _) => ((treeId, nodeId, colId), true) }
+      .mapValues { votes =>
+        votes.activeIterator.toArray.sortBy(_._2)
+          .takeRight(top2K).map(_._1).sorted
       }.setName("Global Voted Top2K")
 
 
-    val expectedSize = (newBaseConf.numTrees << depth) * top2K * delta.head
 
-
-    // the following lines functionally equals to :
-    //  localHistograms.join(globalVoted, partitioner)
-    //    .mapValues(_._1)
-    //    .reduceByKey(partitioner, _ plus _)
-    // we apply `broadcast` and `zipPartitions` to avoid join shuffle of 'localHistograms'
+    // RDD 'globalVoted' is usually much smaller than 'localHistograms'.
+    // Instead of `join`, here we adopt `broadcast` or `zipPartitions`
+    // to avoid join shuffle of 'localHistograms'.
 
     if (expectedSize < (1 << 16)) {
+      val collected = globalVoted.collect().sortBy(_._1)
 
-      val array = globalVoted.map(_._1).collect().sorted
-      val treeIds = CompactArray.build[T](array.iterator.map(_._1))
-      val nodeIds = CompactArray.build[N](array.iterator.map(_._2))
-      val colIds = array.map(_._3)
-
-      val exactSize = array.length
+      val exactSize = collected.length
+      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize, delta: ${delta.head}")
       delta(0) *= exactSize / expectedSize
-      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize")
+
+      val treeIds = CompactArray.build[T](collected.iterator.map(_._1._1))
+      val nodeIds = collected.map(_._1._2)
+      val colIds = ArrayBlock.build[C](collected.iterator.map(_._2))
 
       val bcIds = sc.broadcast((treeIds, nodeIds, colIds))
       recoder.append(bcIds)
 
       localHistograms.mapPartitions { iter =>
         val (treeIds, nodeIds, colIds) = bcIds.value
-        val topIter = treeIds.iterator
+
+        val flattenIter = treeIds.iterator
           .zip(nodeIds.iterator)
           .zip(colIds.iterator)
-          .map { case ((treeId, nodeId), colId) => ((treeId, nodeId, colId), true) }
+          .flatMap { case ((treeId, nodeId), colIds) =>
+            colIds.map { colId => ((treeId, nodeId, colId), null) }
+          }
 
-        Utils.innerJoinSortedIters(iter, topIter)
-          .map { case ((treeId, nodeId, colId), hist, _) => ((treeId, nodeId, colId), hist) }
+        Utils.innerJoinSortedIters(iter, flattenIter)
+          .map { case (ids, hist, _) => (ids, hist) }
       }.reduceByKey(partitioner, _ plus _)
 
     } else {
 
-      import RDDFunctions._
+      val numParts = localHistograms.getNumPartitions
 
-      val voted2 = globalVoted.repartitionAndSortWithinPartitions(new HashPartitioner(1))
-        .setName("Global Top2K (Single Sorted Partition)")
-      require(voted2.getNumPartitions == 1)
-      voted2.persist(boostConf.getStorageLevel)
-      recoder.append(voted2)
+      val duplicatedGlobalVoted = globalVoted.flatMap { case ((treeId, nodeId), colIds) =>
+        Iterator.range(0, numParts).map { partId => ((partId, treeId, nodeId), colIds) }
 
-      val numPartitions = localHistograms.getNumPartitions
-      val voted3 = voted2.reorgPartitions(Array.ofDim[Int](numPartitions))
-        .setName("Global Top2K (Duplicated Sorted Partitions)")
-      require(voted3.getNumPartitions == numPartitions)
+      }.repartitionAndSortWithinPartitions(new Partitioner {
+        override def numPartitions: Int = numParts
 
-      localHistograms.zipPartitions(voted3)(f = {
-        case (iter1, iter2) => Utils.innerJoinSortedIters(iter1, iter2)
-      }).map(t => (t._1, t._2))
-        .reduceByKey(partitioner, _ plus _)
+        override def getPartition(key: Any): Int = key match {
+          case (partId: Int, _: T, _: N) => partId
+        }
+      }).setName("Global Voted Top2K (Duplicated) (Sorted)")
+
+
+      localHistograms.zipPartitions(duplicatedGlobalVoted)(f = {
+        case (localIter, globalIter) =>
+          val flattenIter = globalIter.flatMap { case ((_, treeId, nodeId), colIds) =>
+            colIds.iterator.map { colId => ((treeId, nodeId, colId), null) }
+          }
+
+          Utils.innerJoinSortedIters(localIter, flattenIter)
+            .map { case (ids, hist, _) => (ids, hist) }
+      }).reduceByKey(partitioner, _ plus _)
     }
   }
 
@@ -564,7 +570,6 @@ private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
   private val colInterval = treeInterval / numCols
 
   override def getPartition(key: Any): Int = key match {
-    case null => 0
 
     case (treeId: T, _: N, colId: C) =>
       val i = net.search(treeIds, treeId)
@@ -626,7 +631,6 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
   private val colInterval = nodeInterval / numCols
 
   override def getPartition(key: Any): Int = key match {
-    case null => 0
 
     case (treeId: T, nodeId: N, colId: C) =>
       val i = net.search(treeIds, treeId)
@@ -696,7 +700,6 @@ private[gbm] class IDRangePratitioner[T, N, C](val numPartitions: Int,
   private val colInterval = nodeInterval / numCols
 
   override def getPartition(key: Any): Int = key match {
-    case null => 0
 
     case (treeId: T, nodeId: N, colId: C) =>
       val i = ju.Arrays.binarySearch(treeNodeIds, (treeId, nodeId), order.asInstanceOf[ju.Comparator[(T, N)]])

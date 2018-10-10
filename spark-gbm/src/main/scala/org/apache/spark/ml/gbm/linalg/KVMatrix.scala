@@ -104,8 +104,8 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
 
 private[gbm] object KVMatrix extends Serializable {
 
-  def build[K, V](iterator: Iterator[KVVector[K, V]])
-                 (implicit ck: ClassTag[K], cv: ClassTag[V]): KVMatrix[K, V] = {
+  def build[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](iterator: Iterator[KVVector[K, V]])
+                                                                 (implicit ck: ClassTag[K], cv: ClassTag[V]): KVMatrix[K, V] = {
     val indexBuilder = mutable.ArrayBuilder.make[K]
     val valueBuilder = mutable.ArrayBuilder.make[V]
     val stepBuilder = mutable.ArrayBuilder.make[Int]

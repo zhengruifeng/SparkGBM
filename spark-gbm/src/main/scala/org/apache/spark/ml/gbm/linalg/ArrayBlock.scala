@@ -74,13 +74,13 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
 
 object ArrayBlock extends Serializable {
 
-  def empty[V]()
-              (implicit cv: ClassTag[V], nev: NumericExt[V]): ArrayBlock[V] = {
+  def empty[@spec(Byte, Short, Int, Long, Float, Double) V]()
+                                                           (implicit cv: ClassTag[V], nev: NumericExt[V]): ArrayBlock[V] = {
     new ArrayBlock[V](nev.emptyArray, Array.emptyIntArray, 0)
   }
 
-  def build[V](iterator: Iterator[Array[V]])
-              (implicit cv: ClassTag[V]): ArrayBlock[V] = {
+  def build[@spec(Byte, Short, Int, Long, Float, Double) V](iterator: Iterator[Array[V]])
+                                                           (implicit cv: ClassTag[V]): ArrayBlock[V] = {
     val valueBuilder = mutable.ArrayBuilder.make[V]
     val stepBuilder = mutable.ArrayBuilder.make[Int]
 
@@ -99,8 +99,8 @@ object ArrayBlock extends Serializable {
     }
   }
 
-  def fill[V](array: Array[V], n: Int)
-             (implicit cv: ClassTag[V]): ArrayBlock[V] = {
+  def fill[@spec(Byte, Short, Int, Long, Float, Double) V](array: Array[V], n: Int)
+                                                          (implicit cv: ClassTag[V]): ArrayBlock[V] = {
     val iter = Iterator.range(0, n).map(_ => array)
     build[V](iter)
   }

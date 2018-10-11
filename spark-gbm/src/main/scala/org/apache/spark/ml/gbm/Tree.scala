@@ -9,6 +9,7 @@ import org.apache.spark.ml.gbm.rdd._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
 
+
 private[gbm] object Tree extends Serializable with Logging {
 
   val Basic = "basic"
@@ -338,8 +339,8 @@ private[gbm] object Tree extends Serializable with Logging {
       }, boostConf.getAggregationDepth)
 
 
-    logInfo(s"Depth $depth: $numTrials trials -> $numSplits splits -> ${splits.length} best splits")
-    logInfo(s"Depth $depth: Fraction of sparse histograms: ${1 - numDenses.toDouble / numTrials}, " +
+    logInfo(s"Depth $depth: $numTrials trials -> $numSplits splits -> ${splits.length} best splits, " +
+      s"fraction of sparse histograms: ${1 - numDenses.toDouble / numTrials}, " +
       s"sparsity of histogram: ${1 - nnz.toDouble / sumSize}")
 
     bcRemainingLeaves.destroy(false)

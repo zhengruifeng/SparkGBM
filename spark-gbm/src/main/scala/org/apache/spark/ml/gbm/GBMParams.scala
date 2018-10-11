@@ -83,7 +83,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val minGain: DoubleParam =
-    new DoubleParam(this, "minGain", "Minimum gain required to make a further partition on a leaf node of the tree.",
+    new DoubleParam(this, "minGain", "Minimum gain required to make a further partition " +
+      "on a leaf node of the tree.",
       ParamValidators.gtEq(0.0))
 
   def getMinGain: Double = $(minGain)
@@ -128,7 +129,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val regAlpha: DoubleParam =
-    new DoubleParam(this, "regAlpha", "L1 regularization term on weights, increase this value will make model more conservative.",
+    new DoubleParam(this, "regAlpha", "L1 regularization term on weights, increase this " +
+      "value will make model more conservative.",
       ParamValidators.gtEq(0.0))
 
   def getRegAlpha: Double = $(regAlpha)
@@ -143,7 +145,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val regLambda: DoubleParam =
-    new DoubleParam(this, "regLambda", "L2 regularization term on weights, increase this value will make model more conservative.",
+    new DoubleParam(this, "regLambda", "L2 regularization term on weights, increase this " +
+      "value will make model more conservative.",
       ParamValidators.gtEq(0.0))
 
   def getRegLambda: Double = $(regLambda)
@@ -201,7 +204,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val colSampleRateByTree: DoubleParam =
-    new DoubleParam(this, "colSampleRateByTree", "Subsample ratio of columns when constructing each tree.",
+    new DoubleParam(this, "colSampleRateByTree", "Subsample ratio of columns " +
+      "when constructing each tree.",
       ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
 
   def getColSampleRateByTree: Double = $(colSampleRateByTree)
@@ -216,7 +220,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val colSampleRateByLevel: DoubleParam =
-    new DoubleParam(this, "colSampleRateByLevel", "Subsample ratio of columns when constructing each tree.",
+    new DoubleParam(this, "colSampleRateByLevel", "Subsample ratio of columns when " +
+      "constructing each tree.",
       ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
 
   def getColSampleRateByLevel: Double = $(colSampleRateByLevel)
@@ -352,7 +357,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val initialModelPath: Param[String] =
-    new Param[String](this, "initialModelPath", "Path of initial model, set empty string to disable initial model.")
+    new Param[String](this, "initialModelPath", "Path of initial model, set empty " +
+      "string to disable initial model.")
 
   def getInitialModelPath: String = $(initialModelPath)
 
@@ -366,7 +372,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val enableOneHot: BooleanParam =
-    new BooleanParam(this, "enableOneHot", "Whether to encode the leaf indices in one-hot format.")
+    new BooleanParam(this, "enableOneHot", "Whether to encode the leaf indices " +
+      "in one-hot format.")
 
   def getEnableOneHot: Boolean = $(enableOneHot)
 
@@ -374,13 +381,15 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * The number of first trees for prediction, leaf transformation, feature importance computation. Use all trees if set -1.
+    * The number of first trees for prediction, leaf transformation, feature importance computation.
+    * Use all trees if set -1.
     * (default = -1)
     *
     * @group param
     */
   final val firstTrees: IntParam =
-    new IntParam(this, "firstTrees", "The number of first trees for prediction, leaf transformation, feature importance computation. Use all trees if set -1.",
+    new IntParam(this, "firstTrees", "The number of first trees for prediction, " +
+      "leaf transformation, feature importance computation. Use all trees if set -1.",
       ParamValidators.gtEq(-1))
 
   def getFirstTrees: Int = $(firstTrees)
@@ -394,7 +403,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val maxBruteBins: IntParam = new IntParam(this, "maxBruteBins", "The maximum number of non-zero histogram bins to search split for categorical columns by brute force.",
+  final val maxBruteBins: IntParam = new IntParam(this, "maxBruteBins", "The maximum number " +
+    "of non-zero histogram bins to search split for categorical columns by brute force.",
     ParamValidators.gtEq(0))
 
   def getMaxBruteBins: Int = $(maxBruteBins)
@@ -403,12 +413,14 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Number of iterations to stop training if one metric on validation data doesn't improve, set -1 to disable early stopping.
+    * Number of iterations to stop training if one metric on validation data doesn't improve.
+    * Set -1 to disable early stopping.
     * (default = 10)
     *
     * @group param
     */
-  final val earlyStopIters: IntParam = new IntParam(this, "earlyStopIters", "Number of iterations to stop training if one metric on validation data doesn't improve, set -1 to disable early stopping.",
+  final val earlyStopIters: IntParam = new IntParam(this, "earlyStopIters", "Number of " +
+    "iterations to stop training if one metric on validation data doesn't improve, set -1 to disable early stopping.",
     (value: Int) => value == -1 || value >= 1)
 
   def getEarlyStopIters: Int = $(earlyStopIters)
@@ -423,7 +435,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val modelCheckpointPath: Param[String] =
-    new Param[String](this, "modelCheckpointPath", "Path for model checkpoint, set empty string to disable checkpoint.")
+    new Param[String](this, "modelCheckpointPath", "Path for model checkpoint, set empty " +
+      "string to disable checkpoint.")
 
   def getModelCheckpointPath: String = $(modelCheckpointPath)
 
@@ -437,7 +450,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val modelCheckpointInterval: IntParam =
-    new IntParam(this, "modelCheckpointInterval", "Model checkpoint interval, set -1 to disable checkpoint.",
+    new IntParam(this, "modelCheckpointInterval", "Model checkpoint interval, set -1 " +
+      "to disable checkpoint.",
       (value: Int) => value == -1 || value >= 1)
 
   def getModelCheckpointInterval: Int = $(modelCheckpointInterval)
@@ -446,13 +460,15 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Method to discretize numerical columns, set "width" for interval-equal discretization, "depth" for quantile based discretization.
+    * Method to discretize numerical columns, set "width" for interval-equal discretization, "depth" for
+    * quantile based discretization.
     * (default = "width")
     *
     * @group param
     */
   final val numericalBinType: Param[String] =
-    new Param[String](this, "numericalBinType", "Method to discretize numerical columns, set width for interval-equal discretization, depth for quantile based discretization.",
+    new Param[String](this, "numericalBinType", "Method to discretize numerical columns, " +
+      "set width for interval-equal discretization, depth for quantile based discretization.",
       ParamValidators.inArray[String](Array("width", "depth")))
 
   def getNumericalBinType: String = $(numericalBinType)
@@ -467,7 +483,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val floatType: Param[String] =
-    new Param[String](this, "floatType", "Float precision to represent internal gradient, hessian and prediction.",
+    new Param[String](this, "floatType", "Float precision to represent internal " +
+      "gradient, hessian and prediction.",
       ParamValidators.inArray[String](Array("float", "double")))
 
   def getFloatType: String = $(floatType)
@@ -496,7 +513,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val reduceParallelism: DoubleParam =
-    new DoubleParam(this, "reduceParallelism", "Parallelism of histogram computation. If negative, means times of defaultParallelism of Spark.",
+    new DoubleParam(this, "reduceParallelism", "Parallelism of histogram computation. " +
+      "If negative, means times of defaultParallelism of Spark.",
       (value: Double) => value != 0 && !value.isNaN && !value.isInfinity)
 
   def getReduceParallelism: Double = $(reduceParallelism)
@@ -511,7 +529,8 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * @group param
     */
   final val trialParallelism: DoubleParam =
-    new DoubleParam(this, "trialParallelism", "Parallelism of split searching. If negative, means times of defaultParallelism of Spark.",
+    new DoubleParam(this, "trialParallelism", "Parallelism of split searching. " +
+      "If negative, means times of defaultParallelism of Spark.",
       (value: Double) => value != 0 && !value.isNaN && !value.isInfinity)
 
   def getTrialParallelism: Double = $(trialParallelism)

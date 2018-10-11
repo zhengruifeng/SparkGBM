@@ -46,7 +46,7 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
         override def hasNext: Boolean = i < steps.length
 
         override def next(): Array[V] = {
-          builder.clear()
+          builder.clear
 
           val step = steps(i)
 
@@ -58,7 +58,7 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
 
           i += 1
           offset += step
-          builder.result()
+          builder.result
         }
       }
 
@@ -89,8 +89,8 @@ object ArrayBlock extends Serializable {
       stepBuilder += array.length
     }
 
-    val values = valueBuilder.result()
-    val steps = stepBuilder.result()
+    val values = valueBuilder.result
+    val steps = stepBuilder.result
 
     if (steps.distinct.length == 1 && steps.head > 0) {
       new ArrayBlock[V](values, Array.emptyIntArray, steps.head)

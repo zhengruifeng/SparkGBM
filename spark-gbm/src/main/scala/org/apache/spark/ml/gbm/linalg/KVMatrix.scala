@@ -7,6 +7,14 @@ import scala.{specialized => spec}
 
 /**
   * Compress a block of vectors in a compact fashion.
+  * Note: all vectors are of the same length.
+  *
+  * @param indices    concatenated indices of SparseVectors
+  * @param values     concatenated indices of both DenseVectors and SparseVectors
+  * @param steps      length of vector-values (not vector size). If empty, means all vectors are dense.
+  *                   Positive step indicate that the vector is a DenseVector,
+  *                   Negative step indicate that the vector is a SparseVector.
+  * @param vectorSize length of vector.
   */
 class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices: Array[K],
                                                                      val values: Array[V],
@@ -61,7 +69,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
         val step = getStep(i)
 
         if (step > 0) {
-          valueBuilder.clear()
+          valueBuilder.clear
 
           var j = 0
           while (j < step) {
@@ -72,11 +80,11 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
           i += 1
           valueIdx += step
 
-          KVVector.dense[K, V](valueBuilder.result())
+          KVVector.dense[K, V](valueBuilder.result)
 
         } else if (step < 0) {
-          indexBuilder.clear()
-          valueBuilder.clear()
+          indexBuilder.clear
+          valueBuilder.clear
 
           var j = 0
           while (j < -step) {
@@ -89,7 +97,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
           indexIdx -= step
           valueIdx -= step
 
-          KVVector.sparse[K, V](vectorSize, indexBuilder.result(), valueBuilder.result())
+          KVVector.sparse[K, V](vectorSize, indexBuilder.result, valueBuilder.result)
 
         } else {
 
@@ -111,14 +119,14 @@ private[gbm] object KVMatrix extends Serializable {
     val stepBuilder = mutable.ArrayBuilder.make[Int]
 
     var allDense = true
-    var len = -1
+    var vecSize = -1
 
     iterator.foreach { vec =>
       require(vec.size > 0)
-      if (len < 0) {
-        len = vec.size
+      if (vecSize < 0) {
+        vecSize = vec.size
       }
-      require(len == vec.size)
+      require(vecSize == vec.size)
 
       vec match {
         case dv: DenseKVVector[K, V] =>
@@ -136,10 +144,10 @@ private[gbm] object KVMatrix extends Serializable {
     val steps = if (allDense) {
       Array.emptyIntArray
     } else {
-      stepBuilder.result()
+      stepBuilder.result
     }
 
-    new KVMatrix[K, V](indexBuilder.result(), valueBuilder.result(), steps, len)
+    new KVMatrix[K, V](indexBuilder.result, valueBuilder.result, steps, vecSize)
   }
 }
 

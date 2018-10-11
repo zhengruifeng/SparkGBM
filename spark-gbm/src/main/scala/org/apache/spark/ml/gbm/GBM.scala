@@ -455,7 +455,8 @@ class GBM extends Logging with Serializable {
     }
 
     val rawBase = boostConf.computeRawBaseScore
-    logInfo(s"base score vector: ${boostConf.getBaseScore.mkString(",")}, raw base vector: ${rawBase.mkString(",")}")
+    logInfo(s"base score vector: ${boostConf.getBaseScore.mkString(",")}, " +
+      s"raw base vector: ${rawBase.mkString(",")}")
 
     boostConf
       .setNumCols(numCols)
@@ -699,7 +700,8 @@ private[gbm] object GBM extends Logging {
         val keepWeights = boostConf.getBoostType != Dart || dropped.isEmpty
 
         // update train data predictions
-        trainRawBlocks = updateRawBlocks[C, B, H](trainBlocks, trainRawBlocks, trees, weightsBuff.toArray, boostConf, keepWeights)
+        trainRawBlocks = updateRawBlocks[C, B, H](trainBlocks, trainRawBlocks,
+          trees, weightsBuff.toArray, boostConf, keepWeights)
           .setName(s"Train Raw Blocks (Iteration $iter)")
         trainRawBlocksCheckpointer.update(trainRawBlocks)
 
@@ -718,7 +720,8 @@ private[gbm] object GBM extends Logging {
 
         if (validation) {
           // update test data predictions
-          testRawBlocks = updateRawBlocks[C, B, H](testBlocks, testRawBlocks, trees, weightsBuff.toArray, boostConf, keepWeights)
+          testRawBlocks = updateRawBlocks[C, B, H](testBlocks, testRawBlocks,
+            trees, weightsBuff.toArray, boostConf, keepWeights)
             .setName(s"Test Raw Blocks (Iteration $iter)")
           testRawBlocksCheckpointer.update(testRawBlocks)
 
@@ -995,7 +998,8 @@ private[gbm] object GBM extends Logging {
         adaptTreeInputsForInstanceSampling[T, N, C, B, H](blocks, rawBlocks, boostConf, iteration, computeGrad, recoder)
     }
 
-    val selector = ColumSelector.create(boostConf.getColSampleRateByTree, boostConf.getNumCols, numBaseModels, boostConf.getRawSize, boostConf.getSeed.toInt + iteration)
+    val selector = ColumSelector.create(boostConf.getColSampleRateByTree, boostConf.getNumCols,
+      numBaseModels, boostConf.getRawSize, boostConf.getSeed.toInt + iteration)
     logInfo(s"Column Selectors: $selector")
 
     val baseConfig = new BaseConfig(iteration, numTrees, selector)

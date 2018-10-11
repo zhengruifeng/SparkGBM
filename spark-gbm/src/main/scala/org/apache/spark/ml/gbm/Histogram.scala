@@ -74,7 +74,8 @@ private[gbm] class BasicHistogramComputer[T, N, C, B, H] extends HistogramComput
 
 
     val minNodeId = inn.fromInt(1 << depth)
-    HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), partitioner)
+    HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, baseConf,
+      (n: N) => inn.gteq(n, minNodeId), partitioner)
   }
 }
 
@@ -103,7 +104,8 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
     val minNodeId = inn.fromInt(1 << depth)
 
     val (treeIds, prevPartitioner) = if (depth == 0) {
-      checkpointer = Some(new Checkpointer[((T, N, C), KVVector[B, H])](sc, boostConf.getCheckpointInterval, boostConf.getStorageLevel))
+      checkpointer = Some(new Checkpointer[((T, N, C), KVVector[B, H])](sc,
+        boostConf.getCheckpointInterval, boostConf.getStorageLevel))
 
       (Array.tabulate(baseConf.numTrees)(int.fromInt), None)
 
@@ -111,7 +113,8 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
       (splits.keysIterator.map(_._1).toArray.distinct.sorted, prevHistograms.get.partitioner)
     }
 
-    val partitioner = HistogramComputer.updatePartitioner[T, N, C](boostConf, treeIds, depth, parallelism, prevPartitioner)
+    val partitioner = HistogramComputer.updatePartitioner[T, N, C](boostConf,
+      treeIds, depth, parallelism, prevPartitioner)
     logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
 
     val histograms = if (depth == 0) {
@@ -128,7 +131,7 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
       HistogramComputer.subtractHistograms[T, N, C, B, H](prevHistograms.get, rightHistograms, boostConf, partitioner)
     }
 
-    val expectedSize = ((baseConf.numTrees << depth) * boostConf.getNumCols * boostConf.getColSampleRateByTree * delta).toInt
+    val expectedSize = (baseConf.numTrees << depth) * boostConf.getNumCols * boostConf.getColSampleRateByTree * delta
 
     // cut off lineage if size is small
     if (expectedSize < (1 << 16)) {
@@ -136,8 +139,9 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
       val collected = histograms.collect
 
       val exactSize = collected.length
-      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize, delta: $delta")
-      delta *= exactSize.toDouble / expectedSize
+      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: ${expectedSize.toInt}, " +
+        s"exactSize: $exactSize, delta: $delta")
+      delta *= exactSize / expectedSize
 
       val smallHistograms = sc.parallelize(collected, numPartitions)
         .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
@@ -203,7 +207,7 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
     val minNodeId = inn.fromInt(1 << depth)
     val topK = boostConf.getTopK
     val top2K = topK << 1
-    val expectedSize = ((baseConf.numTrees << depth) * top2K * delta).toInt
+    val expectedSize = (baseConf.numTrees << depth) * top2K * delta
 
     val localHistograms = HistogramComputer.computeLocalHistograms[T, N, C, B, H](data,
       boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
@@ -247,7 +251,8 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
       val collected = globalVoted.collect.sortBy(_._1)
 
       val exactSize = collected.iterator.map(_._2.length).sum
-      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize, delta: $delta")
+      logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: ${expectedSize.toInt}, " +
+        s"exactSize: $exactSize, delta: $delta")
       delta *= exactSize.toDouble / expectedSize
 
       val treeIds = CompactArray.build[T](collected.iterator.map(_._1._1))
@@ -261,11 +266,8 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
         val (treeIds, nodeIds, colIds) = bcIds.value
 
         val flattenIter = treeIds.iterator
-          .zip(nodeIds.iterator)
-          .zip(colIds.iterator)
-          .flatMap { case ((treeId, nodeId), colIds) =>
-            colIds.map { colId => ((treeId, nodeId, colId), null) }
-          }
+          .zip(nodeIds.iterator).zip(colIds.iterator)
+          .flatMap { case ((treeId, nodeId), colIds) => colIds.map { colId => ((treeId, nodeId, colId), null) } }
 
         Utils.innerJoinSortedIters(localIter, flattenIter)
           .map { case (ids, hist, _) => (ids, hist) }
@@ -576,8 +578,9 @@ private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
   override def hashCode: Int = hash
 
   override def toString: String = {
-    s"SkipNodePratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, ${cc.runtimeClass.toString.capitalize}]" +
-      s"(numPartitions=$numPartitions, numCols=$numCols, treeIds=${treeIds.mkString("[", ",", "]")})"
+    s"SkipNodePratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, " +
+      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, numCols=$numCols, " +
+      s"treeIds=${treeIds.mkString("[", ",", "]")})"
   }
 }
 
@@ -606,7 +609,8 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
 
   private val upperBound: Int = lowerBound << 1
 
-  private val hash = numPartitions * depth * (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
+  private val hash = numPartitions * depth *
+    (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
 
   private val treeInterval = numPartitions.toDouble / treeIds.length
 
@@ -649,8 +653,9 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
   override def hashCode: Int = hash
 
   override def toString: String = {
-    s"DepthPratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, ${cc.runtimeClass.toString.capitalize}]" +
-      s"(numPartitions=$numPartitions, numCols=$numCols, depth=$depth, treeIds=${treeIds.mkString("[", ",", "]")})"
+    s"DepthPratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, " +
+      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, numCols=$numCols, " +
+      s"depth=$depth, treeIds=${treeIds.mkString("[", ",", "]")})"
   }
 }
 
@@ -706,7 +711,8 @@ private[gbm] class IDRangePratitioner[T, N, C](val numPartitions: Int,
   override def hashCode: Int = hash
 
   override def toString: String = {
-    s"IDRangePratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, ${cc.runtimeClass.toString.capitalize}]" +
-      s"(numPartitions=$numPartitions, numCols=$numCols, treeNodeIds=${treeNodeIds.mkString("[", ",", "]")})"
+    s"IDRangePratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, " +
+      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, numCols=$numCols, " +
+      s"treeNodeIds=${treeNodeIds.mkString("[", ",", "]")})"
   }
 }

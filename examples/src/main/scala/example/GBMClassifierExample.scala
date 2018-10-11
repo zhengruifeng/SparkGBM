@@ -51,6 +51,7 @@ object GBMClassifierExample {
       .setModelCheckpointPath(modelCheckpointPath)
       .setZeroAsMissing(true)
       .setReduceParallelism(8)
+      .setSeed(123L)
 
     /** train with validation */
     val model = gbmc.fit(train, test)
@@ -95,6 +96,7 @@ object GBMClassifierExample {
       .setEvaluateFunc(Array("logloss"))
       .setCheckpointInterval(3)
       .setInitialModelPath(modelSavePath)
+      .setSeed(456L)
 
     /** train another 10 trees, without validation */
     val model3 = gbmc2.fit(train)

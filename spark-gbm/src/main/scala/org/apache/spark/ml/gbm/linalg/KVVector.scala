@@ -138,47 +138,56 @@ private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, L
            cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
     import nuv._
 
+    if (other.isEmpty) {
+      return this
+    }
+
     if (this.isEmpty) {
-      other
-
-    } else if (other.isEmpty) {
-      this
-
-    } else {
-
-      (this, other) match {
-        case (dv1: DenseKVVector[K, V], dv2: DenseKVVector[K, V]) =>
-          if (dv1.size >= dv2.size) {
-            dv2.activeIterator.foreach { case (k, v) => dv1.values(ink.toInt(k)) += v }
-            dv1
-          } else {
-            dv1.activeIterator.foreach { case (k, v) => dv2.values(ink.toInt(k)) += v }
-            dv2
-          }
+      return other
+    }
 
 
-        case (dv: DenseKVVector[K, V], sv: SparseKVVector[K, V]) =>
-          // update vector size if needed
-          var vec = dv.plus(ink.fromInt(sv.size - 1), zero)
-          sv.activeIterator.foreach { case (k, v) => vec = vec.plus(k, v) }
-          vec
+    (this, other) match {
+      case (dv1: DenseKVVector[K, V], dv2: DenseKVVector[K, V]) =>
+        if (dv1.size >= dv2.size) {
+          dv2.activeIterator.foreach { case (k, v) => dv1.values(ink.toInt(k)) += v }
+          dv1
+        } else {
+          dv1.activeIterator.foreach { case (k, v) => dv2.values(ink.toInt(k)) += v }
+          dv2
+        }
 
 
-        case (sv: SparseKVVector[K, V], dv: DenseKVVector[K, V]) =>
-          // update vector size if needed
-          var vec = dv.plus(ink.fromInt(sv.size - 1), zero)
-          sv.activeIterator.foreach { case (k, v) => vec = vec.plus(k, v) }
-          vec
+      case (dv: DenseKVVector[K, V], sv: SparseKVVector[K, V]) =>
+        if (dv.size >= sv.size) {
+          sv.activeIterator.foreach { case (k, v) => dv.values(ink.toInt(k)) += v }
+          dv
+        } else {
+          val newValues = dv.values ++ Array.fill(sv.size - dv.size)(zero)
+          sv.activeIterator.foreach { case (k, v) => newValues(ink.toInt(k)) += v }
+          KVVector.dense[K, V](newValues)
+        }
 
 
-        case (sv1: SparseKVVector[K, V], sv2: SparseKVVector[K, V]) =>
-          val (indices, values) =
-            Utils.outerJoinSortedIters(sv1.activeIterator, sv2.activeIterator, false)
-              .map { case (k, v1, v2) => (k, v1.getOrElse(zero) + v2.getOrElse(zero)) }
-              .filter(_._2 != zero).toArray.unzip
-          val newSize = math.max(size, other.size)
-          KVVector.sparse[K, V](newSize, indices, values)
-      }
+      case (sv: SparseKVVector[K, V], dv: DenseKVVector[K, V]) =>
+        if (dv.size >= sv.size) {
+          sv.activeIterator.foreach { case (k, v) => dv.values(ink.toInt(k)) += v }
+          dv
+        } else {
+          val newValues = dv.values ++ Array.fill(sv.size - dv.size)(zero)
+          sv.activeIterator.foreach { case (k, v) => newValues(ink.toInt(k)) += v }
+          KVVector.dense[K, V](newValues)
+        }
+
+
+      case (sv1: SparseKVVector[K, V], sv2: SparseKVVector[K, V]) =>
+        val (indices, values) =
+          Utils.outerJoinSortedIters(sv1.activeIterator, sv2.activeIterator, false)
+            .map { case (k, v1, v2) => (k, v1.getOrElse(zero) + v2.getOrElse(zero)) }
+            .filter(_._2 != zero).toArray.unzip
+
+        val newSize = math.max(size, other.size)
+        KVVector.sparse[K, V](newSize, indices, values)
     }
   }
 
@@ -197,19 +206,19 @@ private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, L
 private[gbm] object KVVector {
 
   def empty[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V]()
-                                                                                      (implicit cv: ClassTag[V], nev: NumericExt[V]): KVVector[K, V] = {
+                                                                                      (implicit cv: ClassTag[V], nev: NumericExt[V]): KVVector[K, V] =
     dense[K, V](nev.emptyArray)
-  }
 
-  def dense[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](values: Array[V]): KVVector[K, V] = {
+
+  def dense[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](values: Array[V]): KVVector[K, V] =
     new DenseKVVector[K, V](values)
-  }
+
 
   def sparse[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](size: Int,
                                                                                         indices: Array[K],
-                                                                                        values: Array[V]): KVVector[K, V] = {
+                                                                                        values: Array[V]): KVVector[K, V] =
     new SparseKVVector[K, V](size, indices, values)
-  }
+
 }
 
 
@@ -226,7 +235,8 @@ private[gbm] class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, I
 
   override def apply(index: Int)
                     (implicit ink: Integral[K], nek: NumericExt[K],
-                     nuv: Numeric[V]) = values(index)
+                     nuv: Numeric[V]) =
+    values(index)
 
 
   override def plus(index: K, value: V)
@@ -267,14 +277,15 @@ private[gbm] class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, I
 
   override def toArray()
                       (implicit ink: Integral[K],
-                       cv: ClassTag[V], nuv: Numeric[V]): Array[V] = values
+                       cv: ClassTag[V], nuv: Numeric[V]): Array[V] =
+    values
 
 
   override def iterator()
                        (implicit ink: Integral[K],
                         nuv: Numeric[V]): Iterator[(K, V)] =
-    values.iterator
-      .zipWithIndex.map { case (v, i) => (ink.fromInt(i), v) }
+    values.iterator.zipWithIndex
+      .map { case (v, i) => (ink.fromInt(i), v) }
 
 
   override def activeIterator()
@@ -286,8 +297,7 @@ private[gbm] class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, I
   override def reverseActiveIterator()
                                     (implicit ink: Integral[K],
                                      nuv: Numeric[V]): Iterator[(K, V)] =
-    values.reverseIterator
-      .zipWithIndex
+    values.reverseIterator.zipWithIndex
       .map { case (v, i) => (ink.fromInt(size - 1 - i), v) }
       .filter(t => t._2 != nuv.zero)
 
@@ -380,7 +390,7 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
   override def slice(sortedIndices: Array[Int])
                     (implicit ck: ClassTag[K], ink: Integral[K],
                      cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
-    val iter = sortedIndices.iterator.map(i => (ink.fromInt(i), true))
+    val iter = sortedIndices.iterator.map(i => (ink.fromInt(i), null))
 
     val (newIndices, newValues) =
       Utils.innerJoinSortedIters(activeIterator, iter, false)
@@ -454,7 +464,7 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
   override def toSparse()
                        (implicit ck: ClassTag[K], ink: Integral[K],
                         cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
-    if (indices.length == nnz) {
+    if (!values.contains(nuv.zero)) {
       this
 
     } else {

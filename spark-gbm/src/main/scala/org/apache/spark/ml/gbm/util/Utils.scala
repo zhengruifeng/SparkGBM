@@ -376,7 +376,7 @@ private[gbm] object Utils extends Logging {
           kv = Some(iterator.next)
           cmp = ork.compare(kv.get._1, kc.get._1)
           if (cmp == 0) {
-            kc = Some(kv.get._1, func(kc.get._2, kv.get._2))
+            kc = Some(kc.get._1, func(kc.get._2, kv.get._2))
           }
         }
 

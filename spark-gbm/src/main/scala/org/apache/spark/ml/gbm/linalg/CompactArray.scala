@@ -7,6 +7,7 @@ import org.apache.spark.ml.gbm.util.Utils
 
 /**
   * Compress a block of values in a compact fashion.
+  * The continuous identical values will be compressed.
   */
 class CompactArray[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Array[V],
                                                                    val times: Array[Int]) extends Serializable {

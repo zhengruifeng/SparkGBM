@@ -82,7 +82,7 @@ private[gbm] object Tree extends Serializable with Logging {
           // For Basic and Vote Type, merge `ColSamplingByLevel` into the BaseConf.
           val newBaseConfig = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
           val histograms = histogramComputer.compute(data.zip(nodeIdBlocks.flatMap(_.iterator)),
-            boostConf, baseConf, splits, depth)
+            boostConf, newBaseConfig, splits, depth)
           splits = findSplits[T, N, C, B, H](histograms, boostConf, baseConf, remainingLeaves, depth)
       }
 

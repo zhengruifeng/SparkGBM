@@ -65,13 +65,28 @@ private[gbm] object Tree extends Serializable with Logging {
       nodeIdBlocksCheckpointer.update(nodeIdBlocks)
 
 
-      // compute histograms
-      val histograms = histogramComputer.compute(data.zip(nodeIdBlocks.flatMap(_.iterator)), boostConf, baseConf, splits, depth)
+      boostConf.getHistogramComputationType match {
+        case Subtract =>
+          val histograms = histogramComputer.compute(data.zip(nodeIdBlocks.flatMap(_.iterator)),
+            boostConf, baseConf, splits, depth)
+          // column sampling by level
+          val sampled = if (boostConf.getColSampleRateByLevel < 1) {
+            histograms.sample(false, boostConf.getColSampleRateByLevel, baseConf.iteration + depth)
+          } else {
+            histograms
+          }
+          splits = findSplits[T, N, C, B, H](sampled, boostConf, baseConf, remainingLeaves, depth)
 
-      // find best splits
-      splits = findSplits[T, N, C, B, H](histograms, boostConf, baseConf, remainingLeaves, depth)
 
-      histogramComputer.clear()
+        case _ =>
+          // For Basic and Vote Type, merge `ColSamplingByLevel` into the BaseConf.
+          val newBaseConfig = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
+          val histograms = histogramComputer.compute(data.zip(nodeIdBlocks.flatMap(_.iterator)),
+            boostConf, baseConf, splits, depth)
+          splits = findSplits[T, N, C, B, H](histograms, boostConf, baseConf, remainingLeaves, depth)
+      }
+
+      histogramComputer.clear
 
       // update trees
       updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
@@ -86,8 +101,8 @@ private[gbm] object Tree extends Serializable with Logging {
       logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
     }
 
-    nodeIdBlocksCheckpointer.clear()
-    histogramComputer.destroy()
+    nodeIdBlocksCheckpointer.clear
+    histogramComputer.destroy
 
     roots.map(TreeModel.createModel)
   }
@@ -214,7 +229,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
     data.zip(nodeIdBlocks.flatMap(_.iterator))
       .mapPartitions { iter =>
-        val it = iter.map { case ((bins, treeIds, _), nodeIds) =>
+        iter.map { case ((bins, treeIds, _), nodeIds) =>
           treeIds.zip(nodeIds).map { case (treeId, nodeId) =>
             val split = splits.get((treeId, nodeId))
             if (split.nonEmpty) {
@@ -228,10 +243,8 @@ private[gbm] object Tree extends Serializable with Logging {
               nodeId
             }
           }
-        }
-
-        it.grouped(blockSize)
-          .map { seq => ArrayBlock.build(seq.iterator) }
+        }.grouped(blockSize)
+          .map { seq => ArrayBlock.build[N](seq.iterator) }
       }
   }
 
@@ -239,10 +252,10 @@ private[gbm] object Tree extends Serializable with Logging {
   /**
     * Search the optimal splits on all leaves
     *
-    * @param nodeHistograms histogram data of leaves nodes
+    * @param histograms histogram data of leaves nodes
     * @return optimal splits for each node
     */
-  def findSplits[T, N, C, B, H](nodeHistograms: RDD[((T, N, C), KVVector[B, H])],
+  def findSplits[T, N, C, B, H](histograms: RDD[((T, N, C), KVVector[B, H])],
                                 boostConf: BoostConfig,
                                 baseConf: BaseConfig,
                                 remainingLeaves: Array[Int],
@@ -252,26 +265,18 @@ private[gbm] object Tree extends Serializable with Logging {
                                 cc: ClassTag[C], inc: Integral[C],
                                 cb: ClassTag[B], inb: Integral[B],
                                 ch: ClassTag[H], nuh: Numeric[H], fdh: NumericExt[H]): Map[(T, N), Split] = {
-    val sc = nodeHistograms.sparkContext
+    val sc = histograms.sparkContext
 
     val bcRemainingLeaves = sc.broadcast(remainingLeaves)
 
-    // column sampling by level
-    val sampled = if (boostConf.getHistogramComputationType == Subtract && boostConf.getColSampleRateByLevel < 1) {
-      // In `SubtractHistogramComputer`, level-sampling is not applied
-      nodeHistograms.sample(false, boostConf.getColSampleRateByLevel, baseConf.iteration + depth)
-    } else {
-      nodeHistograms
-    }
-
     val parallelism = boostConf.getRealParallelism(boostConf.getTrialParallelism, sc.defaultParallelism)
-    val repartitioned = if (parallelism == sampled.getNumPartitions) {
-      sampled
-    } else if (parallelism < sampled.getNumPartitions) {
-      sampled.coalesce(parallelism, false)
+    val repartitioned = if (parallelism == histograms.getNumPartitions) {
+      histograms
+    } else if (parallelism < histograms.getNumPartitions) {
+      histograms.coalesce(parallelism, false)
     } else {
       import RDDFunctions._
-      sampled.extendPartitions(parallelism)
+      histograms.extendPartitions(parallelism)
     }
 
     val (splits, Array(numTrials, numSplits, numDenses, sumSize, nnz)) =
@@ -292,15 +297,14 @@ private[gbm] object Tree extends Serializable with Logging {
             numDenses += 1
           }
 
-          val split = Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
-
-          if (split.nonEmpty) {
-            numSplits += 1
-            val prevSplit = splits.get((treeId, nodeId))
-            if (prevSplit.isEmpty || prevSplit.get.gain < split.get.gain) {
-              splits.update((treeId, nodeId), split.get)
+          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
+            .foreach { split =>
+              numSplits += 1
+              val prevSplit = splits.get((treeId, nodeId))
+              if (prevSplit.isEmpty || prevSplit.get.gain < split.gain) {
+                splits.update((treeId, nodeId), split)
+              }
             }
-          }
         }
 
         if (numTrials > 0) {
@@ -343,3 +347,5 @@ private[gbm] object Tree extends Serializable with Logging {
     splits.toMap
   }
 }
+
+

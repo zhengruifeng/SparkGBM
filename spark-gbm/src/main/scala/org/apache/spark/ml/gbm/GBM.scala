@@ -706,7 +706,7 @@ private[gbm] object GBM extends Logging {
 
         if (boostConf.getEvalFunc.isEmpty) {
           // materialize predictions
-          trainRawBlocks.count()
+          trainRawBlocks.count
         }
 
         // evaluate on train data
@@ -731,13 +731,13 @@ private[gbm] object GBM extends Logging {
         // callback
         if (boostConf.getCallbackFunc.nonEmpty) {
           // using cloning to avoid model modification
-          val snapshot = new GBMModel(boostConf.getObjFunc, discretizer.clone(),
-            rawBase.clone(), treesBuff.toArray.clone(), neh.toDouble(weightsBuff.toArray).clone())
+          val snapshot = new GBMModel(boostConf.getObjFunc, discretizer.clone,
+            rawBase.clone, treesBuff.toArray.clone, neh.toDouble(weightsBuff.toArray).clone)
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
             if (callback.compute(spark, boostConf, snapshot, iter + 1,
-              trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
+              trainMetricsHistory.toArray.clone, testMetricsHistory.toArray.clone)) {
               finished = true
               logInfo(s"$logPrefix callback ${callback.name} stop training")
             }
@@ -807,7 +807,7 @@ private[gbm] object GBM extends Logging {
           weights(i) = newWeight
         }
 
-        logInfo(s"Weights updated : ${updateStrBuilder.result().mkString("(", ",", ")")}")
+        logInfo(s"Weights updated : ${updateStrBuilder.result.mkString("(", ",", ")")}")
     }
   }
 
@@ -824,7 +824,7 @@ private[gbm] object GBM extends Logging {
                 boostConf: BoostConfig,
                 numTrees: Int,
                 dartRng: Random): Unit = {
-    dropped.clear()
+    dropped.clear
 
     if (boostConf.getDropSkip < 1 &&
       dartRng.nextDouble < 1 - boostConf.getDropSkip) {
@@ -937,7 +937,7 @@ private[gbm] object GBM extends Logging {
 
       case Dart if dropped.nonEmpty =>
         rawSeq: Array[H] =>
-          val raw = rawBase.clone()
+          val raw = rawBase.clone
           Iterator.range(rawSize, rawSeq.length)
             .filterNot(i => dropped.contains(i - rawSize))
             .foreach { i => raw(i % rawSize) += rawSeq(i) * weights(i - rawSize) }
@@ -1002,7 +1002,7 @@ private[gbm] object GBM extends Logging {
 
     val trees = Tree.train[T, N, C, B, H](data, boostConf, baseConfig)
 
-    recoder.clear()
+    recoder.clear
 
     trees
   }
@@ -1421,7 +1421,7 @@ private[gbm] object GBM extends Logging {
         case Dart =>
           blocks.map { block =>
             val iter = block.vectorIterator.map { bins =>
-              val raw = rawBase.clone() ++ trees.map(tree => neh.fromDouble(tree.predict(bins.apply)))
+              val raw = rawBase.clone ++ trees.map(tree => neh.fromDouble(tree.predict(bins.apply)))
 
               var j = 0
               while (j < trees.length) {
@@ -1438,7 +1438,7 @@ private[gbm] object GBM extends Logging {
         case _ =>
           blocks.map { block =>
             val iter = block.vectorIterator.map { bins =>
-              val raw = rawBase.clone()
+              val raw = rawBase.clone
               var j = 0
               while (j < trees.length) {
                 val p = neh.fromDouble(trees(j).predict(bins.apply))

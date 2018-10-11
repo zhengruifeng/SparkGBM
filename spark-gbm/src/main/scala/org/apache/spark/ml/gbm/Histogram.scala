@@ -15,6 +15,9 @@ import org.apache.spark.rdd.RDD
 
 private[gbm] trait HistogramComputer[T, N, C, B, H] extends Logging {
 
+  /**
+    * Compute histograms of current level
+    */
   def compute(data: RDD[((KVVector[C, B], Array[T], Array[H]), Array[N])],
               boostConf: BoostConfig,
               baseConf: BaseConfig,
@@ -27,8 +30,14 @@ private[gbm] trait HistogramComputer[T, N, C, B, H] extends Logging {
               ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])]
 
 
+  /**
+    * Clear after each level
+    */
   def clear(): Unit = {}
 
+  /**
+    * Clear after each iteration
+    */
   def destroy(): Unit = {}
 }
 
@@ -64,10 +73,8 @@ private[gbm] class BasicHistogramComputer[T, N, C, B, H] extends HistogramComput
     logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
-    val newBaseConf = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
-
     val minNodeId = inn.fromInt(1 << depth)
-    HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, newBaseConf, (n: N) => inn.gteq(n, minNodeId), partitioner)
+    HistogramComputer.computeHistograms[T, N, C, B, H](data, boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), partitioner)
   }
 }
 
@@ -97,6 +104,7 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
 
     val (treeIds, prevPartitioner) = if (depth == 0) {
       checkpointer = Some(new Checkpointer[((T, N, C), KVVector[B, H])](sc, boostConf.getCheckpointInterval, boostConf.getStorageLevel))
+
       (Array.tabulate(baseConf.numTrees)(int.fromInt), None)
 
     } else {
@@ -120,16 +128,16 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
       HistogramComputer.subtractHistograms[T, N, C, B, H](prevHistograms.get, rightHistograms, boostConf, partitioner)
     }
 
-    val expectedSize = (baseConf.numTrees << depth) * boostConf.getNumCols * boostConf.getColSampleRateByTree * delta
+    val expectedSize = ((baseConf.numTrees << depth) * boostConf.getNumCols * boostConf.getColSampleRateByTree * delta).toInt
 
     // cut off lineage if size is small
     if (expectedSize < (1 << 16)) {
       val numPartitions = histograms.getNumPartitions
-      val collected = histograms.collect()
+      val collected = histograms.collect
 
       val exactSize = collected.length
       logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize, delta: $delta")
-      delta *= exactSize / expectedSize
+      delta *= exactSize.toDouble / expectedSize
 
       val smallHistograms = sc.parallelize(collected, numPartitions)
         .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
@@ -147,7 +155,7 @@ private[gbm] class SubtractHistogramComputer[T, N, C, B, H] extends HistogramCom
   }
 
   override def destroy(): Unit = {
-    checkpointer.foreach(_.clear())
+    checkpointer.foreach(_.clear)
     checkpointer = None
     prevHistograms = None
     delta = 1.0
@@ -195,23 +203,21 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
     val minNodeId = inn.fromInt(1 << depth)
     val topK = boostConf.getTopK
     val top2K = topK << 1
-    val expectedSize = (baseConf.numTrees << depth) * top2K * delta
-
-    val newBaseConf = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
+    val expectedSize = ((baseConf.numTrees << depth) * top2K * delta).toInt
 
     val localHistograms = HistogramComputer.computeLocalHistograms[T, N, C, B, H](data,
-      boostConf, newBaseConf, (n: N) => inn.gteq(n, minNodeId), true)
+      boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
       .setName(s"Local Histograms (Iteration: ${baseConf.iteration}, depth: $depth) (Sorted)")
     localHistograms.persist(boostConf.getStorageLevel)
     recoder.get.append(localHistograms)
 
 
     val localVoted = localHistograms.mapPartitions { iter =>
-      val gainIter = Utils.validateOrdering(iter)
-        .flatMap { case ((treeId, nodeId, colId), hist) =>
-          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, newBaseConf)
+      val gainIter = Utils.validateKeyOrdering(iter).flatMap {
+        case ((treeId, nodeId, colId), hist) =>
+          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
             .map(s => ((treeId, nodeId), (colId, s.gain)))
-        }
+      }
 
       Utils.aggregateIterByKey[(T, N), (C, Float), mutable.ArrayBuilder[(C, Float)]](gainIter,
         () => mutable.ArrayBuilder.make[(C, Float)], _ += _)
@@ -225,28 +231,24 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
     }.setName("Local Voted TopK")
 
 
-    val globalVoted = localVoted.reduceByKey(_ plus _ compress, parallelism)
+    val globalVoted = localVoted.reduceByKey(_.plus(_).compress, parallelism)
       .mapValues { votes =>
         votes.activeIterator.toArray.sortBy(_._2)
           .takeRight(top2K).map(_._1).sorted
       }.setName("Global Voted Top2K")
 
 
-    
+
     // RDD 'globalVoted' is usually much smaller than 'localHistograms'.
     // Instead of `join`, here we adopt `broadcast` or `zipPartitions`
     // to avoid join shuffle of 'localHistograms'.
 
     if (expectedSize < (1 << 16)) {
-      val collected = globalVoted.collect().sortBy(_._1)
-
-      collected.foreach { case ((treeId, nodeId), colIds) =>
-        logInfo(s"collected globalVoted: $treeId, $nodeId, ${colIds.mkString("(", ",", ")")}")
-      }
+      val collected = globalVoted.collect.sortBy(_._1)
 
       val exactSize = collected.iterator.map(_._2.length).sum
       logInfo(s"Iteration: ${baseConf.iteration}, depth: $depth, expectedSize: $expectedSize, exactSize: $exactSize, delta: $delta")
-      delta *= exactSize / expectedSize
+      delta *= exactSize.toDouble / expectedSize
 
       val treeIds = CompactArray.build[T](collected.iterator.map(_._1._1))
       val nodeIds = collected.map(_._1._2)
@@ -267,7 +269,7 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
 
         Utils.innerJoinSortedIters(localIter, flattenIter)
           .map { case (ids, hist, _) => (ids, hist) }
-      }.reduceByKey(partitioner, _ plus _ compress)
+      }.reduceByKey(partitioner, _.plus(_).compress)
 
     } else {
 
@@ -293,16 +295,16 @@ private[gbm] class VoteHistogramComputer[T, N, C, B, H] extends HistogramCompute
 
           Utils.innerJoinSortedIters(localIter, flattenIter)
             .map { case (ids, hist, _) => (ids, hist) }
-      }).reduceByKey(partitioner, _ plus _ compress)
+      }).reduceByKey(partitioner, _.plus(_).compress)
     }
   }
 
   override def clear(): Unit = {
-    recoder.foreach(_.clear())
+    recoder.foreach(_.clear)
   }
 
   override def destroy(): Unit = {
-    recoder.foreach(_.clear())
+    recoder.foreach(_.clear)
     recoder = None
     delta = 1.0
   }
@@ -374,7 +376,7 @@ private[gbm] object HistogramComputer extends Logging {
           val indexHess = inb.plus(indexGrad, inb.one)
           hist.plus(indexHess, hess)
             .plus(indexGrad, grad)
-      }, combOp = _ plus _ compress
+      }, combOp = _.plus(_).compress
 
     ).mapValues { hist =>
       var nzGradSum = nuh.zero
@@ -416,7 +418,7 @@ private[gbm] object HistogramComputer extends Logging {
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     computeLocalHistograms[T, N, C, B, H](data, boostConf, baseConf, f)
-      .reduceByKey(partitioner, _ plus _ compress)
+      .reduceByKey(partitioner, _.plus(_).compress)
   }
 
 

@@ -516,6 +516,7 @@ private[gbm] object GBM extends Logging {
                 discretizer: Discretizer,
                 initialModel: Option[GBMModel])
                (implicit ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
+
     val data2 = data.map { case (weight, label, vec) => (neh.fromDouble(weight), neh.fromDouble(label), vec) }
 
     val test2 = test.map { case (weight, label, vec) => (neh.fromDouble(weight), neh.fromDouble(label), vec) }
@@ -569,6 +570,7 @@ private[gbm] object GBM extends Logging {
                      (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
+
     val binData = data.map { case (weight, label, vec) => (weight, label, discretizer.transformToGBMVector[C, B](vec)) }
 
     val binTest = test.map { case (weight, label, vec) => (weight, label, discretizer.transformToGBMVector[C, B](vec)) }
@@ -597,6 +599,7 @@ private[gbm] object GBM extends Logging {
                         (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                          cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                          ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
+
     val spark = SparkSession.builder.getOrCreate
     val sc = spark.sparkContext
     Utils.registerKryoClasses(sc)
@@ -635,7 +638,7 @@ private[gbm] object GBM extends Logging {
 
     // raw scores and checkpointers
     var trainRawBlocks = computeRawBlocks[C, B, H](trainBlocks, treesBuff.toArray, weightsBuff.toArray, boostConf)
-      .setName("Train Raw Blocks (Initial)")
+      .setName("Train Raw Blocks (Iteration 0)")
     val trainRawBlocksCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
     if (treesBuff.nonEmpty) {
@@ -647,7 +650,7 @@ private[gbm] object GBM extends Logging {
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
     if (validation) {
       testRawBlocks = computeRawBlocks[C, B, H](testBlocks, treesBuff.toArray, weightsBuff.toArray, boostConf)
-        .setName("Test Raw Blocks (Initial)")
+        .setName("Test Raw Blocks (Iteration 0)")
       if (treesBuff.nonEmpty) {
         testRawBlocksCheckpointer.update(testRawBlocks)
       }
@@ -702,7 +705,7 @@ private[gbm] object GBM extends Logging {
         // update train data predictions
         trainRawBlocks = updateRawBlocks[C, B, H](trainBlocks, trainRawBlocks,
           trees, weightsBuff.toArray, boostConf, keepWeights)
-          .setName(s"Train Raw Blocks (Iteration $iter)")
+          .setName(s"Train Raw Blocks (Iteration ${iter + 1})")
         trainRawBlocksCheckpointer.update(trainRawBlocks)
 
 
@@ -722,7 +725,7 @@ private[gbm] object GBM extends Logging {
           // update test data predictions
           testRawBlocks = updateRawBlocks[C, B, H](testBlocks, testRawBlocks,
             trees, weightsBuff.toArray, boostConf, keepWeights)
-            .setName(s"Test Raw Blocks (Iteration $iter)")
+            .setName(s"Test Raw Blocks (Iteration ${iter + 1})")
           testRawBlocksCheckpointer.update(testRawBlocks)
 
           // evaluate on test data
@@ -858,6 +861,7 @@ private[gbm] object GBM extends Logging {
                          (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                           cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                           ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+
     val numTrees = boostConf.getBaseModelParallelism * boostConf.getRawSize
     logInfo(s"Iteration $iteration: Starting to create next $numTrees trees")
 
@@ -1619,9 +1623,9 @@ private[gbm] object GBM extends Logging {
 }
 
 
-class InstanceBlock[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B, @spec(Float, Double) H](val weights: Array[H],
-                                                                                                  val labels: Array[H],
-                                                                                                  val matrix: KVMatrix[C, B]) extends Serializable {
+private[gbm] class InstanceBlock[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B, @spec(Float, Double) H](val weights: Array[H],
+                                                                                                               val labels: Array[H],
+                                                                                                               val matrix: KVMatrix[C, B]) extends Serializable {
   def size: Int = matrix.size
 
   require(labels.length % size == 0)
@@ -1660,7 +1664,7 @@ class InstanceBlock[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B, @spec(
 }
 
 
-object InstanceBlock extends Serializable {
+private[gbm] object InstanceBlock extends Serializable {
 
   def blockify[C, B, H](instances: Seq[(H, Array[H], KVVector[C, B])])
                        (implicit cc: ClassTag[C], cb: ClassTag[B],

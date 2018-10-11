@@ -108,9 +108,9 @@ class GBMRegressor(override val uid: String) extends
 
   def setMaxDrop(value: Int): this.type = set(maxDrop, value)
 
-  def setTopFraction(value: Double): this.type = set(topRate, value)
+  def setTopRate(value: Double): this.type = set(topRate, value)
 
-  def setOtherFraction(value: Double): this.type = set(otherRate, value)
+  def setOtherRate(value: Double): this.type = set(otherRate, value)
 
   def setInitialModelPath(value: String): this.type = set(initialModelPath, value)
 

@@ -32,12 +32,14 @@ private[gbm] object Tree extends Serializable with Logging {
                            cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                            cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                            ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
-    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
 
     val sc = data.sparkContext
 
+    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
+
     var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
-    val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc, boostConf.getCheckpointInterval, boostConf.getStorageLevel)
+    val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
+      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
 
     val histogramComputer = boostConf.getHistogramComputationType match {
       case Basic => new BasicHistogramComputer[T, N, C, B, H]
@@ -149,8 +151,8 @@ private[gbm] object Tree extends Serializable with Logging {
 
       updateRoots[T, N](roots, depth, splits)
 
-      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting finished, $numFinished trees growth finished," +
-        s" ${splits.size} leaves split, total gain=${splits.valuesIterator.map(_.gain).sum}.")
+      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting finished, $numFinished trees" +
+        s" growth finished, ${splits.size} leaves split, total gain=${splits.valuesIterator.map(_.gain).sum}.")
 
     } else {
       logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: no more splits found, trees growth finished.")

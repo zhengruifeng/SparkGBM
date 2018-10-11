@@ -12,9 +12,9 @@ object GBMClassifierExample {
 
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
-      .builder
+      .builder()
       .appName("GBMClassifierExample")
-      .getOrCreate
+      .getOrCreate()
 
     spark.sparkContext.setLogLevel("DEBUG")
 

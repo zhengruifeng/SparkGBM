@@ -41,10 +41,10 @@ private[gbm] object Tree extends Serializable with Logging {
     val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel)
 
-    val histogramComputer = boostConf.getHistogramComputationType match {
-      case Basic => new BasicHistogramComputer[T, N, C, B, H]
-      case Subtract => new SubtractHistogramComputer[T, N, C, B, H]
-      case Vote => new VoteHistogramComputer[T, N, C, B, H]
+    val updater = boostConf.getHistogramComputationType match {
+      case Basic => new BasicHistogramUpdater[T, N, C, B, H]
+      case Subtract => new SubtractHistogramUpdater[T, N, C, B, H]
+      case Vote => new VoteHistogramUpdater[T, N, C, B, H]
     }
 
     val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
@@ -68,28 +68,11 @@ private[gbm] object Tree extends Serializable with Logging {
       nodeIdBlocksCheckpointer.update(nodeIdBlocks)
 
 
-      boostConf.getHistogramComputationType match {
-        case Subtract =>
-          val histograms = histogramComputer.compute(data.zip(nodeIdBlocks.flatMap(_.iterator)),
-            boostConf, baseConf, splits, depth)
-          // column sampling by level
-          val sampled = if (boostConf.getColSampleRateByLevel < 1) {
-            histograms.sample(false, boostConf.getColSampleRateByLevel, baseConf.iteration + depth)
-          } else {
-            histograms
-          }
-          splits = findSplits[T, N, C, B, H](sampled, boostConf, baseConf, remainingLeaves, depth)
+      splits = findSplits[T, N, C, B, H](data, nodeIdBlocks.flatMap(_.iterator), updater,
+        boostConf, baseConf, splits, remainingLeaves, depth)
 
 
-        case _ =>
-          // For Basic and Vote Type, merge `ColSamplingByLevel` into the BaseConf.
-          val newBaseConfig = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
-          val histograms = histogramComputer.compute(data.zip(nodeIdBlocks.flatMap(_.iterator)),
-            boostConf, newBaseConfig, splits, depth)
-          splits = findSplits[T, N, C, B, H](histograms, boostConf, baseConf, remainingLeaves, depth)
-      }
-
-      histogramComputer.clear
+      updater.clear()
 
       // update trees
       updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
@@ -104,8 +87,8 @@ private[gbm] object Tree extends Serializable with Logging {
       logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
     }
 
-    nodeIdBlocksCheckpointer.clear
-    histogramComputer.destroy
+    nodeIdBlocksCheckpointer.clear()
+    updater.destroy()
 
     roots.map(TreeModel.createModel)
   }
@@ -252,6 +235,51 @@ private[gbm] object Tree extends Serializable with Logging {
   }
 
 
+  def findSplits[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
+                                nodeIds: RDD[Array[N]],
+                                updater: HistogramUpdater[T, N, C, B, H],
+                                boostConf: BoostConfig,
+                                baseConf: BaseConfig,
+                                splits: Map[(T, N), Split],
+                                remainingLeaves: Array[Int],
+                                depth: Int)
+                               (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Map[(T, N), Split] = {
+
+    updater match {
+      case _: SubtractHistogramUpdater[_, _, _, _, _] =>
+        // If we update histograms by subtraction, we should compute histogram on all
+        // columns selected by `colSamplingByTree`, since the updated histograms will be
+        // used in next level, and `colSamplingByLevel` in each level perform differently.
+        val histograms = updater.update(data.zip(nodeIds), boostConf, baseConf, splits, depth)
+          .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
+
+        // perform column sampling by level
+        val sampled = if (boostConf.getColSampleRateByLevel < 1) {
+          histograms.sample(false, boostConf.getColSampleRateByLevel, baseConf.iteration + depth)
+        } else {
+          histograms
+        }
+
+        findSplits[T, N, C, B, H](sampled, boostConf, baseConf, remainingLeaves, depth)
+
+
+      case _ =>
+        // For other types, we do not need to cache intermediate histograms,
+        // so we can merge `colSamplingByLevel` into the BaseConf.
+        val newBaseConfig = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
+
+        val histograms = updater.update(data.zip(nodeIds), boostConf, newBaseConfig, splits, depth)
+          .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
+
+        findSplits[T, N, C, B, H](histograms, boostConf, baseConf, remainingLeaves, depth)
+    }
+  }
+
+
   /**
     * Search the optimal splits on all leaves
     *
@@ -267,7 +295,7 @@ private[gbm] object Tree extends Serializable with Logging {
                                 cn: ClassTag[N], inn: Integral[N],
                                 cc: ClassTag[C], inc: Integral[C],
                                 cb: ClassTag[B], inb: Integral[B],
-                                ch: ClassTag[H], nuh: Numeric[H], fdh: NumericExt[H]): Map[(T, N), Split] = {
+                                ch: ClassTag[H], nuh: Numeric[H]): Map[(T, N), Split] = {
     val sc = histograms.sparkContext
 
     val bcRemainingLeaves = sc.broadcast(remainingLeaves)

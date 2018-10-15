@@ -270,7 +270,7 @@ private[gbm] object Tree extends Serializable with Logging {
       case _ =>
         // For other types, we do not need to cache intermediate histograms,
         // so we can merge `colSamplingByLevel` into the BaseConf.
-        val newBaseConfig = BaseConfig.mergeLevelSampling(boostConf, baseConf, depth)
+        val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
 
         val histograms = updater.update(data.zip(nodeIds), boostConf, newBaseConfig, splits, depth)
           .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
@@ -376,6 +376,191 @@ private[gbm] object Tree extends Serializable with Logging {
     bcRemainingLeaves.destroy(false)
 
     splits.toMap
+  }
+
+
+  /**
+    *
+    * @param data      instances containing (bins, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
+    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] -> {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
+    * @param boostConf boosting configure
+    * @param baseConf  trees-growth configure
+    * @return tree models
+    */
+  def trainVertical[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
+                                   vdata: RDD[(Array[B], Array[T], Array[H])],
+                                   boostConf: BoostConfig,
+                                   baseConf: BaseConfig)
+                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                   cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                   cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+
+    val sc = data.sparkContext
+
+    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
+
+    var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
+    val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
+      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
+
+
+    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
+    val remainingLeaves = Array.fill(baseConf.numTrees)(boostConf.getMaxLeaves - 1)
+    val finished = Array.fill(baseConf.numTrees)(false)
+
+    var depth = 0
+    var splits = Map.empty[(T, N), Split]
+
+
+    val numVParts = 10
+
+
+    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
+      val start = System.nanoTime
+
+      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
+
+      if (depth == 0) {
+        nodeIdBlocks = computeNodeIdBlocks[T, N, C, B, H](data, boostConf)
+      } else {
+        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B, H](data, nodeIdBlocks, boostConf, splits)
+      }
+      nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
+      nodeIdBlocksCheckpointer.update(nodeIdBlocks)
+
+
+      // merge `colSamplingByLevel` into the BaseConf.
+      val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
+
+      val neededVPartIds = boostConf.getColumnIds[C]().iterator.zipWithIndex
+        .filter { case (colIds, _) =>
+          colIds.exists { colId =>
+            Iterator.range(0, newBaseConfig.numTrees)
+              .exists(treeId => newBaseConfig.colSelector.contains(treeId, colId))
+          }
+        }.map(_._2).toArray
+
+
+      if (depth == 0) {
+        vdata.map { case (subBinVec, treeIds, gradHess) =>
+          (subBinVec, treeIds, Array.fill(treeIds.length)(inn.one), gradHess)
+        }
+
+      } else {
+
+        import RDDFunctions._
+        nodeIdBlocks.broadcast(numVParts, neededVPartIds)
+          .flatMap(_.iterator).zipWithoutSizeCheck(vdata)
+          .map { case (nodeIds, (subBinVec, treeIds, gradHess)) =>
+            (subBinVec, treeIds, nodeIds, gradHess)
+          }
+      }
+
+
+      val bcNodeIdBlocks = nodeIdBlocks.mapPartitionsWithIndex { case (hPartId, iter) =>
+
+        var cnt = 0L
+
+        iter.flatMap { nodeIdBlock =>
+          cnt += 1
+          Iterator.range(0, numVParts).map { vPartId =>
+            ((vPartId, hPartId, cnt - 1), nodeIdBlock)
+          }
+        }
+      }
+
+
+      splits
+
+
+
+      // update trees
+      updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
+      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished, duration ${(System.nanoTime - start) / 1e9} seconds")
+
+      depth += 1
+    }
+
+
+    vdata.mapPartitionsWithIndex { case (vPartId, iter) =>
+
+      val colIds = boostConf.getColumnIds[C](vPartId)
+      val numCols = colIds.length
+
+      var rowId = 0L
+      iter.foreach { x: (Array[B], Array[T], Array[H]) =>
+
+
+        ???
+      }
+
+
+      iter
+    }
+
+
+    ???
+
+    //    val sc = data.sparkContext
+    //
+    //    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
+    //
+    //    var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
+    //    val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
+    //      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
+    //
+    //    val updater = boostConf.getHistogramComputationType match {
+    //      case Basic => new BasicHistogramUpdater[T, N, C, B, H]
+    //      case Subtract => new SubtractHistogramUpdater[T, N, C, B, H]
+    //      case Vote => new VoteHistogramUpdater[T, N, C, B, H]
+    //    }
+    //
+    //    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
+    //    val remainingLeaves = Array.fill(baseConf.numTrees)(boostConf.getMaxLeaves - 1)
+    //    val finished = Array.fill(baseConf.numTrees)(false)
+    //
+    //    var depth = 0
+    //    var splits = Map.empty[(T, N), Split]
+    //
+    //    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
+    //      val start = System.nanoTime
+    //
+    //      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
+    //
+    //      if (depth == 0) {
+    //        nodeIdBlocks = computeNodeIdBlocks[T, N, C, B, H](data, boostConf)
+    //      } else {
+    //        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B, H](data, nodeIdBlocks, boostConf, splits)
+    //      }
+    //      nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
+    //      nodeIdBlocksCheckpointer.update(nodeIdBlocks)
+    //
+    //
+    //      splits = findSplits[T, N, C, B, H](data, nodeIdBlocks.flatMap(_.iterator), updater,
+    //        boostConf, baseConf, splits, remainingLeaves, depth)
+    //
+    //
+    //      updater.clear()
+    //
+    //      // update trees
+    //      updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
+    //      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished, duration ${(System.nanoTime - start) / 1e9} seconds")
+    //
+    //      depth += 1
+    //    }
+    //
+    //    if (depth >= boostConf.getMaxDepth) {
+    //      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, trees growth finished")
+    //    } else {
+    //      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
+    //    }
+    //
+    //    nodeIdBlocksCheckpointer.clear()
+    //    updater.destroy()
+    //
+    //    roots.map(TreeModel.createModel)
   }
 }
 

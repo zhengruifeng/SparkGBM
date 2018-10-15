@@ -3,6 +3,7 @@ package org.apache.spark.ml.gbm
 import java.{util => ju}
 
 import scala.collection.BitSet
+import scala.reflect.ClassTag
 import scala.util.Random
 
 import org.apache.spark.internal.Logging
@@ -671,12 +672,20 @@ class BoostConfig extends Logging with Serializable {
   private[gbm] def isRank(colId: Int): Boolean = rankCols.contains(colId)
 
   private[gbm] def isSeq(colId: Int): Boolean = !isCat(colId)
+
+
+  private[gbm] def getColumnIds[C]()
+                                  (implicit cc: ClassTag[C], inc: Integral[C]): Array[Array[C]] = Array.empty
+
+  private[gbm] def getColumnIds[C](vPartId: Int)
+                                  (implicit cc: ClassTag[C], inc: Integral[C]): Array[C] = Array.empty
 }
 
 
 private[gbm] class BaseConfig(val iteration: Int,
                               val numTrees: Int,
-                              val selector: ColumSelector) extends Serializable
+                              val colSelector: Selector,
+                              val rowSelector: Option[Selector] = None) extends Serializable
 
 
 private[gbm] object BaseConfig extends Serializable {
@@ -685,35 +694,36 @@ private[gbm] object BaseConfig extends Serializable {
     * The default `BaseConfig` passed in `Tree` contains selector for tree-wise column sampling.
     * Call this function to merge level-wise column sampling if needed.
     */
-  def mergeLevelSampling(boostConf: BoostConfig,
-                         baseConf: BaseConfig,
-                         depth: Int): BaseConfig = {
+  def mergeColSamplingByLevel(boostConf: BoostConfig,
+                              baseConf: BaseConfig,
+                              depth: Int): BaseConfig = {
 
     if (boostConf.getColSampleRateByLevel == 1) {
       baseConf
     } else {
       val numBaseModels = baseConf.numTrees / boostConf.getRawSize
-      val levelSelector = ColumSelector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols, numBaseModels,
+      val levelSelector = Selector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols, numBaseModels,
         boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
-      val unionSelector = ColumSelector.union(baseConf.selector, levelSelector)
-      new BaseConfig(baseConf.iteration, baseConf.numTrees, unionSelector)
+      val unionSelector = Selector.union(baseConf.colSelector, levelSelector)
+      new BaseConfig(baseConf.iteration, baseConf.numTrees, unionSelector, baseConf.rowSelector)
     }
   }
 }
 
 
-
 /**
-  * Indicator that indicate where a tree contains a column in column-sampling (ByTree or/and ByLevel)
+  * Indicator that indicate whether:
+  * 1, a tree contains a column in column-sampling (ByTree or/and ByLevel)
+  * 2, or, a tree contains a row in sub-sampling
   */
-private[gbm] trait ColumSelector extends Serializable {
+private[gbm] trait Selector extends Serializable {
 
-  def contains[T, C](treeId: T, colId: C)
+  def contains[T, C](treeId: T, index: C)
                     (implicit int: Integral[T], inc: Integral[C]): Boolean
 }
 
 
-private[gbm] object ColumSelector extends Serializable {
+private[gbm] object Selector extends Serializable {
 
   /**
     * Initialize a new selector based on given parameters.
@@ -723,7 +733,7 @@ private[gbm] object ColumSelector extends Serializable {
              numCols: Int,
              numBaseModels: Int,
              rawSize: Int,
-             seed: Long): ColumSelector = {
+             seed: Long): Selector = {
 
     if (colSampleRate == 1) {
       TrueSelector()
@@ -757,7 +767,7 @@ private[gbm] object ColumSelector extends Serializable {
   /**
     * Merge several selectors into one, will skip redundant `TrueSelector`.
     */
-  def union(selectors: ColumSelector*): ColumSelector = {
+  def union(selectors: Selector*): Selector = {
     require(selectors.nonEmpty)
 
     val nonTrues = selectors.flatMap {
@@ -774,9 +784,9 @@ private[gbm] object ColumSelector extends Serializable {
 }
 
 
-private[gbm] case class TrueSelector() extends ColumSelector {
+private[gbm] case class TrueSelector() extends Selector {
 
-  override def contains[T, C](treeId: T, colId: C)
+  override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = true
 
   override def toString: String = "TrueSelector"
@@ -784,35 +794,35 @@ private[gbm] case class TrueSelector() extends ColumSelector {
 
 
 private[gbm] case class HashSelector(maximum: Int,
-                                     seeds: Array[Int]) extends ColumSelector {
+                                     seeds: Array[Int]) extends Selector {
   require(maximum >= 0)
 
-  override def contains[T, C](treeId: T, colId: C)
+  override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    Murmur3_x86_32.hashLong(inc.toLong(colId), seeds(int.toInt(treeId))).abs < maximum
+    Murmur3_x86_32.hashLong(inc.toLong(index), seeds(int.toInt(treeId))).abs < maximum
   }
 
   override def toString: String = s"HashSelector(maximum: $maximum, seeds: ${seeds.mkString("[", ",", "]")})"
 }
 
 
-private[gbm] case class SetSelector(sets: Array[Array[Int]]) extends ColumSelector {
+private[gbm] case class SetSelector(sets: Array[Array[Int]]) extends Selector {
   require(sets.nonEmpty)
   require(sets.forall(set => Utils.validateOrdering[Int](set.iterator).size > 0))
 
-  override def contains[T, C](treeId: T, colId: C)
+  override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toInt(colId)) >= 0
+    ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toInt(index)) >= 0
   }
 
   override def toString: String = s"SetSelector(sets: ${sets.mkString("{", ",", "}")})"
 }
 
 
-private[gbm] case class UnionSelector(selectors: Seq[ColumSelector]) extends ColumSelector {
-  override def contains[T, C](treeId: T, colId: C)
+private[gbm] case class UnionSelector(selectors: Seq[Selector]) extends Selector {
+  override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    selectors.forall(_.contains[T, C](treeId, colId))
+    selectors.forall(_.contains[T, C](treeId, index))
   }
 
   override def toString: String = s"UnionSelector(selectors: ${selectors.mkString("[", ",", "]")})"

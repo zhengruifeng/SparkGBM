@@ -4,6 +4,7 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
 
+import org.apache.spark.Partitioner
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.random.XORShiftRandom
 
@@ -105,6 +106,56 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
               .filter(_._2 % k == i)
               .map(_._1)
           }
+        }
+    }
+  }
+
+
+  /**
+    * broadcast the whole rdd so that each result partition contains all the
+    * values, and keep the original global ordering.
+    */
+  def broadcast(numParts: Int): RDD[T] = {
+    broadcast(numParts, Array.range(0, numParts))
+  }
+
+
+  /**
+    * broadcast the whole rdd so that each selected result partition contains all the
+    * values, and keep the original global ordering.
+    */
+  def broadcast(numParts: Int,
+                partIds: Array[Int]): RDD[T] = {
+
+    self.mapPartitionsWithIndex { case (sourcePartId, iter) =>
+      var cnt = 0L
+
+      iter.flatMap { value =>
+        cnt += 1
+        partIds.iterator.map { destPartId =>
+          ((destPartId, sourcePartId, cnt - 1), value)
+        }
+      }
+
+    }.repartitionAndSortWithinPartitions(new Partitioner {
+      override def numPartitions: Int = numParts
+
+      override def getPartition(key: Any): Int = key match {
+        case (destPartId: Int, _, _) => destPartId
+      }
+
+    }).map(_._2)
+  }
+
+
+  def zipWithoutSizeCheck[U: ClassTag](other: RDD[U]): RDD[(T, U)] = {
+
+    self.zipPartitions(other, preservesPartitioning = false) {
+      (thisIter, otherIter) =>
+        new Iterator[(T, U)] {
+          def hasNext: Boolean = thisIter.hasNext && otherIter.hasNext
+
+          def next(): (T, U) = (thisIter.next(), otherIter.next())
         }
     }
   }

@@ -149,5 +149,10 @@ private[gbm] object KVMatrix extends Serializable {
 
     new KVMatrix[K, V](indexBuilder.result, valueBuilder.result, steps, vecSize)
   }
+
+  def build[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](seq: Iterable[KVVector[K, V]])
+                                                                 (implicit ck: ClassTag[K], cv: ClassTag[V]): KVMatrix[K, V] = {
+    build[K, V](seq.iterator)
+  }
 }
 

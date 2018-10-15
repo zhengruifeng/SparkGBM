@@ -2,12 +2,12 @@ package org.apache.spark.ml.gbm.util
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkContext
+import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.gbm.linalg._
-import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector}
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.ml.linalg._
+import org.apache.spark.sql._
 
 
 private[gbm] object Utils extends Logging {
@@ -515,7 +515,7 @@ private[gbm] object Utils extends Logging {
         classOf[LeafNode],
         classOf[NodeData],
 
-        classOf[ColumSelector],
+        classOf[Selector],
         classOf[TrueSelector],
         classOf[HashSelector],
         classOf[SetSelector],
@@ -624,26 +624,6 @@ private[gbm] object Utils extends Logging {
         classOf[CompactArray[Long]],
         classOf[CompactArray[Float]],
         classOf[CompactArray[Double]],
-
-        classOf[InstanceBlock[Any, Any, Any]],
-        classOf[InstanceBlock[Byte, Byte, Float]],
-        classOf[InstanceBlock[Byte, Byte, Double]],
-        classOf[InstanceBlock[Byte, Short, Float]],
-        classOf[InstanceBlock[Byte, Short, Double]],
-        classOf[InstanceBlock[Byte, Int, Float]],
-        classOf[InstanceBlock[Byte, Int, Double]],
-        classOf[InstanceBlock[Short, Byte, Float]],
-        classOf[InstanceBlock[Short, Byte, Double]],
-        classOf[InstanceBlock[Short, Short, Float]],
-        classOf[InstanceBlock[Short, Short, Double]],
-        classOf[InstanceBlock[Short, Int, Float]],
-        classOf[InstanceBlock[Short, Int, Double]],
-        classOf[InstanceBlock[Int, Byte, Float]],
-        classOf[InstanceBlock[Int, Byte, Double]],
-        classOf[InstanceBlock[Int, Short, Float]],
-        classOf[InstanceBlock[Int, Short, Double]],
-        classOf[InstanceBlock[Int, Int, Float]],
-        classOf[InstanceBlock[Int, Int, Double]],
 
         classOf[SkipNodePratitioner[Any, Any, Any]],
         classOf[SkipNodePratitioner[Byte, Byte, Byte]],

@@ -99,6 +99,11 @@ object ArrayBlock extends Serializable {
     }
   }
 
+  def build[@spec(Byte, Short, Int, Long, Float, Double) V](seq: Iterable[Array[V]])
+                                                           (implicit cv: ClassTag[V]): ArrayBlock[V] = {
+    build[V](seq.iterator)
+  }
+
   def fill[@spec(Byte, Short, Int, Long, Float, Double) V](array: Array[V], n: Int)
                                                           (implicit cv: ClassTag[V]): ArrayBlock[V] = {
     val iter = Iterator.range(0, n).map(_ => array)

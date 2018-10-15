@@ -275,26 +275,17 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
     } else {
 
+      import RDDFunctions._
+
       val numParts = localHistograms.getNumPartitions
 
-      val duplicatedGlobalVoted = globalVoted
-        .flatMap { case ((treeId, nodeId), colIds) =>
-          Iterator.range(0, numParts)
-            .map { partId => ((partId, treeId, nodeId), colIds) }
-
-        }.repartitionAndSortWithinPartitions(new Partitioner {
-        override def numPartitions: Int = numParts
-
-        override def getPartition(key: Any): Int = key match {
-          case (partId: Int, _: T, _: N) => partId
-        }
-      }).setName("Global Voted Top2K (Duplicated) (Sorted)")
-
+      val duplicatedGlobalVoted = globalVoted.broadcast(numParts)
+        .setName("Global Voted Top2K (Duplicated) (Sorted)")
 
       localHistograms.zipPartitions(duplicatedGlobalVoted)(f = {
         case (localIter, globalIter) =>
           val flattenIter = globalIter
-            .flatMap { case ((_, treeId, nodeId), colIds) =>
+            .flatMap { case ((treeId, nodeId), colIds) =>
               colIds.iterator.map { colId => ((treeId, nodeId, colId), null) }
             }
 
@@ -362,14 +353,14 @@ private[gbm] object HistogramUpdater extends Logging {
 
             // ignore zero-index bins
             binVec.activeIterator
-              .filter { case (colId, _) => baseConf.selector.contains[T, C](treeId, colId) }
+              .filter { case (colId, _) => baseConf.colSelector.contains[T, C](treeId, colId) }
               .map { case (colId, bin) => ((treeId, nodeId, colId), (bin, grad, hess)) }
           }
 
       } ++ histSums.iterator.flatMap { case ((treeId, nodeId), (gradSum, hessSum)) =>
         // make sure all available (treeId, nodeId, colId) tuples are taken into account
         // by the way, store sum of hist in zero-index bin
-        Iterator.range(0, boostConf.getNumCols).filter(colId => baseConf.selector.contains[T, Int](treeId, colId))
+        Iterator.range(0, boostConf.getNumCols).filter(colId => baseConf.colSelector.contains(treeId, colId))
           .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, gradSum, hessSum)) }
       }
 

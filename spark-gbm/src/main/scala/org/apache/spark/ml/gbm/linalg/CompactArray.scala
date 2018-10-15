@@ -32,5 +32,10 @@ object CompactArray extends Serializable {
     val (values, times) = Utils.reduceIterByKey[V, Int](iter2, _ + _).toArray.unzip
     new CompactArray[V](values, times)
   }
+
+  def build[@spec(Byte, Short, Int, Long, Float, Double) V](seq: Iterable[V])
+                                                           (implicit cv: ClassTag[V], orv: Ordering[V]): CompactArray[V] = {
+    build[V](seq.iterator)
+  }
 }
 

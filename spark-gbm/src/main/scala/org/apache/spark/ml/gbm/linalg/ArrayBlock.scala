@@ -23,6 +23,8 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
 
   def isEmpty: Boolean = size == 0
 
+  def nonEmpty: Boolean = !isEmpty
+
   def size: Int = {
     if (steps.nonEmpty) {
       steps.length

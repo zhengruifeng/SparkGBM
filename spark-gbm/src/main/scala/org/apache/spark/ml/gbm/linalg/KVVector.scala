@@ -390,11 +390,12 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
   override def slice(sortedIndices: Array[Int])
                     (implicit ck: ClassTag[K], ink: Integral[K],
                      cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] = {
-    val iter = sortedIndices.iterator.map(i => (ink.fromInt(i), null))
+    val iter = sortedIndices.iterator.map(ink.fromInt).zipWithIndex
 
     val (newIndices, newValues) =
-      Utils.innerJoinSortedIters(activeIterator, iter, false)
-        .map(t => (t._1, t._2)).toArray.unzip
+      Utils.innerJoinSortedIters(activeIterator, iter)
+        .map { case (_, value, newIndex) => (ink.fromInt(newIndex), value) }
+        .toArray.unzip
 
     KVVector.sparse[K, V](sortedIndices.length, newIndices, newValues)
   }

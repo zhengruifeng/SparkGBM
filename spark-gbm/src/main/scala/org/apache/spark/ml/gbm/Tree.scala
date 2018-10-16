@@ -24,14 +24,14 @@ private[gbm] object Tree extends Serializable with Logging {
     * @param baseConf  trees-growth configure
     * @return tree models
     */
-  def train[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
-                           boostConf: BoostConfig,
-                           baseConf: BaseConfig)
-                          (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                           cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                           cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                           cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                           ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+  def trainHorizontal[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
+                                     boostConf: BoostConfig,
+                                     baseConf: BaseConfig)
+                                    (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                     cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                     cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                     cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
 
     val sc = data.sparkContext
 
@@ -55,12 +55,12 @@ private[gbm] object Tree extends Serializable with Logging {
     var splits = Map.empty[(T, N), Split]
 
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
-      val start = System.nanoTime
+      val start = System.nanoTime()
 
       logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
 
       if (depth == 0) {
-        nodeIdBlocks = computeNodeIdBlocks[T, N, C, B, H](data, boostConf)
+        nodeIdBlocks = initializeNodeIdBlocks[T, N, C, B, H](data, boostConf)
       } else {
         nodeIdBlocks = updateNodeIdBlocks[T, N, C, B, H](data, nodeIdBlocks, boostConf, splits)
       }
@@ -76,7 +76,8 @@ private[gbm] object Tree extends Serializable with Logging {
 
       // update trees
       updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
-      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished, duration ${(System.nanoTime - start) / 1e9} seconds")
+      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished," +
+        s" duration ${(System.nanoTime - start) / 1e9} seconds")
 
       depth += 1
     }
@@ -89,6 +90,111 @@ private[gbm] object Tree extends Serializable with Logging {
 
     nodeIdBlocksCheckpointer.clear()
     updater.destroy()
+
+    roots.map(TreeModel.createModel)
+  }
+
+
+  /**
+    *
+    * @param data      instances containing (binVec, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
+    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] -> {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
+    * @param vdata     vertical instances containing (subBinVec (col-sliced binVec), treeIds, grad-hess),
+    *                  grad&hess is also recurrent for compression.
+    * @param boostConf boosting configure
+    * @param baseConf  trees-growth configure
+    * @return tree models
+    */
+  def trainVertical[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
+                                   vdata: RDD[(KVVector[C, B], Array[T], Array[H])],
+                                   boostConf: BoostConfig,
+                                   baseConf: BaseConfig)
+                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                   cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                   cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+
+    val sc = data.sparkContext
+
+    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
+
+    var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
+    val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
+      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
+
+
+    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
+    val remainingLeaves = Array.fill(baseConf.numTrees)(boostConf.getMaxLeaves - 1)
+    val finished = Array.fill(baseConf.numTrees)(false)
+
+    var depth = 0
+    var splits = Map.empty[(T, N), Split]
+
+    val numVParts = vdata.getNumPartitions
+
+    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
+      val start = System.nanoTime
+
+      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
+
+      if (depth == 0) {
+        nodeIdBlocks = initializeNodeIdBlocks[T, N, C, B, H](data, boostConf)
+      } else {
+        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B, H](data, nodeIdBlocks, boostConf, splits)
+      }
+      nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
+      nodeIdBlocksCheckpointer.update(nodeIdBlocks)
+
+
+      // merge `colSamplingByLevel` into the BaseConf.
+      val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
+
+
+      val vdateWithNodeIds = if (depth == 0) {
+        vdata.map { case (subBinVec, treeIds, gradHess) =>
+          ((subBinVec, treeIds, gradHess), Array.fill(treeIds.length)(inn.one))
+        }
+
+      } else {
+        import RDDFunctions._
+
+        val selectedVPartIds = boostConf.getVerticalColumnIds[C]().iterator
+          .zipWithIndex.filter { case (colIds, _) =>
+          colIds.exists { colId =>
+            Iterator.range(0, newBaseConfig.numTrees)
+              .exists(treeId => newBaseConfig.colSelector.contains(treeId, colId))
+          }
+        }.map(_._2).toArray
+
+        nodeIdBlocks.allgather(numVParts, selectedVPartIds)
+          .flatMap(_.iterator)
+          .zipWithoutSizeCheck(vdata)
+          .map { case (nodeIds, (subBinVec, treeIds, gradHess)) =>
+            ((subBinVec, treeIds, gradHess), nodeIds)
+          }
+      }
+
+      val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](vdateWithNodeIds,
+        boostConf, newBaseConfig, (n: N) => true)
+
+      splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, remainingLeaves, depth)
+
+      // update trees
+      updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
+      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished," +
+        s" duration ${(System.nanoTime - start) / 1e9} seconds")
+
+      depth += 1
+    }
+
+    if (depth >= boostConf.getMaxDepth) {
+      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, trees growth finished")
+    } else {
+      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
+    }
+
+    nodeIdBlocksCheckpointer.clear()
 
     roots.map(TreeModel.createModel)
   }
@@ -182,17 +288,17 @@ private[gbm] object Tree extends Serializable with Logging {
   }
 
 
-  def computeNodeIdBlocks[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
-                                         boostConf: BoostConfig)
-                                        (implicit ct: ClassTag[T], int: Integral[T],
-                                         cn: ClassTag[N], inn: Integral[N],
-                                         cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                         cb: ClassTag[B], inb: Integral[B],
-                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[N]] = {
+  def initializeNodeIdBlocks[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
+                                            boostConf: BoostConfig)
+                                           (implicit ct: ClassTag[T], int: Integral[T],
+                                            cn: ClassTag[N], inn: Integral[N],
+                                            cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                            cb: ClassTag[B], inb: Integral[B],
+                                            ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[N]] = {
     val blockSize = boostConf.getBlockSize
 
-    data.mapPartitions { iter =>
-      iter.map { case (_, treeIds, _) => treeIds.length }
+    data.mapPartitions {
+      _.map { case (_, treeIds, _) => treeIds.length }
         .grouped(blockSize)
         .map { lens =>
           val it = lens.iterator.map(len => Array.fill(len)(inn.one))
@@ -213,25 +319,24 @@ private[gbm] object Tree extends Serializable with Logging {
                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[N]] = {
     val blockSize = boostConf.getBlockSize
 
-    data.zip(nodeIdBlocks.flatMap(_.iterator))
-      .mapPartitions { iter =>
-        iter.map { case ((bins, treeIds, _), nodeIds) =>
-          treeIds.zip(nodeIds).map { case (treeId, nodeId) =>
-            val split = splits.get((treeId, nodeId))
-            if (split.nonEmpty) {
-              val leftNodeId = inn.plus(nodeId, nodeId)
-              if (split.get.goLeft[B](bins.apply)) {
-                leftNodeId
-              } else {
-                inn.plus(leftNodeId, inn.one)
-              }
+    data.zip(nodeIdBlocks.flatMap(_.iterator)).mapPartitions {
+      _.map { case ((bins, treeIds, _), nodeIds) =>
+        treeIds.zip(nodeIds).map { case (treeId, nodeId) =>
+          val split = splits.get((treeId, nodeId))
+          if (split.nonEmpty) {
+            val leftNodeId = inn.plus(nodeId, nodeId)
+            if (split.get.goLeft[B](bins.apply)) {
+              leftNodeId
             } else {
-              nodeId
+              inn.plus(leftNodeId, inn.one)
             }
+          } else {
+            nodeId
           }
-        }.grouped(blockSize)
-          .map { seq => ArrayBlock.build[N](seq.iterator) }
-      }
+        }
+      }.grouped(blockSize)
+        .map { seq => ArrayBlock.build[N](seq.iterator) }
+    }
   }
 
 
@@ -377,191 +482,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
     splits.toMap
   }
-
-
-  /**
-    *
-    * @param data      instances containing (bins, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
-    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] -> {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
-    * @param boostConf boosting configure
-    * @param baseConf  trees-growth configure
-    * @return tree models
-    */
-  def trainVertical[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
-                                   vdata: RDD[(Array[B], Array[T], Array[H])],
-                                   boostConf: BoostConfig,
-                                   baseConf: BaseConfig)
-                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                   cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                   cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
-
-    val sc = data.sparkContext
-
-    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
-
-    var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
-    val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
-      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
-
-
-    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
-    val remainingLeaves = Array.fill(baseConf.numTrees)(boostConf.getMaxLeaves - 1)
-    val finished = Array.fill(baseConf.numTrees)(false)
-
-    var depth = 0
-    var splits = Map.empty[(T, N), Split]
-
-
-    val numVParts = 10
-
-
-    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
-      val start = System.nanoTime
-
-      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
-
-      if (depth == 0) {
-        nodeIdBlocks = computeNodeIdBlocks[T, N, C, B, H](data, boostConf)
-      } else {
-        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B, H](data, nodeIdBlocks, boostConf, splits)
-      }
-      nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
-      nodeIdBlocksCheckpointer.update(nodeIdBlocks)
-
-
-      // merge `colSamplingByLevel` into the BaseConf.
-      val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
-
-      val neededVPartIds = boostConf.getColumnIds[C]().iterator.zipWithIndex
-        .filter { case (colIds, _) =>
-          colIds.exists { colId =>
-            Iterator.range(0, newBaseConfig.numTrees)
-              .exists(treeId => newBaseConfig.colSelector.contains(treeId, colId))
-          }
-        }.map(_._2).toArray
-
-
-      if (depth == 0) {
-        vdata.map { case (subBinVec, treeIds, gradHess) =>
-          (subBinVec, treeIds, Array.fill(treeIds.length)(inn.one), gradHess)
-        }
-
-      } else {
-
-        import RDDFunctions._
-        nodeIdBlocks.broadcast(numVParts, neededVPartIds)
-          .flatMap(_.iterator).zipWithoutSizeCheck(vdata)
-          .map { case (nodeIds, (subBinVec, treeIds, gradHess)) =>
-            (subBinVec, treeIds, nodeIds, gradHess)
-          }
-      }
-
-
-      val bcNodeIdBlocks = nodeIdBlocks.mapPartitionsWithIndex { case (hPartId, iter) =>
-
-        var cnt = 0L
-
-        iter.flatMap { nodeIdBlock =>
-          cnt += 1
-          Iterator.range(0, numVParts).map { vPartId =>
-            ((vPartId, hPartId, cnt - 1), nodeIdBlock)
-          }
-        }
-      }
-
-
-      splits
-
-
-
-      // update trees
-      updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
-      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished, duration ${(System.nanoTime - start) / 1e9} seconds")
-
-      depth += 1
-    }
-
-
-    vdata.mapPartitionsWithIndex { case (vPartId, iter) =>
-
-      val colIds = boostConf.getColumnIds[C](vPartId)
-      val numCols = colIds.length
-
-      var rowId = 0L
-      iter.foreach { x: (Array[B], Array[T], Array[H]) =>
-
-
-        ???
-      }
-
-
-      iter
-    }
-
-
-    ???
-
-    //    val sc = data.sparkContext
-    //
-    //    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
-    //
-    //    var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
-    //    val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
-    //      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
-    //
-    //    val updater = boostConf.getHistogramComputationType match {
-    //      case Basic => new BasicHistogramUpdater[T, N, C, B, H]
-    //      case Subtract => new SubtractHistogramUpdater[T, N, C, B, H]
-    //      case Vote => new VoteHistogramUpdater[T, N, C, B, H]
-    //    }
-    //
-    //    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
-    //    val remainingLeaves = Array.fill(baseConf.numTrees)(boostConf.getMaxLeaves - 1)
-    //    val finished = Array.fill(baseConf.numTrees)(false)
-    //
-    //    var depth = 0
-    //    var splits = Map.empty[(T, N), Split]
-    //
-    //    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
-    //      val start = System.nanoTime
-    //
-    //      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
-    //
-    //      if (depth == 0) {
-    //        nodeIdBlocks = computeNodeIdBlocks[T, N, C, B, H](data, boostConf)
-    //      } else {
-    //        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B, H](data, nodeIdBlocks, boostConf, splits)
-    //      }
-    //      nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
-    //      nodeIdBlocksCheckpointer.update(nodeIdBlocks)
-    //
-    //
-    //      splits = findSplits[T, N, C, B, H](data, nodeIdBlocks.flatMap(_.iterator), updater,
-    //        boostConf, baseConf, splits, remainingLeaves, depth)
-    //
-    //
-    //      updater.clear()
-    //
-    //      // update trees
-    //      updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
-    //      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished, duration ${(System.nanoTime - start) / 1e9} seconds")
-    //
-    //      depth += 1
-    //    }
-    //
-    //    if (depth >= boostConf.getMaxDepth) {
-    //      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, trees growth finished")
-    //    } else {
-    //      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
-    //    }
-    //
-    //    nodeIdBlocksCheckpointer.clear()
-    //    updater.destroy()
-    //
-    //    roots.map(TreeModel.createModel)
-  }
 }
+
 
 

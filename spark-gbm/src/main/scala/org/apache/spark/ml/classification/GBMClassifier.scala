@@ -102,6 +102,8 @@ class GBMClassifier(override val uid: String)
 
   def setEvaluateFunc(value: Array[String]): this.type = set(evaluateFunc, value)
 
+  def setParallelismType(value: String): this.type = set(parallelismType, value)
+
   def setBoostType(value: String): this.type = set(boostType, value)
 
   def setDropRate(value: Double): this.type = set(dropRate, value)
@@ -140,9 +142,9 @@ class GBMClassifier(override val uid: String)
 
   def setTrialParallelism(value: Double): this.type = set(trialParallelism, value)
 
-  def setSubSampleType(value: String): this.type  = set(subSampleType, value)
+  def setSubSampleType(value: String): this.type = set(subSampleType, value)
 
-  def setHistogramComputationType(value: String): this.type  = set(histogramComputationType, value)
+  def setHistogramComputationType(value: String): this.type = set(histogramComputationType, value)
 
   def setBaseModelParallelism(value: Int): this.type = set(baseModelParallelism, value)
 
@@ -245,6 +247,7 @@ class GBMClassifier(override val uid: String)
       .setStorageLevel(StorageLevel.fromString($(storageLevel)))
       .setAggregationDepth($(aggregationDepth))
       .setSeed($(seed))
+      .setParallelismType($(parallelismType))
       .setBoostType($(boostType))
       .setDropRate($(dropRate))
       .setDropSkip($(dropSkip))

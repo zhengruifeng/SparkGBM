@@ -98,6 +98,8 @@ class GBMRegressor(override val uid: String) extends
 
   def setEvaluateFunc(value: Array[String]): this.type = set(evaluateFunc, value)
 
+  def setParallelismType(value: String): this.type = set(parallelismType, value)
+
   def setBoostType(value: String): this.type = set(boostType, value)
 
   def setDropRate(value: Double): this.type = set(dropRate, value)
@@ -228,6 +230,7 @@ class GBMRegressor(override val uid: String) extends
       .setStorageLevel(StorageLevel.fromString($(storageLevel)))
       .setAggregationDepth($(aggregationDepth))
       .setSeed($(seed))
+      .setParallelismType($(parallelismType))
       .setBoostType($(boostType))
       .setDropRate($(dropRate))
       .setDropSkip($(dropSkip))

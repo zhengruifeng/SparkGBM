@@ -16,6 +16,21 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   setDefault(checkpointInterval -> 10)
 
+
+  /**
+    * Parallelism type.
+    * (default = data)
+    *
+    * @group param
+    */
+  final val parallelismType: Param[String] =
+    new Param[String](this, "parallelismType", "Parallelism type.",
+      ParamValidators.inArray[String](Array("data", "feature")))
+
+  def getParallelismType: String = $(parallelismType)
+
+  setDefault(parallelismType -> "data")
+
   /**
     * Leaf index column name.
     * (default = leafCol)

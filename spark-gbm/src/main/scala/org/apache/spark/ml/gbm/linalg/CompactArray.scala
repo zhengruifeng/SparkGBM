@@ -17,6 +17,10 @@ class CompactArray[@spec(Byte, Short, Int, Long, Float, Double) V](val values: A
 
   def size: Int = times.sum
 
+  def isEmpty: Boolean = size == 0
+
+  def nonEmpty: Boolean = !isEmpty
+
   def iterator(): Iterator[V] =
     values.iterator.zip(times.iterator)
       .flatMap { case (value, time) => Iterator.fill(time)(value) }

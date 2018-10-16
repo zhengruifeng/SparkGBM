@@ -39,6 +39,9 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
     }
   }
 
+  def isEmpty: Boolean = size == 0
+
+  def nonEmpty: Boolean = !isEmpty
 
   private def getStep(i: Int): Int = {
     if (steps.nonEmpty) {

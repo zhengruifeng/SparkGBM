@@ -14,6 +14,18 @@ import org.apache.spark.unsafe.hash.Murmur3_x86_32
 
 class BoostConfig extends Logging with Serializable {
 
+  /** parallelism type */
+  private var parallelismType: String = "data"
+
+  private[gbm] def setParallelismType(value: String): this.type = {
+    require(Array("data", "feature").contains(value))
+    parallelismType = value
+    this
+  }
+
+  def getParallelismType: String = parallelismType
+
+
   /** boosting type */
   private var boostType: String = "gbtree"
 
@@ -674,21 +686,98 @@ class BoostConfig extends Logging with Serializable {
   private[gbm] def isSeq(colId: Int): Boolean = !isCat(colId)
 
 
-  private[gbm] def getColumnIds[C]()
-                                  (implicit cc: ClassTag[C], inc: Integral[C]): Array[Array[C]] = Array.empty
+  private var numBlocksPerPartition: Array[Long] = Array.emptyLongArray
 
-  private[gbm] def getColumnIds[C](vPartId: Int)
-                                  (implicit cc: ClassTag[C], inc: Integral[C]): Array[C] = Array.empty
+  private[gbm] def setNumBlocksPerPartition(value: Array[Long]): this.type = {
+    require(value.nonEmpty)
+    numBlocksPerPartition = value
+    this
+  }
+
+  private[gbm] def getNumBlocksPerPartition: Array[Long] = numBlocksPerPartition
+
+  private[gbm] def getNumBlocks: Long = numBlocksPerPartition.sum
+
+  private[gbm] def getBlockIdOffsetPerPartition: Array[Long] = {
+    if (numBlocksPerPartition.nonEmpty) {
+      numBlocksPerPartition.take(numBlocksPerPartition.length - 1).scanLeft(0L)(_ + _)
+    } else {
+      Array.emptyLongArray
+    }
+  }
+
+
+  private var numInstancesPerPartition: Array[Long] = Array.emptyLongArray
+
+  private[gbm] def setNumInstancesPerPartition(value: Array[Long]): this.type = {
+    require(value.nonEmpty)
+    numInstancesPerPartition = value
+    this
+  }
+
+  private[gbm] def getNumInstancesPerPartition: Array[Long] = numInstancesPerPartition
+
+  private[gbm] def getNumInstances: Long = numInstancesPerPartition.sum
+
+  private[gbm] def getInstanceOffsetPerPartition: Array[Long] = {
+    if (numInstancesPerPartition.nonEmpty) {
+      numInstancesPerPartition.take(numInstancesPerPartition.length - 1).scanLeft(0L)(_ + _)
+    } else {
+      Array.emptyLongArray
+    }
+  }
+
+  private[gbm] def splitColumns(parallelism: Int): Unit = {
+    require(numCols > 0)
+    require(parallelism > 0)
+
+    columnIdsPerVerticalPartitions = if (parallelism >= numCols) {
+      Array.tabulate(numCols)(Array(_))
+    } else {
+      Array.tabulate(parallelism)(i => Iterator.range(0, numCols).filter(_ % parallelism == i).toArray)
+    }
+  }
+
+
+  private[gbm] var columnIdsPerVerticalPartitions: Array[Array[Int]] = Array.empty
+
+
+  private[gbm] def getNumVerticalPartitions: Int = columnIdsPerVerticalPartitions.length
+
+
+  private[gbm] def getVerticalColumnIds[C]()
+                                          (implicit cc: ClassTag[C], inc: Integral[C]): Array[Array[C]] = {
+    columnIdsPerVerticalPartitions.map(_.map(inc.fromInt))
+  }
+
+  private[gbm] def getVerticalColumnIds[C](vPartId: Int)
+                                          (implicit cc: ClassTag[C], inc: Integral[C]): Array[C] = {
+    columnIdsPerVerticalPartitions(vPartId).map(inc.fromInt)
+  }
 }
 
 
 private[gbm] class BaseConfig(val iteration: Int,
                               val numTrees: Int,
-                              val colSelector: Selector,
-                              val rowSelector: Option[Selector] = None) extends Serializable
+                              val colSelector: Selector) extends Serializable
 
 
 private[gbm] object BaseConfig extends Serializable {
+
+
+  def create(boostConf: BoostConfig,
+             iteration: Int,
+             numBaseModels: Int,
+             seed: Long): BaseConfig = {
+
+    val colSelector = Selector.create(boostConf.getColSampleRateByTree,
+      boostConf.getNumCols, numBaseModels, boostConf.getRawSize, seed)
+
+    val numTrees = numBaseModels * boostConf.getRawSize
+
+    new BaseConfig(iteration, numTrees, colSelector)
+  }
+
 
   /**
     * The default `BaseConfig` passed in `Tree` contains selector for tree-wise column sampling.
@@ -705,7 +794,7 @@ private[gbm] object BaseConfig extends Serializable {
       val levelSelector = Selector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols, numBaseModels,
         boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
       val unionSelector = Selector.union(baseConf.colSelector, levelSelector)
-      new BaseConfig(baseConf.iteration, baseConf.numTrees, unionSelector, baseConf.rowSelector)
+      new BaseConfig(baseConf.iteration, baseConf.numTrees, unionSelector)
     }
   }
 }
@@ -729,18 +818,18 @@ private[gbm] object Selector extends Serializable {
     * Initialize a new selector based on given parameters.
     * Note: Trees in a same base model should share the same selector.
     */
-  def create(colSampleRate: Double,
-             numCols: Int,
+  def create(sampleRate: Double,
+             numKeys: Long,
              numBaseModels: Int,
              rawSize: Int,
              seed: Long): Selector = {
 
-    if (colSampleRate == 1) {
+    if (sampleRate == 1) {
       TrueSelector()
 
-    } else if (numCols * colSampleRate > 32) {
+    } else if (numKeys * sampleRate > 32) {
       val rng = new Random(seed)
-      val maximum = (Int.MaxValue * colSampleRate).ceil.toInt
+      val maximum = (Int.MaxValue * sampleRate).ceil.toInt
 
       val seeds = Array.range(0, numBaseModels).flatMap { i =>
         val s = rng.nextInt
@@ -753,10 +842,10 @@ private[gbm] object Selector extends Serializable {
       // When size of selected columns is small, it is hard for hashing to perform robust sampling,
       // we then switch to `SetSelector` for exactly sampling.
       val rng = new Random(seed)
-      val numSelected = (numCols * colSampleRate).ceil.toInt
+      val numSelected = (numKeys * sampleRate).ceil.toInt
 
       val sets = Array.range(0, numBaseModels).flatMap { i =>
-        val selected = rng.shuffle(Seq.range(0, numCols)).take(numSelected).toArray.sorted
+        val selected = rng.shuffle(Seq.range(0, numKeys)).take(numSelected).toArray.sorted
         Iterator.fill(rawSize)(selected)
       }
 
@@ -806,13 +895,13 @@ private[gbm] case class HashSelector(maximum: Int,
 }
 
 
-private[gbm] case class SetSelector(sets: Array[Array[Int]]) extends Selector {
+private[gbm] case class SetSelector(sets: Array[Array[Long]]) extends Selector {
   require(sets.nonEmpty)
-  require(sets.forall(set => Utils.validateOrdering[Int](set.iterator).size > 0))
+  require(sets.forall(set => Utils.validateOrdering[Long](set.iterator).size > 0))
 
   override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toInt(index)) >= 0
+    ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toLong(index)) >= 0
   }
 
   override def toString: String = s"SetSelector(sets: ${sets.mkString("{", ",", "}")})"
@@ -827,3 +916,5 @@ private[gbm] case class UnionSelector(selectors: Seq[Selector]) extends Selector
 
   override def toString: String = s"UnionSelector(selectors: ${selectors.mkString("[", ",", "]")})"
 }
+
+

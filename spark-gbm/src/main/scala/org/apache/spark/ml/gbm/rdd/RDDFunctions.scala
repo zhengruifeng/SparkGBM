@@ -13,7 +13,6 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
 
   /**
     * Reorganize and concatenate current partitions to form new partitions.
-    * Note: This may harms task locality.
     */
   def reorgPartitions(partIds: Array[Array[Int]]): RDD[T] = {
     new PartitionReorganizedRDD[T](self, partIds)
@@ -112,36 +111,40 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
 
 
   /**
-    * broadcast the whole rdd so that each result partition contains all the
+    * Perform `allgather` among partitions so that each result partition contains all the
     * values, and keep the original global ordering.
     */
-  def broadcast(numParts: Int): RDD[T] = {
-    broadcast(numParts, Array.range(0, numParts))
+  def allgather(numParts: Int = self.getNumPartitions): RDD[T] = {
+    allgather(numParts, Array.range(0, numParts))
   }
 
 
   /**
-    * broadcast the whole rdd so that each selected result partition contains all the
-    * values, and keep the original global ordering.
+    * Perform `allgather` among partitions so that each selected result partition
+    * contains all the values, and keep the original global ordering.
     */
-  def broadcast(numParts: Int,
+  def allgather(numParts: Int,
                 partIds: Array[Int]): RDD[T] = {
+    require(partIds.nonEmpty)
+    require(partIds.distinct.length == partIds.length)
+    require(partIds.forall(partId => 0 <= partId && partId < numParts))
 
     self.mapPartitionsWithIndex { case (sourcePartId, iter) =>
-      var cnt = 0L
+      var cnt = -1L
 
       iter.flatMap { value =>
         cnt += 1
         partIds.iterator.map { destPartId =>
-          ((destPartId, sourcePartId, cnt - 1), value)
+          ((sourcePartId, cnt, destPartId), value)
         }
       }
 
     }.repartitionAndSortWithinPartitions(new Partitioner {
+
       override def numPartitions: Int = numParts
 
       override def getPartition(key: Any): Int = key match {
-        case (destPartId: Int, _, _) => destPartId
+        case (_, _, destPartId: Int) => destPartId
       }
 
     }).map(_._2)

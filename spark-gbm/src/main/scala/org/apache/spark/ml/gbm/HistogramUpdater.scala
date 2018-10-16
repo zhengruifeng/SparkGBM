@@ -35,6 +35,7 @@ private[gbm] trait HistogramUpdater[T, N, C, B, H] extends Logging {
     */
   def clear(): Unit = {}
 
+  
   /**
     * Clear after each iteration
     */
@@ -279,7 +280,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
       val numParts = localHistograms.getNumPartitions
 
-      val duplicatedGlobalVoted = globalVoted.broadcast(numParts)
+      val duplicatedGlobalVoted = globalVoted.allgather(numParts)
         .setName("Global Voted Top2K (Duplicated) (Sorted)")
 
       localHistograms.zipPartitions(duplicatedGlobalVoted)(f = {
@@ -339,6 +340,7 @@ private[gbm] object HistogramUpdater extends Logging {
 
       iter.flatMap { case ((binVec, treeIds, gradHess), nodeIds) =>
         val gradSize = gradHess.length >> 1
+
         Iterator.range(0, treeIds.length)
           .filter(i => f(nodeIds(i)))
           .flatMap { i =>
@@ -360,7 +362,8 @@ private[gbm] object HistogramUpdater extends Logging {
       } ++ histSums.iterator.flatMap { case ((treeId, nodeId), (gradSum, hessSum)) =>
         // make sure all available (treeId, nodeId, colId) tuples are taken into account
         // by the way, store sum of hist in zero-index bin
-        Iterator.range(0, boostConf.getNumCols).filter(colId => baseConf.colSelector.contains(treeId, colId))
+        Iterator.range(0, boostConf.getNumCols)
+          .filter(colId => baseConf.colSelector.contains(treeId, colId))
           .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, gradSum, hessSum)) }
       }
 

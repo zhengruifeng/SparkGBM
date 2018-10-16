@@ -14,6 +14,8 @@ private[gbm] trait NumericExt[K] extends Serializable {
 
   def toDouble(array: Array[K]): Array[Double]
 
+  def toInt(array: Array[K]): Array[Int]
+
   def sqrt(value: K): K
 
   def search(array: Array[K], value: K): Int
@@ -32,6 +34,8 @@ private object ByteNumericExt extends NumericExt[Byte] {
   override def fromDouble(array: Array[Double]): Array[Byte] = array.map(_.toByte)
 
   override def toDouble(array: Array[Byte]): Array[Double] = array.map(_.toDouble)
+
+  override def toInt(array: Array[Byte]): Array[Int] = array.map(_.toInt)
 
   override def sqrt(value: Byte): Byte = math.sqrt(value).toByte
 
@@ -52,6 +56,8 @@ private object ShortNumericExt extends NumericExt[Short] {
 
   override def toDouble(array: Array[Short]): Array[Double] = array.map(_.toDouble)
 
+  override def toInt(array: Array[Short]): Array[Int] = array.map(_.toInt)
+
   override def sqrt(value: Short): Short = math.sqrt(value).toByte
 
   override def search(array: Array[Short], value: Short): Int = ju.Arrays.binarySearch(array, value)
@@ -70,6 +76,8 @@ private object IntNumericExt extends NumericExt[Int] {
   override def fromDouble(array: Array[Double]): Array[Int] = array.map(_.toInt)
 
   override def toDouble(array: Array[Int]): Array[Double] = array.map(_.toDouble)
+
+  override def toInt(array: Array[Int]): Array[Int] = array
 
   override def sqrt(value: Int): Int = math.sqrt(value).toInt
 
@@ -90,6 +98,8 @@ private object LongNumericExt extends NumericExt[Long] {
 
   override def toDouble(array: Array[Long]): Array[Double] = array.map(_.toDouble)
 
+  override def toInt(array: Array[Long]): Array[Int] = array.map(_.toInt)
+
   override def sqrt(value: Long): Long = math.sqrt(value).toLong
 
   override def search(array: Array[Long], value: Long): Int = ju.Arrays.binarySearch(array, value)
@@ -109,6 +119,8 @@ private object FloatNumericExt extends NumericExt[Float] {
 
   override def toDouble(array: Array[Float]): Array[Double] = array.map(_.toDouble)
 
+  override def toInt(array: Array[Float]): Array[Int] = array.map(_.toInt)
+
   override def sqrt(value: Float): Float = math.sqrt(value).toFloat
 
   override def search(array: Array[Float], value: Float): Int = ju.Arrays.binarySearch(array, value)
@@ -127,6 +139,8 @@ private object DoubleNumericExt extends NumericExt[Double] {
   override def fromDouble(array: Array[Double]): Array[Double] = array
 
   override def toDouble(array: Array[Double]): Array[Double] = array
+
+  override def toInt(array: Array[Double]): Array[Int] = array.map(_.toInt)
 
   override def sqrt(value: Double): Double = math.sqrt(value)
 

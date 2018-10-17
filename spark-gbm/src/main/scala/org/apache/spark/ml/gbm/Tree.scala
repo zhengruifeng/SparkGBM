@@ -19,7 +19,8 @@ private[gbm] object Tree extends Serializable with Logging {
   /**
     *
     * @param data      instances containing (bins, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
-    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] -> {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
+    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] =>
+    *                  {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
     * @param boostConf boosting configure
     * @param baseConf  trees-growth configure
     * @return tree models
@@ -39,7 +40,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
     var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
     val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
-      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
+      boostConf.getCheckpointInterval, boostConf.getStorageLevel1)
 
     val updater = boostConf.getHistogramComputationType match {
       case Basic => new BasicHistogramUpdater[T, N, C, B, H]
@@ -121,7 +122,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
     var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
     val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
-      boostConf.getCheckpointInterval, boostConf.getStorageLevel)
+      boostConf.getCheckpointInterval, boostConf.getStorageLevel1)
 
 
     val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
@@ -169,7 +170,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
         nodeIdBlocks.allgather(numVParts, selectedVPartIds)
           .flatMap(_.iterator)
-          .zipWithoutSizeCheck(vdata)
+          .safeZip(vdata)
           .map { case (nodeIds, (subBinVec, treeIds, gradHess)) =>
             ((subBinVec, treeIds, gradHess), nodeIds)
           }

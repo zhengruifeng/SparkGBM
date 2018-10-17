@@ -64,6 +64,11 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
       private val indexBuilder = mutable.ArrayBuilder.make[K]
       private val valueBuilder = mutable.ArrayBuilder.make[V]
 
+      {
+        indexBuilder.sizeHint(vectorSize)
+        valueBuilder.sizeHint(vectorSize)
+      }
+
       private val emptyVec = KVVector.sparse[K, V](vectorSize, nek.emptyArray, nev.emptyArray)
 
       override def hasNext: Boolean = i < size_
@@ -72,7 +77,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
         val step = getStep(i)
 
         if (step > 0) {
-          valueBuilder.clear
+          valueBuilder.clear()
 
           var j = 0
           while (j < step) {
@@ -83,11 +88,11 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
           i += 1
           valueIdx += step
 
-          KVVector.dense[K, V](valueBuilder.result)
+          KVVector.dense[K, V](valueBuilder.result())
 
         } else if (step < 0) {
-          indexBuilder.clear
-          valueBuilder.clear
+          indexBuilder.clear()
+          valueBuilder.clear()
 
           var j = 0
           while (j < -step) {
@@ -100,12 +105,74 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
           indexIdx -= step
           valueIdx -= step
 
-          KVVector.sparse[K, V](vectorSize, indexBuilder.result, valueBuilder.result)
+          KVVector.sparse[K, V](vectorSize, indexBuilder.result(), valueBuilder.result())
 
         } else {
 
           i += 1
           emptyVec
+        }
+      }
+    }
+  }
+
+
+  def activeIterator()
+                    (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                     cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): Iterator[Iterator[(K, V)]] = {
+
+    val size_ = size
+
+    new Iterator[Iterator[(K, V)]]() {
+      private var i = 0
+      private var indexIdx = 0
+      private var valueIdx = 0
+
+      override def hasNext: Boolean = i < size_
+
+      override def next(): Iterator[(K, V)] = {
+        val step = getStep(i)
+
+        if (step > 0) {
+
+          val ret = Iterator.range(0, step).flatMap { j =>
+            val v = values(valueIdx + j)
+            if (v != nuv.zero) {
+              Iterator.single(ink.fromInt(j), v)
+            } else {
+              Iterator.empty
+            }
+          }
+
+          i += 1
+          valueIdx += step
+
+          ret
+
+        } else if (step < 0) {
+
+          val ret = Iterator.range(0, -step).flatMap { j =>
+            val k = indices(indexIdx + j)
+            val v = values(valueIdx + j)
+
+            if (v != nuv.zero) {
+              Iterator.single(k, v)
+            } else {
+              Iterator.empty
+            }
+          }
+
+          i += 1
+          indexIdx -= step
+          valueIdx -= step
+
+          ret
+
+        } else {
+
+          i += 1
+
+          Iterator.empty
         }
       }
     }
@@ -116,7 +183,8 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
 private[gbm] object KVMatrix extends Serializable {
 
   def build[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](iterator: Iterator[KVVector[K, V]])
-                                                                 (implicit ck: ClassTag[K], cv: ClassTag[V]): KVMatrix[K, V] = {
+                                                                 (implicit ck: ClassTag[K],
+                                                                  cv: ClassTag[V]): KVMatrix[K, V] = {
     val indexBuilder = mutable.ArrayBuilder.make[K]
     val valueBuilder = mutable.ArrayBuilder.make[V]
     val stepBuilder = mutable.ArrayBuilder.make[Int]
@@ -150,11 +218,12 @@ private[gbm] object KVMatrix extends Serializable {
       stepBuilder.result
     }
 
-    new KVMatrix[K, V](indexBuilder.result, valueBuilder.result, steps, vecSize)
+    new KVMatrix[K, V](indexBuilder.result(), valueBuilder.result(), steps, vecSize)
   }
 
   def build[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](seq: Iterable[KVVector[K, V]])
-                                                                 (implicit ck: ClassTag[K], cv: ClassTag[V]): KVMatrix[K, V] = {
+                                                                 (implicit ck: ClassTag[K],
+                                                                  cv: ClassTag[V]): KVMatrix[K, V] = {
     build[K, V](seq.iterator)
   }
 }

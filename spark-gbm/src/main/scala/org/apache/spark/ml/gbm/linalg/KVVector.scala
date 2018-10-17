@@ -377,6 +377,7 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
         this
 
       } else {
+        // TODO: use splitAt here
         val left = -j - 1
         val right = indices.length - left
         val newIndices = indices.take(left) ++ Array(index) ++ indices.takeRight(right)

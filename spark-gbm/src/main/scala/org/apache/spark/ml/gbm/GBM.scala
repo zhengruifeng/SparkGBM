@@ -188,13 +188,40 @@ class GBM extends Logging with Serializable {
   def getCheckpointInterval: Int = boostConf.getCheckpointInterval
 
 
-  /** storage level */
-  def setStorageLevel(value: StorageLevel): this.type = {
-    boostConf.setStorageLevel(value)
+  /** strategy to cache tree inputs */
+  def setStorageStrategy(value: String): this.type = {
+    boostConf.setStorageStrategy(value)
     this
   }
 
-  def getStorageLevel: StorageLevel = boostConf.getStorageLevel
+  def getStorageStrategy: String = boostConf.getStorageStrategy
+
+
+  /** storage level 1 */
+  def setStorageLevel1(value: StorageLevel): this.type = {
+    boostConf.setStorageLevel1(value)
+    this
+  }
+
+  def getStorageLevel1: StorageLevel = boostConf.getStorageLevel1
+
+
+  /** storage level 2 */
+  def setStorageLevel2(value: StorageLevel): this.type = {
+    boostConf.setStorageLevel2(value)
+    this
+  }
+
+  def getStorageLevel2: StorageLevel = boostConf.getStorageLevel2
+
+
+  /** storage level 3 */
+  def setStorageLevel3(value: StorageLevel): this.type = {
+    boostConf.setStorageLevel3(value)
+    this
+  }
+
+  def getStorageLevel3: StorageLevel = boostConf.getStorageLevel3
 
 
   /** depth for treeAggregate */
@@ -479,6 +506,9 @@ private[gbm] object GBM extends Logging {
   val GBTree = "gbtree"
   val Dart = "dart"
 
+  val Upstream = "upstream"
+  val Eager = "eager"
+
   val Instance = "instance"
   val Block = "block"
   val Partition = "partition"
@@ -591,37 +621,45 @@ private[gbm] object GBM extends Logging {
     val bcDiscretizer = sc.broadcast(discretizer)
     recoder.append(bcDiscretizer)
 
-    val trainBlocks = discretizeAndblockify[C, B, H](data, bcDiscretizer, boostConf.getBlockSize)
+    val trainBlocks = blockifyAndDiscretize[C, B, H](data, bcDiscretizer, boostConf.getBlockSize)
 
     val (trainweightLabelBlocks, trainBinVecBlocks) = trainBlocks
 
     trainweightLabelBlocks.setName("Train Weight+Label Blocks")
-    trainweightLabelBlocks.persist(boostConf.getStorageLevel)
-    recoder.append(trainweightLabelBlocks)
-
     trainBinVecBlocks.setName("Train BinVector Blocks")
-    trainBinVecBlocks.persist(boostConf.getStorageLevel)
+
+    boostConf.getStorageStrategy match {
+      case GBM.Upstream =>
+        trainweightLabelBlocks.persist(boostConf.getStorageLevel1)
+        trainBinVecBlocks.persist(boostConf.getStorageLevel1)
+
+      case GBM.Eager =>
+        trainweightLabelBlocks.persist(boostConf.getStorageLevel2)
+        trainBinVecBlocks.persist(boostConf.getStorageLevel2)
+    }
+    recoder.append(trainweightLabelBlocks)
     recoder.append(trainBinVecBlocks)
 
 
-    val testBlocks = test.map { rdd => discretizeAndblockify[C, B, H](rdd, bcDiscretizer, boostConf.getBlockSize) }
+    val testBlocks = test.map { rdd => blockifyAndDiscretize[C, B, H](rdd, bcDiscretizer, boostConf.getBlockSize) }
 
     testBlocks.foreach { case (testweightLabelBlocks, testBinVecBlocks) =>
       testweightLabelBlocks.setName("Test Weight+Label Blocks")
-      testweightLabelBlocks.persist(boostConf.getStorageLevel)
+      testweightLabelBlocks.persist(boostConf.getStorageLevel3)
       recoder.append(testweightLabelBlocks)
 
       testBinVecBlocks.setName("Test BinVector Blocks")
-      testBinVecBlocks.persist(boostConf.getStorageLevel)
+      testBinVecBlocks.persist(boostConf.getStorageLevel3)
       recoder.append(testBinVecBlocks)
     }
 
 
     val model = boostConf.getParallelismType match {
+      case Data =>
+        HorizontalGBM.boost[C, B, H](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
 
-      case Data => HorizontalGBM.boost[C, B, H](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
-
-      case Feature => VerticalGBM.boost[C, B, H](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
+      case Feature =>
+        VerticalGBM.boost[C, B, H](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
     }
 
     recoder.clear()
@@ -630,9 +668,9 @@ private[gbm] object GBM extends Logging {
   }
 
   /**
-    * discretize and blockify instances to weightAndLabel-blocks and binVec-blocks.
+    * blockify and discretize instances to weightAndLabel-blocks and binVec-blocks.
     */
-  def discretizeAndblockify[C, B, H](data: RDD[(H, Array[H], Vector)],
+  def blockifyAndDiscretize[C, B, H](data: RDD[(H, Array[H], Vector)],
                                      bcDiscretizer: Broadcast[Discretizer],
                                      blockSize: Int)
                                     (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
@@ -979,7 +1017,7 @@ private[gbm] object GBM extends Logging {
     // persist if there are batch evaluators
     if (boostConf.getBatchEvalFunc.nonEmpty) {
       scores.setName(s"Evaluation Dataset (weight, label, raw, score)")
-      scores.persist(boostConf.getStorageLevel)
+      scores.persist(boostConf.getStorageLevel1)
     }
 
     if (boostConf.getIncEvalFunc.nonEmpty) {
@@ -995,6 +1033,20 @@ private[gbm] object GBM extends Logging {
     }
 
     result.toMap
+  }
+
+
+  def getTreeIds[T](rawSize: Int)
+                   (implicit ct: ClassTag[T], int: Integral[T]): Array[T] => Array[T] = {
+    if (rawSize == 1) {
+      baseIds: Array[T] => baseIds
+    } else {
+      baseIds: Array[T] =>
+        baseIds.flatMap { i =>
+          val offset = rawSize * int.toInt(i)
+          Iterator.range(offset, offset + rawSize).map(int.fromInt)
+        }
+    }
   }
 }
 

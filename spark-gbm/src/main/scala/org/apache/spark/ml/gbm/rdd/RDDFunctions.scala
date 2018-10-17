@@ -151,7 +151,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
   }
 
 
-  def zipWithoutSizeCheck[U: ClassTag](other: RDD[U]): RDD[(T, U)] = {
+  def safeZip[U: ClassTag](other: RDD[U]): RDD[(T, U)] = {
 
     self.zipPartitions(other, preservesPartitioning = false) {
       (thisIter, otherIter) =>

@@ -35,7 +35,7 @@ private[gbm] trait HistogramUpdater[T, N, C, B, H] extends Logging {
     */
   def clear(): Unit = {}
 
-  
+
   /**
     * Clear after each iteration
     */
@@ -106,7 +106,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
     val (treeIds, prevPartitioner) = if (depth == 0) {
       checkpointer = Some(new Checkpointer[((T, N, C), KVVector[B, H])](sc,
-        boostConf.getCheckpointInterval, boostConf.getStorageLevel))
+        boostConf.getCheckpointInterval, boostConf.getStorageLevel1))
 
       (Array.tabulate(baseConf.numTrees)(int.fromInt), None)
 
@@ -211,7 +211,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
     val localHistograms = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](data,
       boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
       .setName(s"Local Histograms (Iteration: ${baseConf.iteration}, depth: $depth) (Sorted)")
-    localHistograms.persist(boostConf.getStorageLevel)
+    localHistograms.persist(boostConf.getStorageLevel1)
     recoder.get.append(localHistograms)
 
 
@@ -341,7 +341,7 @@ private[gbm] object HistogramUpdater extends Logging {
       iter.flatMap { case ((binVec, treeIds, gradHess), nodeIds) =>
         val gradSize = gradHess.length >> 1
 
-        Iterator.range(0, treeIds.length)
+        Iterator.range(0, nodeIds.length)
           .filter(i => f(nodeIds(i)))
           .flatMap { i =>
             val treeId = treeIds(i)

@@ -245,19 +245,67 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
+    * Strategy to cache tree inputs.
+    * (Default: "upstream")
+    *
+    * @group expertParam
+    */
+  final val storageStrategy: Param[String] =
+    new Param[String](this, "storageStrategy",
+      "Strategy to cache tree inputs.",
+      ParamValidators.inArray[String](Array("upstream", "eager")))
+
+  def getStorageStrategy: String = $(storageStrategy)
+
+  setDefault(storageStrategy -> "upstream")
+
+
+  /**
     * StorageLevel for intermediate datasets.
     * (Default: "MEMORY_AND_DISK")
     *
     * @group expertParam
     */
-  final val storageLevel: Param[String] =
-    new Param[String](this, "storageLevel",
+  final val storageLevel1: Param[String] =
+    new Param[String](this, "storageLevel1",
       "StorageLevel for intermediate datasets. Cannot be 'NONE'.",
       (s: String) => Try(StorageLevel.fromString(s)).isSuccess && s != "NONE")
 
-  def getStorageLevel: String = $(storageLevel)
+  def getStorageLevel1: String = $(storageLevel1)
 
-  setDefault(storageLevel -> "MEMORY_AND_DISK")
+  setDefault(storageLevel1 -> "MEMORY_AND_DISK")
+
+
+  /**
+    * StorageLevel for intermediate datasets.
+    * (Default: "MEMORY_AND_DISK_SER")
+    *
+    * @group expertParam
+    */
+  final val storageLevel2: Param[String] =
+    new Param[String](this, "storageLevel2",
+      "StorageLevel for intermediate datasets. Cannot be 'NONE'.",
+      (s: String) => Try(StorageLevel.fromString(s)).isSuccess && s != "NONE")
+
+  def getStorageLevel2: String = $(storageLevel2)
+
+  setDefault(storageLevel2 -> "MEMORY_AND_DISK_SER")
+
+
+  /**
+    * StorageLevel for intermediate datasets.
+    * (Default: "DISK_ONLY")
+    *
+    * @group expertParam
+    */
+  final val storageLevel3: Param[String] =
+    new Param[String](this, "storageLevel3",
+      "StorageLevel for intermediate datasets. Cannot be 'NONE'.",
+      (s: String) => Try(StorageLevel.fromString(s)).isSuccess && s != "NONE")
+
+  def getStorageLevel3: String = $(storageLevel3)
+
+  setDefault(storageLevel3 -> "DISK_ONLY")
 
 
   /**

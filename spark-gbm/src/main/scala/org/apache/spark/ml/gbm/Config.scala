@@ -325,21 +325,52 @@ class BoostConfig extends Logging with Serializable {
   def getCheckpointInterval: Int = checkpointInterval
 
 
-  /** storage level */
-  private var storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK
+  /** strategy to cache tree inputs */
+  private var storageStrategy: String = "upstream"
 
-  private[gbm] def setStorageLevel(value: StorageLevel): this.type = {
-    require(value != StorageLevel.NONE)
-    storageLevel = value
+  private[gbm] def setStorageStrategy(value: String): this.type = {
+    require(Array("upstream", "eager").contains(value))
+    storageStrategy = value
     this
   }
 
-  def updateStorageLevel(value: StorageLevel): this.type = {
-    logInfo(s"storageLevel was changed from $storageLevel to $value")
-    setStorageLevel(value)
+  def getStorageStrategy: String = storageStrategy
+
+
+  /** storage level 1 */
+  private var storageLevel1: StorageLevel = StorageLevel.MEMORY_AND_DISK
+
+  private[gbm] def setStorageLevel1(value: StorageLevel): this.type = {
+    require(value != StorageLevel.NONE)
+    storageLevel1 = value
+    this
   }
 
-  def getStorageLevel: StorageLevel = storageLevel
+  def getStorageLevel1: StorageLevel = storageLevel1
+
+
+  /** storage level 2 */
+  private var storageLevel2: StorageLevel = StorageLevel.MEMORY_AND_DISK_SER
+
+  private[gbm] def setStorageLevel2(value: StorageLevel): this.type = {
+    require(value != StorageLevel.NONE)
+    storageLevel2 = value
+    this
+  }
+
+  def getStorageLevel2: StorageLevel = storageLevel2
+
+
+  /** storage level 3 */
+  private var storageLevel3: StorageLevel = StorageLevel.DISK_ONLY
+
+  private[gbm] def setStorageLevel3(value: StorageLevel): this.type = {
+    require(value != StorageLevel.NONE)
+    storageLevel3 = value
+    this
+  }
+
+  def getStorageLevel3: StorageLevel = storageLevel3
 
 
   /** dropout rate */
@@ -803,9 +834,11 @@ private[gbm] object BaseConfig extends Serializable {
 /**
   * Indicator that indicate whether:
   * 1, a tree contains a column in column-sampling (ByTree or/and ByLevel)
-  * 2, or, a tree contains a row in sub-sampling
+  * 2, or, a tree contains a row or block in sub-sampling
   */
 private[gbm] trait Selector extends Serializable {
+
+  def size: Int
 
   def contains[T, C](treeId: T, index: C)
                     (implicit int: Integral[T], inc: Integral[C]): Boolean
@@ -825,7 +858,7 @@ private[gbm] object Selector extends Serializable {
              seed: Long): Selector = {
 
     if (sampleRate == 1) {
-      TrueSelector()
+      TrueSelector(numBaseModels * rawSize)
 
     } else if (numKeys * sampleRate > 32) {
       val rng = new Random(seed)
@@ -845,7 +878,8 @@ private[gbm] object Selector extends Serializable {
       val numSelected = (numKeys * sampleRate).ceil.toInt
 
       val sets = Array.range(0, numBaseModels).flatMap { i =>
-        val selected = rng.shuffle(Seq.range(0, numKeys)).take(numSelected).toArray.sorted
+        val selected = rng.shuffle(Seq.range(0, numKeys))
+          .take(numSelected).toArray.sorted
         Iterator.fill(rawSize)(selected)
       }
 
@@ -858,6 +892,7 @@ private[gbm] object Selector extends Serializable {
     */
   def union(selectors: Selector*): Selector = {
     require(selectors.nonEmpty)
+    require(selectors.map(_.size).distinct.size == 1)
 
     val nonTrues = selectors.flatMap {
       case s: TrueSelector => Iterator.empty
@@ -867,18 +902,20 @@ private[gbm] object Selector extends Serializable {
     if (nonTrues.nonEmpty) {
       UnionSelector(nonTrues)
     } else {
-      TrueSelector()
+      selectors.head
     }
   }
 }
 
 
-private[gbm] case class TrueSelector() extends Selector {
+private[gbm] case class TrueSelector(size: Int) extends Selector {
 
   override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = true
 
-  override def toString: String = "TrueSelector"
+  override def toString: String = {
+    s"TrueSelector(size: $size)"
+  }
 }
 
 
@@ -886,12 +923,16 @@ private[gbm] case class HashSelector(maximum: Int,
                                      seeds: Array[Int]) extends Selector {
   require(maximum >= 0)
 
+  override def size: Int = seeds.length
+
   override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
     Murmur3_x86_32.hashLong(inc.toLong(index), seeds(int.toInt(treeId))).abs < maximum
   }
 
-  override def toString: String = s"HashSelector(maximum: $maximum, seeds: ${seeds.mkString("[", ",", "]")})"
+  override def toString: String = {
+    s"HashSelector(maximum: $maximum, seeds: ${seeds.mkString("[", ",", "]")})"
+  }
 }
 
 
@@ -899,22 +940,32 @@ private[gbm] case class SetSelector(sets: Array[Array[Long]]) extends Selector {
   require(sets.nonEmpty)
   require(sets.forall(set => Utils.validateOrdering[Long](set.iterator).size > 0))
 
+  override def size: Int = sets.length
+
   override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
     ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toLong(index)) >= 0
   }
 
-  override def toString: String = s"SetSelector(sets: ${sets.mkString("{", ",", "}")})"
+  override def toString: String = {
+    s"SetSelector(sets: ${sets.mkString("{", ",", "}")})"
+  }
 }
 
 
 private[gbm] case class UnionSelector(selectors: Seq[Selector]) extends Selector {
+  require(selectors.nonEmpty)
+
+  override def size: Int = selectors.head.size
+
   override def contains[T, C](treeId: T, index: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
     selectors.forall(_.contains[T, C](treeId, index))
   }
 
-  override def toString: String = s"UnionSelector(selectors: ${selectors.mkString("[", ",", "]")})"
+  override def toString: String = {
+    s"UnionSelector(selectors: ${selectors.mkString("[", ",", "]")})"
+  }
 }
 
 

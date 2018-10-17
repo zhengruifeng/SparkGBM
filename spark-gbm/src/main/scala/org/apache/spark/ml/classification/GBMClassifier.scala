@@ -96,7 +96,13 @@ class GBMClassifier(override val uid: String)
 
   def setMinGain(value: Double): this.type = set(minGain, value)
 
-  def setStorageLevel(value: String): this.type = set(storageLevel, value)
+  def setStorageStrategy(value: String): this.type = set(storageStrategy, value)
+
+  def setStorageLevel1(value: String): this.type = set(storageLevel1, value)
+
+  def setStorageLevel2(value: String): this.type = set(storageLevel2, value)
+
+  def setStorageLevel3(value: String): this.type = set(storageLevel3, value)
 
   def setObjectiveFunc(value: String): this.type = set(objectiveFunc, value)
 
@@ -244,7 +250,10 @@ class GBMClassifier(override val uid: String)
       .setColSampleRateByTree($(colSampleRateByTree))
       .setColSampleRateByLevel($(colSampleRateByLevel))
       .setCheckpointInterval($(checkpointInterval))
-      .setStorageLevel(StorageLevel.fromString($(storageLevel)))
+      .setStorageStrategy($(storageStrategy))
+      .setStorageLevel1(StorageLevel.fromString($(storageLevel1)))
+      .setStorageLevel2(StorageLevel.fromString($(storageLevel2)))
+      .setStorageLevel3(StorageLevel.fromString($(storageLevel3)))
       .setAggregationDepth($(aggregationDepth))
       .setSeed($(seed))
       .setParallelismType($(parallelismType))

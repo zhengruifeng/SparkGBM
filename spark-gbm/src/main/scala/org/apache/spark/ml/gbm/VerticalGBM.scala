@@ -487,7 +487,7 @@ object VerticalGBM extends Logging {
         binVecBlock.iterator.zip(gradBlock.iterator)
           .map { case (binVec, grad) => (binVec, treeIds, grad) }
       }
-    }.setName(s"Gradients with TreeIds (iteration $iteration)")
+    }.setName(s"TreeInputs (iteration $iteration)")
 
 
     val agGradBlocks = gradBlocks.allgather(numVParts)
@@ -509,7 +509,7 @@ object VerticalGBM extends Logging {
             (subBinVec, treeIds, grad)
           }
       }
-    }.setName(s"Gradients with TreeIds (iteration $iteration) (Vertical)")
+    }.setName(s"Vertical TreeInputs (iteration $iteration)")
 
 
     boostConf.getStorageStrategy match {
@@ -590,7 +590,7 @@ object VerticalGBM extends Logging {
         require(gradBlock.isEmpty)
         Iterator.empty
       }
-    }.setName(s"Gradients with TreeIds (iteration $iteration) (Block-Based Sampled)")
+    }.setName(s"TreeInputs (iteration $iteration) (Block-Based Sampled)")
 
 
     val agGradBlocks = gradBlocks.map(_._1).filter(_.nonEmpty).allgather(numVParts)
@@ -629,7 +629,7 @@ object VerticalGBM extends Logging {
             (subBinVec, treeIds, grad)
           }
       }
-    }.setName(s"Gradients with TreeIds (iteration $iteration) (Block-Based Sampled) (Vertical)")
+    }.setName(s"Vertical TreeInputs (iteration $iteration) (Block-Based Sampled)")
 
     boostConf.getStorageStrategy match {
       case GBM.Upstream =>
@@ -721,7 +721,7 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-    }.setName(s"Gradients with TreeIds (iteration $iteration) (Instance-Based Sampled)")
+    }.setName(s"TreeInputs (iteration $iteration) (Instance-Based Sampled)")
 
 
     val agGradBlocks = gradBlocks.map(_._1).allgather(numVParts)
@@ -755,6 +755,7 @@ object VerticalGBM extends Logging {
 
     val vdata = sampled.zip(agGradBlocks.flatMap(_.iterator))
       .map { case ((subBinVec, treeIds), grad) => (subBinVec, treeIds, grad) }
+      .setName(s"Vertical TreeInputs (iteration $iteration) (Instance-Based Sampled)")
 
 
     boostConf.getStorageStrategy match {

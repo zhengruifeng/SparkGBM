@@ -489,7 +489,7 @@ object HorizontalGBM extends Logging {
             }
           }
       }
-    }.setName(s"Gradients with TreeIds (iteration $iteration) (Gradient-based One-Side Sampled)")
+    }.setName(s"TreeInputs (iteration $iteration) (Gradient-based One-Side Sampled)")
 
 
     boostConf.getStorageStrategy match {
@@ -536,7 +536,7 @@ object HorizontalGBM extends Logging {
         binVecBlock.iterator.zip(gradBlock.iterator)
           .map { case (binVec, grad) => (binVec, treeIds, grad) }
       }
-    }.setName(s"Gradients with TreeIds (iteration $iteration)")
+    }.setName(s"TreeInputs (iteration $iteration)")
 
 
     boostConf.getStorageStrategy match {
@@ -605,7 +605,7 @@ object HorizontalGBM extends Logging {
       } else {
         Iterator.empty
       }
-    }.setName(s"Gradients with TreeIds (iteration $iteration) (Partition-Based Sampled)")
+    }.setName(s"TreeInputs (iteration $iteration) (Partition-Based Sampled)")
 
 
     boostConf.getStorageStrategy match {
@@ -671,7 +671,7 @@ object HorizontalGBM extends Logging {
         require(gradBlock.isEmpty)
         Iterator.empty
       }
-    }.setName(s"Gradients with TreeIds (iteration $iteration) (Block-Based Sampled)")
+    }.setName(s"TreeInputs (iteration $iteration) (Block-Based Sampled)")
 
 
     boostConf.getStorageStrategy match {
@@ -752,7 +752,7 @@ object HorizontalGBM extends Logging {
               Iterator.empty
             }
           }
-      }.setName(s"Gradients with TreeIds (iteration $iteration) (Instance-Based Sampled)")
+      }.setName(s"TreeInputs (iteration $iteration) (Instance-Based Sampled)")
 
 
     boostConf.getStorageStrategy match {

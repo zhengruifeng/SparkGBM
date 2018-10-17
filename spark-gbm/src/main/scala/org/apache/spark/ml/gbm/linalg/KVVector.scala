@@ -377,11 +377,11 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
         this
 
       } else {
-        // TODO: use splitAt here
-        val left = -j - 1
-        val right = indices.length - left
-        val newIndices = indices.take(left) ++ Array(index) ++ indices.takeRight(right)
-        val newValues = values.take(left) ++ Array(value) ++ values.takeRight(right)
+        val indexSplit = -j - 1
+        val (leftIndices, rightIndices) = indices.splitAt(indexSplit)
+        val (leftValues, rightValues) = values.splitAt(indexSplit)
+        val newIndices = leftIndices ++ Array(index) ++ rightIndices
+        val newValues = leftValues ++ Array(value) ++ rightValues
         KVVector.sparse[K, V](newSize, newIndices, newValues)
       }
     }
@@ -479,6 +479,8 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
   override def isDense: Boolean = false
 
 
-  override def toString: String =
-    s"SparseKVVector[$size, ${indices.zip(values).map { case (k, v) => s"$k->$v" }.mkString("(", ",", ")")}]"
+  override def toString: String = {
+    s"SparseKVVector[$size," +
+      s" ${indices.iterator.zip(values.iterator).map { case (k, v) => s"$k->$v" }.mkString("(", ",", ")")}]"
+  }
 }

@@ -21,10 +21,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
                                                                      val steps: Array[Int],
                                                                      val vectorSize: Int) extends Serializable {
   require(vectorSize >= 0)
-
-  if (steps.nonEmpty) {
-    require(steps.length == size)
-  } else if (vectorSize > 0) {
+  if (vectorSize > 0) {
     require(values.length % vectorSize == 0)
   }
 

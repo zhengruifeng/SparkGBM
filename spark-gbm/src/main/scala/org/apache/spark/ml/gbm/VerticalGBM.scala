@@ -34,6 +34,7 @@ object VerticalGBM extends Logging {
                     (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
+    import Utils._
 
     val sc = trainBlocks._1.sparkContext
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
@@ -42,13 +43,13 @@ object VerticalGBM extends Logging {
     val maxCols = boostConf.getVerticalColumnIds[C]().map(_.length).max
 
     Utils.getTypeByRange(maxCols * boostConf.getBlockSize) match {
-      case "Byte" =>
+      case BYTE =>
         boostImpl[C, B, H, Byte](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
 
-      case "Short" =>
+      case SHORT =>
         boostImpl[C, B, H, Short](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
 
-      case "Int" =>
+      case INT =>
         boostImpl[C, B, H, Int](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
     }
   }
@@ -297,6 +298,7 @@ object VerticalGBM extends Logging {
                              cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                              ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H],
                              cg: ClassTag[G], ing: Integral[G], neg: NumericExt[G]): Array[TreeModel] = {
+    import Utils._
 
     val numTrees = boostConf.getBaseModelParallelism * boostConf.getRawSize
     logInfo(s"Iteration $iteration: Starting to create next $numTrees trees")
@@ -308,31 +310,31 @@ object VerticalGBM extends Logging {
     logInfo(s"DataType of NodeId: $nodeIdType")
 
     (treeIdType, nodeIdType) match {
-      case ("Byte", "Byte") =>
+      case (BYTE, BYTE) =>
         buildTreesImpl[Byte, Byte, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
-      case ("Byte", "Short") =>
+      case (BYTE, SHORT) =>
         buildTreesImpl[Byte, Short, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
-      case ("Byte", "Int") =>
+      case (BYTE, INT) =>
         buildTreesImpl[Byte, Int, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
-      case ("Short", "Byte") =>
+      case (SHORT, BYTE) =>
         buildTreesImpl[Short, Byte, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
-      case ("Short", "Short") =>
+      case (SHORT, SHORT) =>
         buildTreesImpl[Short, Short, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
-      case ("Short", "Int") =>
+      case (SHORT, INT) =>
         buildTreesImpl[Short, Int, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
-      case ("Int", "Byte") =>
+      case (INT, BYTE) =>
         buildTreesImpl[Int, Byte, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
-      case ("Int", "Short") =>
+      case (INT, SHORT) =>
         buildTreesImpl[Int, Short, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
-      case ("Int", "Int") =>
+      case (INT, INT) =>
         buildTreesImpl[Int, Int, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
     }
   }

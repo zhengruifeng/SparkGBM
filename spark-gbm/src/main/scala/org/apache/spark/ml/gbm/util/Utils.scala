@@ -12,16 +12,23 @@ import org.apache.spark.sql._
 
 private[gbm] object Utils extends Logging {
 
+  val BYTE = "Byte"
+  val SHORT = "Short"
+  val INT = "Int"
+  val LONG = "Long"
+
   /**
     * Choose the most compact Integer Type according to the range
     */
   def getTypeByRange(range: Int): String = {
     if (range <= Byte.MaxValue) {
-      "Byte"
+      BYTE
     } else if (range <= Short.MaxValue) {
-      "Short"
+      SHORT
+    } else if (range <= Int.MaxValue) {
+      INT
     } else {
-      "Int"
+      LONG
     }
   }
 
@@ -43,7 +50,7 @@ private[gbm] object Utils extends Logging {
       case (false, false) => true
     }
   }
-  
+
 
   /**
     * Validate the ordering, and return the same iterator
@@ -55,10 +62,14 @@ private[gbm] object Utils extends Logging {
     private var k = Option.empty[K]
 
     private val check = (ascending, strictly) match {
-      case (true, true) => (i: K, j: K) => require(ork.compare(i, j) < 0, s"($i, $j) breaks strictly ascending")
-      case (true, false) => (i: K, j: K) => require(ork.compare(i, j) <= 0, s"($i, $j) breaks ascending (non-descending)")
-      case (false, true) => (i: K, j: K) => require(ork.compare(i, j) > 0, s"($i, $j) breaks strictly descending")
-      case (false, false) => (i: K, j: K) => require(ork.compare(i, j) >= 0, s"($i, $j) breaks descending (non-ascending)")
+      case (true, true) => (i: K, j: K) =>
+        require(ork.compare(i, j) < 0, s"($i, $j) breaks strictly ascending")
+      case (true, false) => (i: K, j: K) =>
+        require(ork.compare(i, j) <= 0, s"($i, $j) breaks ascending (non-descending)")
+      case (false, true) => (i: K, j: K) =>
+        require(ork.compare(i, j) > 0, s"($i, $j) breaks strictly descending")
+      case (false, false) => (i: K, j: K) =>
+        require(ork.compare(i, j) >= 0, s"($i, $j) breaks descending (non-ascending)")
     }
 
     {
@@ -99,10 +110,14 @@ private[gbm] object Utils extends Logging {
     private var kv = Option.empty[(K, V)]
 
     private val check = (ascending, strictly) match {
-      case (true, true) => (i: K, j: K) => require(ork.compare(i, j) < 0, s"($i, $j) breaks strictly ascending")
-      case (true, false) => (i: K, j: K) => require(ork.compare(i, j) <= 0, s"($i, $j) breaks ascending (non-descending)")
-      case (false, true) => (i: K, j: K) => require(ork.compare(i, j) > 0, s"($i, $j) breaks strictly descending")
-      case (false, false) => (i: K, j: K) => require(ork.compare(i, j) >= 0, s"($i, $j) breaks descending (non-ascending)")
+      case (true, true) => (i: K, j: K) =>
+        require(ork.compare(i, j) < 0, s"($i, $j) breaks strictly ascending")
+      case (true, false) => (i: K, j: K) =>
+        require(ork.compare(i, j) <= 0, s"($i, $j) breaks ascending (non-descending)")
+      case (false, true) => (i: K, j: K) =>
+        require(ork.compare(i, j) > 0, s"($i, $j) breaks strictly descending")
+      case (false, false) => (i: K, j: K) =>
+        require(ork.compare(i, j) >= 0, s"($i, $j) breaks descending (non-ascending)")
     }
 
     {

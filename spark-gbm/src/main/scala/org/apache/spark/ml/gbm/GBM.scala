@@ -553,6 +553,7 @@ private[gbm] object GBM extends Logging {
                 discretizer: Discretizer,
                 initialModel: Option[GBMModel])
                (implicit ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
+    import Utils._
 
     val data2 = data.map {
       case (weight, label, vec) =>
@@ -572,31 +573,31 @@ private[gbm] object GBM extends Logging {
     logInfo(s"DataType of Bin: $binType")
 
     (columnIndexType, binType) match {
-      case ("Byte", "Byte") =>
+      case (BYTE, BYTE) =>
         boost2[Byte, Byte, H](data2, test2, boostConf, discretizer, initialModel)
 
-      case ("Byte", "Short") =>
+      case (BYTE, SHORT) =>
         boost2[Byte, Short, H](data2, test2, boostConf, discretizer, initialModel)
 
-      case ("Byte", "Int") =>
+      case (BYTE, INT) =>
         boost2[Byte, Int, H](data2, test2, boostConf, discretizer, initialModel)
 
-      case ("Short", "Byte") =>
+      case (SHORT, BYTE) =>
         boost2[Short, Byte, H](data2, test2, boostConf, discretizer, initialModel)
 
-      case ("Short", "Short") =>
+      case (SHORT, SHORT) =>
         boost2[Short, Short, H](data2, test2, boostConf, discretizer, initialModel)
 
-      case ("Short", "Int") =>
+      case (SHORT, INT) =>
         boost2[Short, Int, H](data2, test2, boostConf, discretizer, initialModel)
 
-      case ("Int", "Byte") =>
+      case (INT, BYTE) =>
         boost2[Int, Byte, H](data2, test2, boostConf, discretizer, initialModel)
 
-      case ("Int", "Short") =>
+      case (INT, SHORT) =>
         boost2[Int, Short, H](data2, test2, boostConf, discretizer, initialModel)
 
-      case ("Int", "Int") =>
+      case (INT, INT) =>
         boost2[Int, Int, H](data2, test2, boostConf, discretizer, initialModel)
     }
   }

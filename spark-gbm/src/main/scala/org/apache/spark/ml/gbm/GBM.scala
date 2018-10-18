@@ -133,7 +133,7 @@ class GBM extends Logging with Serializable {
     require(value.forall(_ >= 0))
     val builder = BitSet.newBuilder
     builder ++= value
-    boostConf.setCatCols(builder.result)
+    boostConf.setCatCols(builder.result())
     this
   }
 
@@ -145,7 +145,7 @@ class GBM extends Logging with Serializable {
     require(value.forall(_ >= 0))
     val builder = BitSet.newBuilder
     builder ++= value
-    boostConf.setRankCols(builder.result)
+    boostConf.setRankCols(builder.result())
     this
   }
 
@@ -774,7 +774,7 @@ private[gbm] object GBM extends Logging {
           weights(i) = newWeight
         }
 
-        logInfo(s"Weights updated : ${updateStrBuilder.result.mkString("(", ",", ")")}")
+        logInfo(s"Weights updated : ${updateStrBuilder.result().mkString("(", ",", ")")}")
     }
   }
 

@@ -11,7 +11,7 @@ import org.apache.spark.ml.gbm.util.Utils
   * @tparam K Index Type
   * @tparam V Value Type
   */
-private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V] extends Serializable {
+trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V] extends Serializable {
 
 
   def size: Int
@@ -203,7 +203,7 @@ private[gbm] trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, L
 }
 
 
-private[gbm] object KVVector {
+object KVVector {
 
   def empty[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V]()
                                                                                       (implicit cv: ClassTag[V], nev: NumericExt[V]): KVVector[K, V] =
@@ -222,7 +222,7 @@ private[gbm] object KVVector {
 }
 
 
-private[gbm] class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](val values: Array[V]) extends KVVector[K, V] {
+class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, Double) V](val values: Array[V]) extends KVVector[K, V] {
 
   override def size: Int = values.length
 

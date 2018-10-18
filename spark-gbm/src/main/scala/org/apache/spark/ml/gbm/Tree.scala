@@ -291,10 +291,10 @@ private[gbm] object Tree extends Serializable with Logging {
 
   def initializeNodeIdBlocks[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
                                             boostConf: BoostConfig)
-                                           (implicit ct: ClassTag[T], int: Integral[T],
-                                            cn: ClassTag[N], inn: Integral[N],
+                                           (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                            cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                             cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                            cb: ClassTag[B], inb: Integral[B],
+                                            cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                             ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[N]] = {
     val blockSize = boostConf.getBlockSize
 
@@ -313,10 +313,10 @@ private[gbm] object Tree extends Serializable with Logging {
                                         nodeIdBlocks: RDD[ArrayBlock[N]],
                                         boostConf: BoostConfig,
                                         splits: Map[(T, N), Split])
-                                       (implicit ct: ClassTag[T], int: Integral[T],
-                                        cn: ClassTag[N], inn: Integral[N],
+                                       (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                        cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                         cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                        cb: ClassTag[B], inb: Integral[B],
+                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[N]] = {
     val blockSize = boostConf.getBlockSize
 

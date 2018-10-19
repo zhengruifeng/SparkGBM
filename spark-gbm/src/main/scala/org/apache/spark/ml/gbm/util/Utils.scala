@@ -21,6 +21,8 @@ private[gbm] object Utils extends Logging {
     * Choose the most compact Integer Type according to the range
     */
   def getTypeByRange(range: Int): String = {
+    require(range >= 0)
+
     if (range <= Byte.MaxValue) {
       BYTE
     } else if (range <= Short.MaxValue) {

@@ -382,7 +382,7 @@ private[gbm] object Utils extends Logging {
     * E.g, keys = (1,1,1,5,5,2,2,1), will aggregate on keysets (1,1,1),(5,5),(2,2),(1)
     */
   def aggregateIterByKey[K, V, C](iterator: Iterator[(K, V)],
-                                  createZero: () => C,
+                                  createCombiner: () => C,
                                   func: (C, V) => C)
                                  (implicit ork: Ordering[K]): Iterator[(K, C)] = new Iterator[(K, C)]() {
 
@@ -397,9 +397,9 @@ private[gbm] object Utils extends Logging {
     private def update(): Unit = {
       if (kc.isEmpty && iterator.hasNext) {
         val t = iterator.next
-        kc = Some(t._1, func(createZero(), t._2))
+        kc = Some(t._1, func(createCombiner(), t._2))
       } else if (kv.nonEmpty) {
-        kc = Some(kv.get._1, func(createZero(), kv.get._2))
+        kc = Some(kv.get._1, func(createCombiner(), kv.get._2))
       } else {
         kc = None
       }
@@ -431,6 +431,40 @@ private[gbm] object Utils extends Logging {
       update()
       t
     }
+  }
+
+
+  /**
+    * Partially aggregate elements
+    */
+  def partialAggregate[V, C, U](iterator: Iterator[V],
+                                createCombiner: () => C,
+                                mergeValue: (C, V) => C,
+                                pause: (C, Long, Long) => Boolean,
+                                iterate: C => Iterator[U]): Iterator[U] = {
+    var index = -1L
+    var partialIndex = -1L
+
+    var combiner = createCombiner()
+
+    iterator.flatMap { value =>
+      index += 1
+      partialIndex += 1
+
+      combiner = mergeValue(combiner, value)
+
+      if (pause(combiner, partialIndex, index)) {
+        iterate(combiner) ++ {
+          partialIndex = -1
+          combiner = createCombiner()
+          Iterator.empty
+        }
+
+      } else {
+        Iterator.empty
+      }
+
+    } ++ iterate(combiner)
   }
 
 

@@ -33,7 +33,7 @@ object CompactArray extends Serializable {
                                                            (implicit cv: ClassTag[V], orv: Ordering[V]): CompactArray[V] = {
 
     val iter2 = iterator.map(v => (v, 1))
-    val (values, times) = Utils.reduceIterByKey[V, Int](iter2, _ + _).toArray.unzip
+    val (values, times) = Utils.reduceByKey[V, Int](iter2, _ + _).toArray.unzip
     new CompactArray[V](values, times)
   }
 

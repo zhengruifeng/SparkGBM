@@ -325,9 +325,9 @@ private[gbm] object Utils extends Logging {
     * Perform reduce operation by continuous identical keys
     * E.g, keys = (1,1,1,5,5,2,2,1), will reduce on keysets (1,1,1),(5,5),(2,2),(1)
     */
-  def reduceIterByKey[K, V](iterator: Iterator[(K, V)],
-                            func: (V, V) => V)
-                           (implicit ork: Ordering[K]): Iterator[(K, V)] = new Iterator[(K, V)]() {
+  def reduceByKey[K, V](iterator: Iterator[(K, V)],
+                        func: (V, V) => V)
+                       (implicit ork: Ordering[K]): Iterator[(K, V)] = new Iterator[(K, V)]() {
 
     private var kv1 = Option.empty[(K, V)]
     private var kv2 = Option.empty[(K, V)]
@@ -381,10 +381,10 @@ private[gbm] object Utils extends Logging {
     * Perform aggregate operation by continuous identical keys
     * E.g, keys = (1,1,1,5,5,2,2,1), will aggregate on keysets (1,1,1),(5,5),(2,2),(1)
     */
-  def aggregateIterByKey[K, V, C](iterator: Iterator[(K, V)],
-                                  createCombiner: () => C,
-                                  func: (C, V) => C)
-                                 (implicit ork: Ordering[K]): Iterator[(K, C)] = new Iterator[(K, C)]() {
+  def aggregateByKey[K, V, C](iterator: Iterator[(K, V)],
+                              createCombiner: () => C,
+                              func: (C, V) => C)
+                             (implicit ork: Ordering[K]): Iterator[(K, C)] = new Iterator[(K, C)]() {
 
     private var kc = Option.empty[(K, C)]
     private var kv = Option.empty[(K, V)]
@@ -464,7 +464,13 @@ private[gbm] object Utils extends Logging {
         Iterator.empty
       }
 
-    } ++ iterate(combiner)
+    } ++ {
+      if (partialIndex >= 0) {
+        iterate(combiner)
+      } else {
+        Iterator.empty
+      }
+    }
   }
 
 

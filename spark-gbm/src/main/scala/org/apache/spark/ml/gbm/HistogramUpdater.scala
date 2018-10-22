@@ -222,7 +222,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
             .map(s => ((treeId, nodeId), (colId, s.gain)))
       }
 
-      Utils.aggregateIterByKey[(T, N), (C, Float), mutable.ArrayBuilder[(C, Float)]](gainIter,
+      Utils.aggregateByKey[(T, N), (C, Float), mutable.ArrayBuilder[(C, Float)]](gainIter,
         () => mutable.ArrayBuilder.make[(C, Float)], _ += _)
 
         .map { case ((treeId, nodeId), gains) =>

@@ -8,15 +8,16 @@ import org.apache.spark.unsafe.hash.Murmur3_x86_32
 
 
 /**
-  * Indicator that indicate whether:
-  * 1, a tree contains a column in column-sampling (ByTree or/and ByLevel)
-  * 2, or, a tree contains a row or block in sub-sampling
+  * Indicator that indicate whether a set contains a value.
+  * This can be used in:
+  * 1, indicate whether a tree contains column in column-sampling (ByTree or/and ByLevel)
+  * 2, indicate whether a tree contains a row or block in sub-sampling
   */
 private[gbm] trait Selector extends Serializable {
 
   def size: Int
 
-  def contains[T, C](treeId: T, index: C)
+  def contains[T, C](setId: T, value: C)
                     (implicit int: Integral[T], inc: Integral[C]): Boolean
 }
 
@@ -27,36 +28,36 @@ private[gbm] object Selector extends Serializable {
     * Initialize a new selector based on given parameters.
     * Note: Trees in a same base model should share the same selector.
     */
-  def create(sampleRate: Double,
-             numKeys: Long,
-             numBaseModels: Int,
-             rawSize: Int,
+  def create(rate: Double,
+             cardinality: Long,
+             distinct: Int,
+             replica: Int,
              seed: Long): Selector = {
 
-    if (sampleRate == 1) {
-      TrueSelector(numBaseModels * rawSize)
+    if (rate == 1) {
+      TrueSelector(distinct * replica)
 
-    } else if (numKeys * sampleRate > 32) {
+    } else if (cardinality * rate > 32) {
       val rng = new Random(seed)
-      val maximum = (Int.MaxValue * sampleRate).ceil.toInt
+      val maximum = (Int.MaxValue * rate).ceil.toInt
 
-      val seeds = Array.range(0, numBaseModels).flatMap { i =>
+      val seeds = Array.range(0, distinct).flatMap { i =>
         val s = rng.nextInt
-        Iterator.fill(rawSize)(s)
+        Iterator.fill(replica)(s)
       }
 
       HashSelector(maximum, seeds)
 
     } else {
-      // When size of selected columns is small, it is hard for hashing to perform robust sampling,
+      // When size of selected elements is small, it is hard for hashing to perform robust sampling,
       // we then switch to `SetSelector` for exactly sampling.
       val rng = new Random(seed)
-      val numSelected = (numKeys * sampleRate).ceil.toInt
+      val numSelected = (cardinality * rate).ceil.toInt
 
-      val sets = Array.range(0, numBaseModels).flatMap { i =>
-        val selected = rng.shuffle(Seq.range(0, numKeys))
+      val sets = Array.range(0, distinct).flatMap { i =>
+        val selected = rng.shuffle(Seq.range(0, cardinality))
           .take(numSelected).toArray.sorted
-        Iterator.fill(rawSize)(selected)
+        Iterator.fill(replica)(selected)
       }
 
       SetSelector(sets)
@@ -86,9 +87,9 @@ private[gbm] object Selector extends Serializable {
 
 private[gbm] case class TrueSelector(size: Int) extends Selector {
 
-  override def contains[T, C](treeId: T, index: C)
+  override def contains[T, C](setId: T, value: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    val t = int.toInt(treeId)
+    val t = int.toInt(setId)
     require(t >= 0 && t < size)
     true
   }
@@ -105,9 +106,9 @@ private[gbm] case class HashSelector(maximum: Int,
 
   override def size: Int = seeds.length
 
-  override def contains[T, C](treeId: T, index: C)
+  override def contains[T, C](setId: T, value: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    Murmur3_x86_32.hashLong(inc.toLong(index), seeds(int.toInt(treeId))).abs < maximum
+    Murmur3_x86_32.hashLong(inc.toLong(value), seeds(int.toInt(setId))).abs < maximum
   }
 
   override def toString: String = {
@@ -122,9 +123,9 @@ private[gbm] case class SetSelector(sets: Array[Array[Long]]) extends Selector {
 
   override def size: Int = sets.length
 
-  override def contains[T, C](treeId: T, index: C)
+  override def contains[T, C](setId: T, value: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    ju.Arrays.binarySearch(sets(int.toInt(treeId)), inc.toLong(index)) >= 0
+    ju.Arrays.binarySearch(sets(int.toInt(setId)), inc.toLong(value)) >= 0
   }
 
   override def toString: String = {
@@ -138,9 +139,9 @@ private[gbm] case class UnionSelector(selectors: Seq[Selector]) extends Selector
 
   override def size: Int = selectors.head.size
 
-  override def contains[T, C](treeId: T, index: C)
+  override def contains[T, C](setId: T, value: C)
                              (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    selectors.forall(_.contains[T, C](treeId, index))
+    selectors.forall(_.contains[T, C](setId, value))
   }
 
   override def toString: String = {

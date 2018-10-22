@@ -6,7 +6,7 @@ class ArrayBlockSuite extends FunSuite {
 
   import ArrayBlock._
 
-  test("instantiation") {
+  test("basic") {
     val arrays = Array(Array(0), Array(1, 2, 3), Array.emptyIntArray, Array(4, 5, 6))
     val block = build(arrays)
 

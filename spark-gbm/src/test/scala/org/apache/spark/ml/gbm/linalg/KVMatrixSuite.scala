@@ -7,7 +7,7 @@ class KVMatrixSuite extends FunSuite {
   import KVMatrix._
 
 
-  test("instantiation") {
+  test("basic") {
     val vecs = Seq(
       KVVector.sparse[Int, Long](5, Array(3), Array(1L)),
       KVVector.dense[Int, Long](Array(0L, 1L, 2L, 3L, 4L)),

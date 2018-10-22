@@ -6,7 +6,7 @@ class KVVectorSuite extends FunSuite {
 
   import KVVector._
 
-  test("instantiation") {
+  test("basic") {
     val v1 = dense[Short, Int](Array(1, 3, 0, 5))
     val v2 = sparse[Short, Int](5, Array(2.toShort, 3.toShort, 4.toShort), Array(1, 0, -1))
     val v3 = empty[Short, Int]

@@ -64,7 +64,10 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
       values.grouped(flag)
 
     } else {
-      Iterator.fill(-flag)(values)
+      // IMPORTANT!
+      // Iterator.fill(-flag)(values) will not work here!
+      // adopt `clone` to avoid in-place modification in previous iterations
+      Iterator.range(0, -flag).map(_ => values.clone())
     }
   }
 }
@@ -137,4 +140,5 @@ object ArrayBlock extends Serializable {
     }
   }
 }
+
 

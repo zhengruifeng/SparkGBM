@@ -6,7 +6,7 @@ class CompactArraySuite extends FunSuite {
 
   import CompactArray._
 
-  test("instantiation") {
+  test("basic") {
     val values = Array(1.0, 3.0, 4.0, 5.0, 1.0)
     val array = build(values)
 

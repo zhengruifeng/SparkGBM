@@ -883,7 +883,7 @@ private[gbm] object GBM extends Logging {
           if (binVecBlock.size == defaultRawBlock.size) {
             defaultRawBlock
           } else {
-            ArrayBlock.build[H](Iterator.range(0, binVecBlock.size).map(_ => rawBase))
+            ArrayBlock.fill[H](rawBase, binVecBlock.size)
           }
         }
       }

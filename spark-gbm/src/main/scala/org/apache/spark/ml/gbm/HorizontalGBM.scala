@@ -167,7 +167,7 @@ object HorizontalGBM extends Logging {
         // callback
         if (boostConf.getCallbackFunc.nonEmpty) {
           // using cloning to avoid model modification
-          val snapshot = new GBMModel(boostConf.getObjFunc, discretizer.clone(),
+          val snapshot = new GBMModel(boostConf.getObjFunc, discretizer.copy(),
             rawBase.clone(), treesBuff.toArray.clone(), neh.toDouble(weightsBuff.toArray).clone())
 
           // callback can update boosting configuration

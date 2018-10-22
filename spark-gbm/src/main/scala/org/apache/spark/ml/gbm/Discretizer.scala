@@ -74,7 +74,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
 
   def numCols: Int = colDiscretizers.length
 
-  override def clone(): Discretizer = {
+  def copy(): Discretizer = {
     new Discretizer(colDiscretizers.clone(), zeroAsMissing, sparsity)
   }
 }

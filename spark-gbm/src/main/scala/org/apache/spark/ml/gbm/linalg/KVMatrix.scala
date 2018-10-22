@@ -69,14 +69,6 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
         private var indexIdx = 0
         private var valueIdx = 0
 
-        private val indexBuilder = mutable.ArrayBuilder.make[K]
-        private val valueBuilder = mutable.ArrayBuilder.make[V]
-
-        {
-          indexBuilder.sizeHint(flag)
-          valueBuilder.sizeHint(flag)
-        }
-
         private val emptyVec = KVVector.sparse[K, V](flag, nek.emptyArray, nev.emptyArray)
 
         override def hasNext: Boolean = i < size_
@@ -85,38 +77,24 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
           val step = getStep(i)
 
           if (step > 0) {
-            valueBuilder.clear()
+            val ret = KVVector.dense[K, V](values.slice(valueIdx, valueIdx + step))
 
-            var j = 0
-            while (j < step) {
-              valueBuilder += values(valueIdx + j)
-              j += 1
-            }
-
-            i += 1
             valueIdx += step
+            i += 1
 
-            KVVector.dense[K, V](valueBuilder.result())
+            ret
 
           } else if (step < 0) {
-            indexBuilder.clear()
-            valueBuilder.clear()
+            val ret = KVVector.sparse[K, V](flag, indices.slice(indexIdx, indexIdx - step),
+              values.slice(valueIdx, valueIdx - step))
 
-            var j = 0
-            while (j < -step) {
-              indexBuilder += indices(indexIdx + j)
-              valueBuilder += values(valueIdx + j)
-              j += 1
-            }
-
-            i += 1
             indexIdx -= step
             valueIdx -= step
+            i += 1
 
-            KVVector.sparse[K, V](flag, indexBuilder.result(), valueBuilder.result())
+            ret
 
           } else {
-
             i += 1
             emptyVec
           }

@@ -22,6 +22,7 @@ class ArrayBlockSuite extends FunSuite {
 
     assert(block.size === 4)
     assert(block.flag === 3)
+    assert(block.steps === Array())
     assert(block.iterator.toArray === arrays)
   }
 
@@ -32,6 +33,8 @@ class ArrayBlockSuite extends FunSuite {
 
     assert(block.size === 4)
     assert(block.flag === -4)
+    assert(block.values === Array(1, 2, 3))
+    assert(block.steps === Array())
     assert(block.iterator.toArray === arrays)
   }
 
@@ -41,6 +44,8 @@ class ArrayBlockSuite extends FunSuite {
 
     assert(block.size === 4)
     assert(block.flag === -4)
+    assert(block.values === Array(1, 2, 3))
+    assert(block.steps === Array())
     assert(block.iterator.toArray === Array(Array(1, 2, 3), Array(1, 2, 3), Array(1, 2, 3), Array(1, 2, 3)))
   }
 

@@ -101,7 +101,7 @@ object VerticalGBM extends Logging {
 
 
     // raw scores and checkpointer
-    var trainRawBlocks = GBM.initializeRawBlocks[C, B, H](trainBinVecBlocks,
+    var trainRawBlocks = GBM.initializeRawBlocks[C, B, H](trainBinVecBlocks, trainWeightLabelBlocks,
       treesBuff.toArray, weightsBuff.toArray, boostConf)
       .setName("Train Raw Blocks (Iteration 0)")
     val trainRawBlocksCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
@@ -114,8 +114,8 @@ object VerticalGBM extends Logging {
     // raw scores and checkpointer for test data
     val testRawBlocksCheckpointer = testBlocks.map(_ => new Checkpointer[ArrayBlock[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel3))
-    var testRawBlocks = testBlocks.map { case (_, testBinVecBlocks) =>
-      val newTestRawBlocks = GBM.initializeRawBlocks[C, B, H](testBinVecBlocks,
+    var testRawBlocks = testBlocks.map { case (testWeightLabelBlocks, testBinVecBlocks) =>
+      val newTestRawBlocks = GBM.initializeRawBlocks[C, B, H](testBinVecBlocks, testWeightLabelBlocks,
         treesBuff.toArray, weightsBuff.toArray, boostConf)
         .setName("Test Raw Blocks (Iteration 0)")
       if (treesBuff.nonEmpty) {

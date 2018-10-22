@@ -824,6 +824,7 @@ private[gbm] object GBM extends Logging {
     * @return RDD containing final score (weighted) and the scores of each tree (non-weighted, only for DART)
     */
   def initializeRawBlocks[C, B, H](binVecBlocks: RDD[KVMatrix[C, B]],
+                                   weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
                                    trees: Array[TreeModel],
                                    weights: Array[H],
                                    boostConf: BoostConfig)
@@ -877,13 +878,13 @@ private[gbm] object GBM extends Logging {
 
     } else {
 
-      binVecBlocks.mapPartitions { iter =>
+      weightLabelBlocks.mapPartitions { iter =>
         val defaultRawBlock = ArrayBlock.fill[H](rawBase, boostConf.getBlockSize)
-        iter.map { binVecBlock =>
-          if (binVecBlock.size == defaultRawBlock.size) {
+        iter.map { case (weightBlock, _) =>
+          if (weightBlock.size == defaultRawBlock.size) {
             defaultRawBlock
           } else {
-            ArrayBlock.fill[H](rawBase, binVecBlock.size)
+            ArrayBlock.fill[H](rawBase, weightBlock.size)
           }
         }
       }

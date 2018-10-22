@@ -135,61 +135,7 @@ trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, D
     */
   def plus(other: KVVector[K, V])
           (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
-           cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
-    import nuv._
-
-    if (other.isEmpty) {
-      return this
-    }
-
-    if (this.isEmpty) {
-      return other
-    }
-
-
-    (this, other) match {
-      case (dv1: DenseKVVector[K, V], dv2: DenseKVVector[K, V]) =>
-        if (dv1.size >= dv2.size) {
-          dv2.activeIterator.foreach { case (k, v) => dv1.values(ink.toInt(k)) += v }
-          dv1
-        } else {
-          dv1.activeIterator.foreach { case (k, v) => dv2.values(ink.toInt(k)) += v }
-          dv2
-        }
-
-
-      case (dv: DenseKVVector[K, V], sv: SparseKVVector[K, V]) =>
-        if (dv.size >= sv.size) {
-          sv.activeIterator.foreach { case (k, v) => dv.values(ink.toInt(k)) += v }
-          dv
-        } else {
-          val newValues = dv.values ++ Array.fill(sv.size - dv.size)(zero)
-          sv.activeIterator.foreach { case (k, v) => newValues(ink.toInt(k)) += v }
-          KVVector.dense[K, V](newValues)
-        }
-
-
-      case (sv: SparseKVVector[K, V], dv: DenseKVVector[K, V]) =>
-        if (dv.size >= sv.size) {
-          sv.activeIterator.foreach { case (k, v) => dv.values(ink.toInt(k)) += v }
-          dv
-        } else {
-          val newValues = dv.values ++ Array.fill(sv.size - dv.size)(zero)
-          sv.activeIterator.foreach { case (k, v) => newValues(ink.toInt(k)) += v }
-          KVVector.dense[K, V](newValues)
-        }
-
-
-      case (sv1: SparseKVVector[K, V], sv2: SparseKVVector[K, V]) =>
-        val (indices, values) =
-          Utils.outerJoinSortedIters(sv1.activeIterator, sv2.activeIterator, false)
-            .map { case (k, v1, v2) => (k, v1.getOrElse(zero) + v2.getOrElse(zero)) }
-            .filter(_._2 != zero).toArray.unzip
-
-        val newSize = math.max(size, other.size)
-        KVVector.sparse[K, V](newSize, indices, values)
-    }
-  }
+           cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V]
 
 
   /**
@@ -200,6 +146,9 @@ trait KVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Float, D
            (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
             cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] =
     plus(other.negate)
+
+
+  def copy(): KVVector[K, V]
 }
 
 
@@ -269,6 +218,43 @@ class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Flo
   }
 
 
+  override def plus(other: KVVector[K, V])
+                   (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                    cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
+    import nuv._
+
+    if (other.isEmpty) {
+      return this
+    }
+
+    if (this.isEmpty) {
+      return other
+    }
+
+    other match {
+      case dv: DenseKVVector[K, V] =>
+        if (size >= dv.size) {
+          dv.activeIterator.foreach{ case (k, v) => values(ink.toInt(k)) += v }
+          this
+        } else {
+          activeIterator.foreach { case (k, v) => dv.values(ink.toInt(k)) += v }
+          dv
+        }
+
+
+      case sv: SparseKVVector[K, V] =>
+        if (size >= sv.size) {
+          sv.activeIterator.foreach { case (k, v) => values(ink.toInt(k)) += v }
+          this
+        } else {
+          val newValues = values ++ Array.fill(sv.size - size)(zero)
+          sv.activeIterator.foreach { case (k, v) => newValues(ink.toInt(k)) += v }
+          KVVector.dense[K, V](newValues)
+        }
+    }
+  }
+
+
   override def slice(sortedIndices: Array[Int])
                     (implicit ck: ClassTag[K], ink: Integral[K],
                      cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] =
@@ -321,6 +307,10 @@ class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Flo
 
 
   override def isDense: Boolean = true
+
+
+  override def copy(): KVVector[K, V] =
+    KVVector.dense[K, V](values.clone())
 
 
   override def toString: String =
@@ -384,6 +374,43 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
         val newValues = leftValues ++ Array(value) ++ rightValues
         KVVector.sparse[K, V](newSize, newIndices, newValues)
       }
+    }
+  }
+
+
+  override def plus(other: KVVector[K, V])
+                   (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                    cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVVector[K, V] = {
+    import nuv._
+
+    if (other.isEmpty) {
+      return this
+    }
+
+    if (this.isEmpty) {
+      return other
+    }
+
+    other match {
+      case dv: DenseKVVector[K, V] =>
+        if (size <= dv.size) {
+          activeIterator.foreach { case (k, v) => dv.values(ink.toInt(k)) += v }
+          dv
+        } else {
+          val newValues = dv.values ++ Array.fill(size - dv.size)(zero)
+          activeIterator.foreach { case (k, v) => newValues(ink.toInt(k)) += v }
+          KVVector.dense[K, V](newValues)
+        }
+
+
+      case sv: SparseKVVector[K, V] =>
+        val (indices, values) =
+          Utils.outerJoinSortedIters(activeIterator, sv.activeIterator, false)
+            .map { case (k, v1, v2) => (k, v1.getOrElse(zero) + v2.getOrElse(zero)) }
+            .filter(_._2 != zero).toArray.unzip
+
+        val newSize = math.max(size, other.size)
+        KVVector.sparse[K, V](newSize, indices, values)
     }
   }
 
@@ -478,6 +505,8 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
 
   override def isDense: Boolean = false
 
+  override def copy(): KVVector[K, V] =
+    KVVector.sparse[K, V](size, indices.clone(), values.clone())
 
   override def toString: String = {
     s"SparseKVVector[$size," +

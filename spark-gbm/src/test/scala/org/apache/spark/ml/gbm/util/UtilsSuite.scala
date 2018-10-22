@@ -1,11 +1,11 @@
 package org.apache.spark.ml.gbm.util
 
-import org.scalatest.{BeforeAndAfter, FunSuite}
+import org.scalatest.FunSuite
 import scala.collection.mutable
 
 import org.apache.spark.ml.linalg._
 
-class UtilsSuite extends FunSuite with BeforeAndAfter {
+class UtilsSuite extends FunSuite {
 
   import Utils._
 
@@ -155,3 +155,4 @@ class UtilsSuite extends FunSuite with BeforeAndAfter {
       === Array((1, 2.0)))
   }
 }
+

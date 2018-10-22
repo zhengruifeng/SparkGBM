@@ -95,9 +95,9 @@ private[gbm] object Utils extends Logging {
     }
 
     override def next(): K = {
-      val t = k.get
+      val ret = k.get
       update()
-      t
+      ret
     }
   }
 
@@ -143,9 +143,9 @@ private[gbm] object Utils extends Logging {
     }
 
     override def next(): (K, V) = {
-      val t = kv.get
+      val ret = kv.get
       update()
-      t
+      ret
     }
   }
 
@@ -203,31 +203,31 @@ private[gbm] object Utils extends Logging {
         val cmp = ork.compare(k1, k2)
 
         if (cmp == 0) {
-          val t = (k1, Some(v1), Some(v2))
+          val ret = (k1, Some(v1), Some(v2))
           updateKV1()
           updateKV2()
-          t
+          ret
 
         } else if (cmp < 0) {
-          val t = (k1, Some(v1), None)
+          val ret = (k1, Some(v1), None)
           updateKV1()
-          t
+          ret
 
         } else {
-          val t = (k2, None, Some(v2))
+          val ret = (k2, None, Some(v2))
           updateKV2()
-          t
+          ret
         }
 
       case (Some((k1, v1)), None) =>
-        val t = (k1, Some(v1), None)
+        val ret = (k1, Some(v1), None)
         updateKV1()
-        t
+        ret
 
       case (None, Some((k2, v2))) =>
-        val t = (k2, None, Some(v2))
+        val ret = (k2, None, Some(v2))
         updateKV2()
-        t
+        ret
     }
   }
 
@@ -314,9 +314,9 @@ private[gbm] object Utils extends Logging {
     }
 
     override def next(): (K, V1, V2) = {
-      val t = (kv1.get._1, kv1.get._2, kv2.get._2)
+      val ret = (kv1.get._1, kv1.get._2, kv2.get._2)
       update()
-      t
+      ret
     }
   }
 
@@ -370,9 +370,9 @@ private[gbm] object Utils extends Logging {
     }
 
     override def next(): (K, V) = {
-      val t = kv1.get
+      val ret = kv1.get
       update()
-      t
+      ret
     }
   }
 
@@ -427,9 +427,9 @@ private[gbm] object Utils extends Logging {
     }
 
     override def next(): (K, C) = {
-      val t = kc.get
+      val ret = kc.get
       update()
-      t
+      ret
     }
   }
 

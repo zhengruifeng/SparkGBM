@@ -46,24 +46,17 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
         var i = 0
         var offset = 0
 
-        val builder = mutable.ArrayBuilder.make[V]
-
         override def hasNext: Boolean = i < steps.length
 
         override def next(): Array[V] = {
-          builder.clear()
-
           val step = steps(i)
 
-          var j = 0
-          while (j < step) {
-            builder += values(offset + j)
-            j += 1
-          }
+          val ret = values.slice(offset, offset + step)
 
-          i += 1
           offset += step
-          builder.result()
+          i += 1
+
+          ret
         }
       }
 

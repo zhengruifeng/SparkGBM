@@ -7,6 +7,7 @@ import scala.util.Random
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.linalg._
+import org.apache.spark.ml.gbm.rdd._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
@@ -1003,19 +1004,21 @@ private[gbm] object GBM extends Logging {
                        (implicit cc: ClassTag[C], inc: Integral[C],
                         cb: ClassTag[B], inb: Integral[B],
                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Map[String, Double] = {
+    import RDDFunctions._
+
     if (boostConf.getEvalFunc.isEmpty) {
       return Map.empty
     }
 
     val rawSize = boostConf.getRawSize
 
-    val scores = weightBlocks.zip(labelBlocks).zip(rawBlocks)
-      .flatMap { case ((weightBlock, labelBlock), rawBlock) =>
+    val scores = weightBlocks.zip2(labelBlocks, rawBlocks)
+      .flatMap { case (weightBlock, labelBlock, rawBlock) =>
         require(weightBlock.size == rawBlock.size)
         require(labelBlock.size == rawBlock.size)
 
-        weightBlock.iterator.zip(labelBlock.iterator).zip(rawBlock.iterator)
-          .map { case ((weight, label), rawSeq) =>
+        Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
+          .map { case (weight, label, rawSeq) =>
             val raw = neh.toDouble(rawSeq.take(rawSize))
             val score = boostConf.getObjFunc.transform(raw)
             (nuh.toDouble(weight), neh.toDouble(label), raw, score)

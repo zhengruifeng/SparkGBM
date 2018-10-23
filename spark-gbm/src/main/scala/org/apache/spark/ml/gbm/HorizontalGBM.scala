@@ -381,6 +381,7 @@ object HorizontalGBM extends Logging {
                                             cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                             cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                             ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+    import RDDFunctions._
     import nuh._
 
     val rawSize = boostConf.getRawSize
@@ -391,8 +392,8 @@ object HorizontalGBM extends Logging {
     val weightScale = neh.fromDouble(boostConf.computeOtherReweight)
     val computeTreeIds = GBM.getTreeIds[T](rawSize)
 
-    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
-      .map { case ((weightBlock, labelBlock), rawBlock) =>
+    val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
+      .map { case (weightBlock, labelBlock, rawBlock) =>
         val gradBlock = computeGradBlock(weightBlock, labelBlock, rawBlock)
 
         val gradNorms = gradBlock.iterator.map { gradHess =>
@@ -471,33 +472,34 @@ object HorizontalGBM extends Logging {
     }.setName(s"BaseIdBlocks (iteration $iteration)")
 
 
-    val data = binVecBlocks.zip(gradBlocks).zip(baseIdBlocks).mapPartitions { iter =>
-      val topTreeIds = Array.tabulate(numTrees)(int.fromInt)
+    val data = binVecBlocks.zip2(gradBlocks, baseIdBlocks)
+      .mapPartitions { iter =>
+        val topTreeIds = Array.tabulate(numTrees)(int.fromInt)
 
-      iter.flatMap { case ((binVecBlock, (gradBlock, _)), baseIdBlock) =>
-        require(binVecBlock.size == gradBlock.size)
-        require(binVecBlock.size == baseIdBlock.size)
+        iter.flatMap { case (binVecBlock, (gradBlock, _), baseIdBlock) =>
+          require(binVecBlock.size == gradBlock.size)
+          require(binVecBlock.size == baseIdBlock.size)
 
-        binVecBlock.iterator.zip(gradBlock.iterator).zip(baseIdBlock.iterator)
-          .flatMap { case ((binVec, grad), baseIds) =>
-            if (baseIds.length == 1 && int.lt(baseIds.head, int.zero)) {
-              Iterator.single((binVec, topTreeIds, grad))
+          Utils.zip3(binVecBlock.iterator, gradBlock.iterator, baseIdBlock.iterator)
+            .flatMap { case (binVec, grad, baseIds) =>
+              if (baseIds.length == 1 && int.lt(baseIds.head, int.zero)) {
+                Iterator.single((binVec, topTreeIds, grad))
 
-            } else if (baseIds.nonEmpty) {
-              val treeIds = computeTreeIds(baseIds)
-              var i = 0
-              while (i < grad.length) {
-                grad(i) *= weightScale
-                i += 1
+              } else if (baseIds.nonEmpty) {
+                val treeIds = computeTreeIds(baseIds)
+                var i = 0
+                while (i < grad.length) {
+                  grad(i) *= weightScale
+                  i += 1
+                }
+                Iterator.single((binVec, treeIds, grad))
+
+              } else {
+                Iterator.empty
               }
-              Iterator.single((binVec, treeIds, grad))
-
-            } else {
-              Iterator.empty
             }
-          }
-      }
-    }.setName(s"TreeInputs (iteration $iteration) (Gradient-based One-Side Sampled)")
+        }
+      }.setName(s"TreeInputs (iteration $iteration) (Gradient-based One-Side Sampled)")
 
 
     boostConf.getStorageStrategy match {
@@ -527,25 +529,28 @@ object HorizontalGBM extends Logging {
                                                    cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                    cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                                    ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+    import RDDFunctions._
+
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
     val numTrees = numBaseModels * rawSize
 
-    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
-      .map { case ((weightBlock, labelBlock), rawBlock) => computeGradBlock(weightBlock, labelBlock, rawBlock) }
+    val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
+      .map { case (weightBlock, labelBlock, rawBlock) => computeGradBlock(weightBlock, labelBlock, rawBlock) }
       .setName(s"GradientBlocks (iteration $iteration)")
 
 
-    val data = binVecBlocks.zip(gradBlocks).mapPartitions { iter =>
-      val treeIds = Array.tabulate(numTrees)(int.fromInt)
+    val data = binVecBlocks.zip(gradBlocks)
+      .mapPartitions { iter =>
+        val treeIds = Array.tabulate(numTrees)(int.fromInt)
 
-      iter.flatMap { case (binVecBlock, gradBlock) =>
-        require(binVecBlock.size == gradBlock.size)
+        iter.flatMap { case (binVecBlock, gradBlock) =>
+          require(binVecBlock.size == gradBlock.size)
 
-        binVecBlock.iterator.zip(gradBlock.iterator)
-          .map { case (binVec, grad) => (binVec, treeIds, grad) }
-      }
-    }.setName(s"TreeInputs (iteration $iteration)")
+          binVecBlock.iterator.zip(gradBlock.iterator)
+            .map { case (binVec, grad) => (binVec, treeIds, grad) }
+        }
+      }.setName(s"TreeInputs (iteration $iteration)")
 
 
     boostConf.getStorageStrategy match {
@@ -583,13 +588,13 @@ object HorizontalGBM extends Logging {
     val seedOffset = boostConf.getSeed + iteration
     val computeTreeIds = GBM.getTreeIds[T](rawSize)
 
-    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
+    val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         val rng = new Random(seedOffset + partId)
         val selected = Iterator.range(0, numBaseModels).exists(_ => rng.nextDouble < subSample)
 
         if (selected) {
-          iter.map { case ((weightBlock, labelBlock), rawBlock) =>
+          iter.map { case (weightBlock, labelBlock, rawBlock) =>
             computeGradBlock(weightBlock, labelBlock, rawBlock)
           }
         } else {
@@ -645,20 +650,22 @@ object HorizontalGBM extends Logging {
                                                      cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+    import RDDFunctions._
+
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
     val seedOffset = boostConf.getSeed + iteration
     val subSample = boostConf.getSubSampleRate
     val computeTreeIds = GBM.getTreeIds[T](rawSize)
 
-    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
+    val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         val rng = new Random(seedOffset + partId)
         val rngs = Array.tabulate(numBaseModels)(_ => new XORShiftRandom(rng.nextLong))
 
         val emptyValue = (ArrayBlock.empty[H], net.emptyArray)
 
-        iter.map { case ((weightBlock, labelBlock), rawBlock) =>
+        iter.map { case (weightBlock, labelBlock, rawBlock) =>
           val baseIds = Array.range(0, numBaseModels)
             .filter { i => rngs(i).nextDouble < subSample }.map(int.fromInt)
 
@@ -713,25 +720,27 @@ object HorizontalGBM extends Logging {
                                                         cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                         cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(KVVector[C, B], Array[T], Array[H])] = {
+    import RDDFunctions._
+
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
     val seedOffset = boostConf.getSeed + iteration
     val subSample = boostConf.getSubSampleRate
     val computeTreeIds = GBM.getTreeIds[T](rawSize)
 
-    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
+    val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         val rng = new Random(seedOffset + partId)
         val rngs = Array.tabulate(numBaseModels)(_ => new XORShiftRandom(rng.nextLong))
 
         val emptyValue = (neh.emptyArray, net.emptyArray)
 
-        iter.map { case ((weightBlock, labelBlock), rawBlock) =>
+        iter.map { case (weightBlock, labelBlock, rawBlock) =>
           require(weightBlock.size == rawBlock.size)
           require(labelBlock.size == rawBlock.size)
 
-          val seq = weightBlock.iterator.zip(labelBlock.iterator).zip(rawBlock.iterator)
-            .map { case ((weight, label), rawSeq) =>
+          val seq = Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
+            .map { case (weight, label, rawSeq) =>
               val baseIds = Array.range(0, numBaseModels)
                 .filter { i => rngs(i).nextDouble < subSample }.map(int.fromInt)
 
@@ -756,8 +765,8 @@ object HorizontalGBM extends Logging {
         require(binVecBlock.size == gradBlock.size)
         require(binVecBlock.size == baseIdBlock.size)
 
-        binVecBlock.iterator.zip(baseIdBlock.iterator).zip(gradBlock.iterator)
-          .flatMap { case ((binVec, baseIds), grad) =>
+        Utils.zip3(binVecBlock.iterator, baseIdBlock.iterator, gradBlock.iterator)
+          .flatMap { case (binVec, baseIds, grad) =>
             if (baseIds.nonEmpty) {
               val treeIds = computeTreeIds(baseIds)
               Iterator.single(binVec, treeIds, grad)

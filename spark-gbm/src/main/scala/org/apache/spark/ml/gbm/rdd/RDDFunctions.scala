@@ -4,7 +4,7 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
 
-import org.apache.spark.Partitioner
+import org.apache.spark._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.random.XORShiftRandom
 
@@ -148,6 +148,24 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
       }
 
     }).map(_._2)
+  }
+
+
+  def zip2[V1: ClassTag, V2: ClassTag](other1: RDD[V1], other2: RDD[V2]): RDD[(T, V1, V2)] = {
+
+    self.zipPartitions(other1, other2, false) {
+      (thisIter, otherIter1, otherIter2) =>
+        new Iterator[(T, V1, V2)] {
+          def hasNext: Boolean = (thisIter.hasNext, otherIter1.hasNext, otherIter2.hasNext) match {
+            case (true, true, true) => true
+            case (false, false, false) => false
+            case _ => throw new SparkException("Can only zip2 RDDs with " +
+              "same number of elements in each partition")
+          }
+
+          def next(): (T, V1, V2) = (thisIter.next(), otherIter1.next(), otherIter2.next())
+        }
+    }
   }
 
 

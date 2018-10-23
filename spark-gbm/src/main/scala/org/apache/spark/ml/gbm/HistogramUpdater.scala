@@ -266,9 +266,8 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       localHistograms.mapPartitions { localIter =>
         val (treeIds, nodeIds, colIds) = bcIds.value
 
-        val flattenIter = treeIds.iterator
-          .zip(nodeIds.iterator).zip(colIds.iterator)
-          .flatMap { case ((treeId, nodeId), colIds) =>
+        val flattenIter = Utils.zip3(treeIds.iterator, nodeIds.iterator, colIds.iterator)
+          .flatMap { case (treeId, nodeId, colIds) =>
             colIds.map { colId => ((treeId, nodeId, colId), null) }
           }
 

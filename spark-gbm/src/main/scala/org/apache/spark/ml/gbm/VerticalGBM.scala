@@ -477,8 +477,8 @@ object VerticalGBM extends Logging {
     val vColIds = boostConf.getVerticalColumnIds[C]
     val numCols = boostConf.getNumCols
 
-    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
-      .map { case ((weightBlock, labelBlock), rawBlock) => computeGradBlock(weightBlock, labelBlock, rawBlock) }
+    val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
+      .map { case (weightBlock, labelBlock, rawBlock) => computeGradBlock(weightBlock, labelBlock, rawBlock) }
       .setName(s"GradientBlocks (iteration $iteration)")
 
     gradBlocks.persist(boostConf.getStorageLevel1)
@@ -568,12 +568,12 @@ object VerticalGBM extends Logging {
     logInfo(s"Iteration $iteration, blockSelector $blockSelector")
 
 
-    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
+    val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         var blockId = blockIdOffsets(partId) - 1
         val emptyValue = (ArrayBlock.empty[H], net.emptyArray)
 
-        iter.map { case ((weightBlock, labelBlock), rawBlock) =>
+        iter.map { case (weightBlock, labelBlock, rawBlock) =>
           blockId += 1
 
           val treeIds = Array.range(0, numTrees)
@@ -688,17 +688,17 @@ object VerticalGBM extends Logging {
       boostConf.getNumInstances, numBaseModels, boostConf.getRawSize, boostConf.getSeed + iteration)
     logInfo(s"Iteration $iteration, instanceSelector $instanceSelector")
 
-    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
+    val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         var instanceId = instanceIdOffsets(partId) - 1
         val emptyValue = (neh.emptyArray, net.emptyArray)
 
-        iter.map { case ((weightBlock, labelBlock), rawBlock) =>
+        iter.map { case (weightBlock, labelBlock, rawBlock) =>
           require(weightBlock.size == rawBlock.size)
           require(labelBlock.size == rawBlock.size)
 
-          val seq = weightBlock.iterator.zip(labelBlock.iterator).zip(rawBlock.iterator)
-            .map { case ((weight, label), rawSeq) =>
+          val seq = Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
+            .map { case (weight, label, rawSeq) =>
               instanceId += 1
 
               val treeIds = Array.range(0, numTrees)
@@ -724,8 +724,8 @@ object VerticalGBM extends Logging {
       require(binVecBlock.size == gradBlock.size)
       require(binVecBlock.size == treeIdBlock.size)
 
-      binVecBlock.iterator.zip(treeIdBlock.iterator).zip(gradBlock.iterator)
-        .flatMap { case ((binVec, treeIds), grad) =>
+      Utils.zip3(binVecBlock.iterator, treeIdBlock.iterator, gradBlock.iterator)
+        .flatMap { case (binVec, treeIds, grad) =>
           if (treeIds.nonEmpty) {
             Iterator.single(binVec, treeIds, grad)
           } else {

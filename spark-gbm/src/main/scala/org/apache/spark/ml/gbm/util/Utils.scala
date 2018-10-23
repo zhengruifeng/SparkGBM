@@ -1,5 +1,7 @@
 package org.apache.spark.ml.gbm.util
 
+import scala.collection._
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark._
@@ -51,6 +53,18 @@ private[gbm] object Utils extends Logging {
 
       case (false, false) => true
     }
+  }
+
+
+  /**
+    * zip three iterators
+    */
+  def zip3[V1, V2, V3](iter1: Iterator[V1],
+                       iter2: Iterator[V2],
+                       iter3: Iterator[V3]): Iterator[(V1, V2, V3)] = new AbstractIterator[(V1, V2, V3)] {
+    def hasNext: Boolean = iter1.hasNext && iter2.hasNext && iter3.hasNext
+
+    def next: (V1, V2, V3) = (iter1.next(), iter2.next(), iter3.next())
   }
 
 

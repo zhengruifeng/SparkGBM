@@ -1,9 +1,10 @@
 package org.apache.spark.ml.gbm
 
+import jdk.nashorn.internal.runtime.CodeStore.DirectoryCodeStore
+
 import scala.collection.{BitSet, mutable}
 import scala.reflect.ClassTag
 import scala.util.Random
-
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.linalg._
@@ -448,17 +449,13 @@ class GBM extends Logging with Serializable {
                       test: Option[RDD[(Double, Array[Double], Vector)]]): GBMModel = {
     if (getBoostType == GBM.Dart) {
       require(getMaxDrop >= getMinDrop)
-    } else if (getBoostType == GBM.Goss) {
-      require(getTopRate + getOtherRate <= 1)
     }
 
-    val sc = data.sparkContext
-
-    val numCols = data.first._3.size
+    val row = data.first()
+    val numCols = row._3.size
     require(numCols > 0)
 
-    var labelAvg = Array.emptyDoubleArray
-    var discretizer = null.asInstanceOf[Discretizer]
+    var discretizer: Discretizer = null
 
     if (initialModel.nonEmpty) {
       require(numCols == initialModel.get.discretizer.numCols)
@@ -472,17 +469,21 @@ class GBM extends Logging with Serializable {
       logWarning(s"BaseScore is already provided in the initial model, related param is overridden: " +
         s"${boostConf.getBaseScore.mkString(",")} -> ${baseScore_.mkString(",")}")
 
-    } else {
-      val t = Discretizer.fit2(data, numCols, boostConf.getCatCols, boostConf.getRankCols,
-        maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
-      discretizer = t._1
-      labelAvg = t._2
-    }
+    } else if (boostConf.getBaseScore.nonEmpty) {
+      require(row._2.length == boostConf.getBaseScore.length)
 
-    if (boostConf.getBaseScore.isEmpty) {
+      discretizer = Discretizer.fit(data.map(_._3), numCols, boostConf.getCatCols, boostConf.getRankCols,
+        maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
+
+    } else {
+      val (discretizer_, labelAvg) = Discretizer.fit2(data, numCols, boostConf.getCatCols, boostConf.getRankCols,
+        maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
+
+      discretizer = discretizer_
+
+      boostConf.setBaseScore(labelAvg)
       logInfo(s"Basescore is not provided, assign it to average label value " +
         s"${boostConf.getBaseScore.mkString(",")}")
-      boostConf.setBaseScore(labelAvg)
     }
 
     val rawBase = boostConf.computeRawBaseScore

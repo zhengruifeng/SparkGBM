@@ -153,14 +153,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
 
   def safeZip[U: ClassTag](other: RDD[U]): RDD[(T, U)] = {
 
-    self.zipPartitions(other, preservesPartitioning = false) {
-      (thisIter, otherIter) =>
-        new Iterator[(T, U)] {
-          def hasNext: Boolean = thisIter.hasNext && otherIter.hasNext
-
-          def next(): (T, U) = (thisIter.next(), otherIter.next())
-        }
-    }
+    self.zipPartitions(other, preservesPartitioning = false)(_.zip(_))
   }
 }
 

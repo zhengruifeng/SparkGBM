@@ -85,9 +85,9 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
   private var delta = 1.0
 
-  private var prevHistograms = Option.empty[RDD[((T, N, C), KVVector[B, H])]]
+  private var prevHistograms: RDD[((T, N, C), KVVector[B, H])] = null
 
-  private var checkpointer = Option.empty[Checkpointer[((T, N, C), KVVector[B, H])]]
+  private var checkpointer: Checkpointer[((T, N, C), KVVector[B, H])] = null
 
   override def update(data: RDD[((KVVector[C, B], Array[T], Array[H]), Array[N])],
                       boostConf: BoostConfig,
@@ -105,13 +105,13 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
     val minNodeId = inn.fromInt(1 << depth)
 
     val (treeIds, prevPartitioner) = if (depth == 0) {
-      checkpointer = Some(new Checkpointer[((T, N, C), KVVector[B, H])](sc,
-        boostConf.getCheckpointInterval, boostConf.getStorageLevel1))
+      checkpointer = new Checkpointer[((T, N, C), KVVector[B, H])](sc,
+        boostConf.getCheckpointInterval, boostConf.getStorageLevel1)
 
       (Array.tabulate(baseConf.numTrees)(int.fromInt), None)
 
     } else {
-      (splits.keysIterator.map(_._1).toArray.distinct.sorted, prevHistograms.get.partitioner)
+      (splits.keysIterator.map(_._1).toArray.distinct.sorted, prevHistograms.partitioner)
     }
 
     val partitioner = HistogramUpdater.updatePartitioner[T, N, C](boostConf,
@@ -129,7 +129,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
         .setName(s"Right Leaves Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
 
       // compute the histogram of both left leaves and right leaves by subtraction
-      HistogramUpdater.subtractHistograms[T, N, C, B, H](prevHistograms.get, rightHistograms, boostConf, partitioner)
+      HistogramUpdater.subtractHistograms[T, N, C, B, H](prevHistograms, rightHistograms, boostConf, partitioner)
     }
 
     val expectedSize = (baseConf.numTrees << depth) * boostConf.getNumCols * boostConf.getColSampleRateByTree * delta
@@ -146,21 +146,23 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
       val smallHistograms = sc.parallelize(collected, numPartitions)
 
-      prevHistograms = Some(smallHistograms)
+      prevHistograms = smallHistograms
       smallHistograms
 
     } else {
 
-      prevHistograms = Some(histograms)
-      checkpointer.get.update(histograms)
+      prevHistograms = histograms
+      checkpointer.update(histograms)
       histograms
     }
   }
 
   override def destroy(): Unit = {
-    checkpointer.foreach(_.clear())
-    checkpointer = None
-    prevHistograms = None
+    if (checkpointer != null) {
+      checkpointer.clear()
+      checkpointer = null
+    }
+    prevHistograms = null
     delta = 1.0
   }
 }
@@ -168,7 +170,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
 private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[T, N, C, B, H] {
 
-  private var recoder = Option.empty[ResourceRecoder]
+  private var recoder: ResourceRecoder = null
 
   private var delta = 1.0
 
@@ -187,7 +189,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
     val treeNodeIds = if (depth == 0) {
-      recoder = Some(new ResourceRecoder)
+      recoder = new ResourceRecoder
 
       Array.tabulate(baseConf.numTrees)(t => (int.fromInt(t), inn.one))
 
@@ -212,7 +214,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
       .setName(s"Local Histograms (Iteration: ${baseConf.iteration}, depth: $depth) (Sorted)")
     localHistograms.persist(boostConf.getStorageLevel1)
-    recoder.get.append(localHistograms)
+    recoder.append(localHistograms)
 
 
     val localVoted = localHistograms.mapPartitions { iter =>
@@ -259,7 +261,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       val colIds = ArrayBlock.build[C](collected.iterator.map(_._2))
 
       val bcIds = sc.broadcast((treeIds, nodeIds, colIds))
-      recoder.get.append(bcIds)
+      recoder.append(bcIds)
 
       localHistograms.mapPartitions { localIter =>
         val (treeIds, nodeIds, colIds) = bcIds.value
@@ -297,12 +299,16 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
   }
 
   override def clear(): Unit = {
-    recoder.foreach(_.clear())
+    if (recoder != null) {
+      recoder.clear()
+    }
   }
 
   override def destroy(): Unit = {
-    recoder.foreach(_.clear())
-    recoder = None
+    if (recoder != null) {
+      recoder.clear()
+      recoder = null
+    }
     delta = 1.0
   }
 }

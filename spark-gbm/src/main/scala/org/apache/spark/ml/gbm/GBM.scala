@@ -1,10 +1,9 @@
 package org.apache.spark.ml.gbm
 
-import jdk.nashorn.internal.runtime.CodeStore.DirectoryCodeStore
-
 import scala.collection.{BitSet, mutable}
 import scala.reflect.ClassTag
 import scala.util.Random
+
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.linalg._
@@ -625,33 +624,41 @@ private[gbm] object GBM extends Logging {
 
     val trainBlocks = blockifyAndDiscretize[C, B, H](data, bcDiscretizer, boostConf.getBlockSize)
 
-    val (trainweightLabelBlocks, trainBinVecBlocks) = trainBlocks
+    val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
 
-    trainweightLabelBlocks.setName("Train Weight+Label Blocks")
+    trainWeightBlocks.setName("Train Weight Blocks")
+    trainLabelBlocks.setName("Train Label Blocks")
     trainBinVecBlocks.setName("Train BinVector Blocks")
 
     boostConf.getStorageStrategy match {
       case GBM.Upstream =>
-        trainweightLabelBlocks.persist(boostConf.getStorageLevel1)
+        trainWeightBlocks.persist(boostConf.getStorageLevel1)
+        trainLabelBlocks.persist(boostConf.getStorageLevel1)
         trainBinVecBlocks.persist(boostConf.getStorageLevel1)
 
       case GBM.Eager =>
-        trainweightLabelBlocks.persist(boostConf.getStorageLevel2)
+        trainWeightBlocks.persist(boostConf.getStorageLevel2)
+        trainLabelBlocks.persist(boostConf.getStorageLevel2)
         trainBinVecBlocks.persist(boostConf.getStorageLevel2)
     }
-    recoder.append(trainweightLabelBlocks)
+    recoder.append(trainWeightBlocks)
+    recoder.append(trainLabelBlocks)
     recoder.append(trainBinVecBlocks)
 
 
     val testBlocks = test.map { rdd => blockifyAndDiscretize[C, B, H](rdd, bcDiscretizer, boostConf.getBlockSize) }
 
-    testBlocks.foreach { case (testweightLabelBlocks, testBinVecBlocks) =>
-      testweightLabelBlocks.setName("Test Weight+Label Blocks")
-      testweightLabelBlocks.persist(boostConf.getStorageLevel3)
-      recoder.append(testweightLabelBlocks)
-
+    testBlocks.foreach { case (testWeightBlocks, testLabelBlocks, testBinVecBlocks) =>
+      testWeightBlocks.setName("Test Weight Blocks")
+      testLabelBlocks.setName("Test Label Blocks")
       testBinVecBlocks.setName("Test BinVector Blocks")
+
+      testWeightBlocks.persist(boostConf.getStorageLevel3)
+      testLabelBlocks.persist(boostConf.getStorageLevel3)
       testBinVecBlocks.persist(boostConf.getStorageLevel3)
+
+      recoder.append(testWeightBlocks)
+      recoder.append(testLabelBlocks)
       recoder.append(testBinVecBlocks)
     }
 
@@ -677,16 +684,16 @@ private[gbm] object GBM extends Logging {
                                      blockSize: Int)
                                     (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): (RDD[(CompactArray[H], ArrayBlock[H])], RDD[KVMatrix[C, B]]) = {
+                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): (RDD[CompactArray[H]], RDD[ArrayBlock[H]], RDD[KVMatrix[C, B]]) = {
 
-    val weightLabelBlocks = data.mapPartitions {
-      _.map(t => (t._1, t._2)).grouped(blockSize)
-        .map { seq =>
-          val weightBlock = CompactArray.build[H](seq.iterator.map(_._1))
-          val labelBlock = ArrayBlock.build[H](seq.iterator.map(_._2))
-          require(weightBlock.size == labelBlock.size)
-          (weightBlock, labelBlock)
-        }
+    val weightBlocks = data.mapPartitions {
+      _.map(_._1).grouped(blockSize)
+        .map(CompactArray.build[H])
+    }
+
+    val labelBlocks = data.mapPartitions {
+      _.map(_._2).grouped(blockSize)
+        .map(ArrayBlock.build[H])
     }
 
     val binVecBlocks = data.mapPartitions { iter =>
@@ -696,42 +703,42 @@ private[gbm] object GBM extends Logging {
         .map(KVMatrix.build[C, B])
     }
 
-    (weightLabelBlocks, binVecBlocks)
+    (weightBlocks, labelBlocks, binVecBlocks)
   }
 
 
-  def touchBlocksAndUpdateSizeInfo[H](weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
-                                      boostConf: BoostConfig): Unit = {
-
-    val array = weightLabelBlocks
+  def touchWeightBlocksAndUpdateSizeInfo[H](weightBlocks: RDD[CompactArray[H]],
+                                            boostConf: BoostConfig): Unit = {
+    val array = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
         var numBlocks = 0L
         var numInstances = 0L
-        iter.foreach { case (weightBlock, _) =>
+        iter.foreach { weightBlock =>
           numBlocks += 1
           numInstances += weightBlock.size
         }
         Iterator.single((partId, numBlocks, numInstances))
       }.collect().sorted
 
-    require(array.length == weightLabelBlocks.getNumPartitions)
+    require(array.length == weightBlocks.getNumPartitions)
 
     boostConf.setNumBlocksPerPartition(array.map(_._2))
     boostConf.setNumInstancesPerPartition(array.map(_._3))
-    logInfo(s"${weightLabelBlocks.name}: ${boostConf.getNumInstances} instances, ${boostConf.getNumBlocks} blocks, " +
+    logInfo(s"${weightBlocks.name}: ${boostConf.getNumInstances} instances, ${boostConf.getNumBlocks} blocks, " +
       s"numInstancesPerPartition ${boostConf.getNumInstancesPerPartition.mkString("[", ",", "]")}" +
       s"numBlocksPerPartition ${boostConf.getNumBlocksPerPartition.mkString("[", ",", "]")}")
   }
 
 
-  def touchBlocks[H](weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
-                     boostConf: BoostConfig): Unit = {
-    val (numInstances, numBlocks) = weightLabelBlocks.map { case (weightBlock, _) =>
-      (weightBlock.size.toLong, 1L)
-    }.treeReduce(f = {
-      case (t1, t2) => (t1._1 + t2._1, t1._2 + t2._2)
-    }, depth = boostConf.getAggregationDepth)
-    logInfo(s"${weightLabelBlocks.name}: $numInstances instances, $numBlocks blocks")
+  def touchWeightBlocks[H](weightBlocks: RDD[CompactArray[H]],
+                           boostConf: BoostConfig): Unit = {
+    val (numInstances, numBlocks) =
+      weightBlocks.map { weightBlock =>
+        (weightBlock.size.toLong, 1L)
+      }.treeReduce(f = {
+        case (t1, t2) => (t1._1 + t2._1, t1._2 + t2._2)
+      }, depth = boostConf.getAggregationDepth)
+    logInfo(s"${weightBlocks.name}: $numInstances instances, $numBlocks blocks")
   }
 
 
@@ -824,8 +831,8 @@ private[gbm] object GBM extends Logging {
     * @param boostConf    boosting configuration
     * @return RDD containing final score (weighted) and the scores of each tree (non-weighted, only for DART)
     */
-  def initializeRawBlocks[C, B, H](binVecBlocks: RDD[KVMatrix[C, B]],
-                                   weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
+  def initializeRawBlocks[C, B, H](weightBlocks: RDD[CompactArray[H]],
+                                   binVecBlocks: RDD[KVMatrix[C, B]],
                                    trees: Array[TreeModel],
                                    weights: Array[H],
                                    boostConf: BoostConfig)
@@ -879,9 +886,9 @@ private[gbm] object GBM extends Logging {
 
     } else {
 
-      weightLabelBlocks.mapPartitions { iter =>
+      weightBlocks.mapPartitions { iter =>
         val defaultRawBlock = ArrayBlock.fill[H](rawBase, boostConf.getBlockSize)
-        iter.map { case (weightBlock, _) =>
+        iter.map { weightBlock =>
           if (weightBlock.size == defaultRawBlock.size) {
             defaultRawBlock
           } else {
@@ -985,12 +992,12 @@ private[gbm] object GBM extends Logging {
   /**
     * Evaluate current model and output the result
     *
-    * @param weightLabelBlocks weights and labels
-    * @param rawBlocks         prediction of instances, containing the final score and the scores of each tree
-    * @param boostConf         boosting configuration containing the evaluation functions
+    * @param rawBlocks prediction of instances, containing the final score and the scores of each tree
+    * @param boostConf boosting configuration containing the evaluation functions
     * @return Evaluation result with names as the keys and metrics as the values
     */
-  def evaluate[H, C, B](weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
+  def evaluate[H, C, B](weightBlocks: RDD[CompactArray[H]],
+                        labelBlocks: RDD[ArrayBlock[H]],
                         rawBlocks: RDD[ArrayBlock[H]],
                         boostConf: BoostConfig)
                        (implicit cc: ClassTag[C], inc: Integral[C],
@@ -1002,7 +1009,7 @@ private[gbm] object GBM extends Logging {
 
     val rawSize = boostConf.getRawSize
 
-    val scores = weightLabelBlocks.zip(rawBlocks)
+    val scores = weightBlocks.zip(labelBlocks).zip(rawBlocks)
       .flatMap { case ((weightBlock, labelBlock), rawBlock) =>
         require(weightBlock.size == rawBlock.size)
         require(labelBlock.size == rawBlock.size)

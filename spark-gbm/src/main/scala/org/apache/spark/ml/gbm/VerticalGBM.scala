@@ -1,11 +1,10 @@
 package org.apache.spark.ml.gbm
 
-import org.apache.spark.Partitioner
-
 import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
 
+import org.apache.spark.Partitioner
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.rdd._
@@ -19,15 +18,15 @@ object VerticalGBM extends Logging {
   /**
     * implementation of GBM, train a GBMModel, with given types
     *
-    * @param trainBlocks  training blocks containing (weight+Label, binVec)
-    * @param testBlocks   validation blocks containing (weight+Label, binVec)
+    * @param trainBlocks  training blocks containing (weight, label, binVec)
+    * @param testBlocks   validation blocks containing (weight, label, binVec)
     * @param boostConf    boosting configuration
     * @param discretizer  discretizer to convert raw features into bins
     * @param initialModel inital model
     * @return the model
     */
-  def boost[C, B, H](trainBlocks: (RDD[(CompactArray[H], ArrayBlock[H])], RDD[KVMatrix[C, B]]),
-                     testBlocks: Option[(RDD[(CompactArray[H], ArrayBlock[H])], RDD[KVMatrix[C, B]])],
+  def boost[C, B, H](trainBlocks: (RDD[CompactArray[H]], RDD[ArrayBlock[H]], RDD[KVMatrix[C, B]]),
+                     testBlocks: Option[(RDD[CompactArray[H]], RDD[ArrayBlock[H]], RDD[KVMatrix[C, B]])],
                      boostConf: BoostConfig,
                      discretizer: Discretizer,
                      initialModel: Option[GBMModel])
@@ -55,8 +54,8 @@ object VerticalGBM extends Logging {
   }
 
 
-  def boostImpl[C, B, H, G](trainBlocks: (RDD[(CompactArray[H], ArrayBlock[H])], RDD[KVMatrix[C, B]]),
-                            testBlocks: Option[(RDD[(CompactArray[H], ArrayBlock[H])], RDD[KVMatrix[C, B]])],
+  def boostImpl[C, B, H, G](trainBlocks: (RDD[CompactArray[H]], RDD[ArrayBlock[H]], RDD[KVMatrix[C, B]]),
+                            testBlocks: Option[(RDD[CompactArray[H]], RDD[ArrayBlock[H]], RDD[KVMatrix[C, B]])],
                             boostConf: BoostConfig,
                             discretizer: Discretizer,
                             initialModel: Option[GBMModel])
@@ -71,11 +70,11 @@ object VerticalGBM extends Logging {
     val rawBase = boostConf.computeRawBaseScore
 
     // train blocks
-    val (trainWeightLabelBlocks, trainBinVecBlocks) = trainBlocks
-    GBM.touchBlocksAndUpdateSizeInfo[H](trainWeightLabelBlocks, boostConf)
+    val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
+    GBM.touchWeightBlocksAndUpdateSizeInfo[H](trainWeightBlocks, boostConf)
 
     // test blocks
-    testBlocks.foreach { case (testWeightLabelBlocks, _) => GBM.touchBlocks(testWeightLabelBlocks, boostConf) }
+    testBlocks.foreach { case (testWeightBlocks, _, _) => GBM.touchWeightBlocks(testWeightBlocks, boostConf) }
 
 
     // vertical train sub-binvec blocks
@@ -101,7 +100,7 @@ object VerticalGBM extends Logging {
 
 
     // raw scores and checkpointer
-    var trainRawBlocks = GBM.initializeRawBlocks[C, B, H](trainBinVecBlocks, trainWeightLabelBlocks,
+    var trainRawBlocks = GBM.initializeRawBlocks[C, B, H](trainWeightBlocks, trainBinVecBlocks,
       treesBuff.toArray, weightsBuff.toArray, boostConf)
       .setName("Train Raw Blocks (Iteration 0)")
     val trainRawBlocksCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
@@ -112,14 +111,16 @@ object VerticalGBM extends Logging {
 
 
     // raw scores and checkpointer for test data
-    val testRawBlocksCheckpointer = testBlocks.map(_ => new Checkpointer[ArrayBlock[H]](sc,
-      boostConf.getCheckpointInterval, boostConf.getStorageLevel3))
-    var testRawBlocks = testBlocks.map { case (testWeightLabelBlocks, testBinVecBlocks) =>
-      val newTestRawBlocks = GBM.initializeRawBlocks[C, B, H](testBinVecBlocks, testWeightLabelBlocks,
+    var testRawBlocksCheckpointer: Checkpointer[ArrayBlock[H]] = null
+    var testRawBlocks = testBlocks.map { case (testWeightBlocks, _, testBinVecBlocks) =>
+      testRawBlocksCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
+        boostConf.getCheckpointInterval, boostConf.getStorageLevel3)
+
+      val newTestRawBlocks = GBM.initializeRawBlocks[C, B, H](testWeightBlocks, testBinVecBlocks,
         treesBuff.toArray, weightsBuff.toArray, boostConf)
         .setName("Test Raw Blocks (Iteration 0)")
       if (treesBuff.nonEmpty) {
-        testRawBlocksCheckpointer.get.update(newTestRawBlocks)
+        testRawBlocksCheckpointer.update(newTestRawBlocks)
       }
       newTestRawBlocks
     }
@@ -155,7 +156,7 @@ object VerticalGBM extends Logging {
       // build trees
       logInfo(s"$logPrefix start")
       val start = System.nanoTime
-      val trees = buildTrees[C, B, H, G](trainWeightLabelBlocks, trainBinVecBlocks, vSubBinVecBlocks, trainRawBlocks,
+      val trees = buildTrees[C, B, H, G](trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks, vSubBinVecBlocks, trainRawBlocks,
         weightsBuff.toArray, boostConf, iter, dropped.toSet)
       logInfo(s"$logPrefix finished, duration: ${(System.nanoTime - start) / 1e9} sec")
 
@@ -185,23 +186,23 @@ object VerticalGBM extends Logging {
 
         // evaluate on train data
         if (boostConf.getEvalFunc.nonEmpty) {
-          val trainMetrics = GBM.evaluate[H, C, B](trainWeightLabelBlocks, trainRawBlocks, boostConf)
+          val trainMetrics = GBM.evaluate[H, C, B](trainWeightBlocks, trainLabelBlocks, trainRawBlocks, boostConf)
           trainMetricsHistory.append(trainMetrics)
           logInfo(s"$logPrefix train metrics ${trainMetrics.mkString("(", ", ", ")")}")
         }
 
 
-        testBlocks.foreach { case (testWeightLabelBlocks, testBinVecBlocks) =>
+        testBlocks.foreach { case (testWeightBlocks, testLabelBlocks, testBinVecBlocks) =>
           // update test data predictions
           val newTestRawBlocks = GBM.updateRawBlocks[C, B, H](testBinVecBlocks, testRawBlocks.get,
             trees, weightsBuff.toArray, boostConf, keepWeights)
             .setName(s"Test Raw Blocks (Iteration ${iter + 1})")
 
           testRawBlocks = Some(newTestRawBlocks)
-          testRawBlocksCheckpointer.get.update(testRawBlocks.get)
+          testRawBlocksCheckpointer.update(testRawBlocks.get)
 
           // evaluate on test data
-          val testMetrics = GBM.evaluate[H, C, B](testWeightLabelBlocks, testRawBlocks.get, boostConf)
+          val testMetrics = GBM.evaluate[H, C, B](testWeightBlocks, testLabelBlocks, testRawBlocks.get, boostConf)
           testMetricsHistory.append(testMetrics)
           logInfo(s"$logPrefix test metrics ${testMetrics.mkString("(", ", ", ")")}")
         }
@@ -234,7 +235,9 @@ object VerticalGBM extends Logging {
 
     vSubBinVecBlocks.unpersist(false)
     trainRawBlocksCheckpointer.clear()
-    testRawBlocksCheckpointer.foreach(_.clear())
+    if (testRawBlocksCheckpointer != null) {
+      testRawBlocksCheckpointer.clear()
+    }
 
     new GBMModel(boostConf.getObjFunc, discretizer, rawBase,
       treesBuff.toArray, neh.toDouble(weightsBuff.toArray))
@@ -286,7 +289,8 @@ object VerticalGBM extends Logging {
   }
 
 
-  def buildTrees[C, B, H, G](weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
+  def buildTrees[C, B, H, G](weightBlocks: RDD[CompactArray[H]],
+                             labelBlocks: RDD[ArrayBlock[H]],
                              binVecBlocks: RDD[KVMatrix[C, B]],
                              vSubBinVecBlocks: RDD[KVVector[G, B]],
                              rawBlocks: RDD[ArrayBlock[H]],
@@ -311,31 +315,31 @@ object VerticalGBM extends Logging {
 
     (treeIdType, nodeIdType) match {
       case (BYTE, BYTE) =>
-        buildTreesImpl[Byte, Byte, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Byte, Byte, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case (BYTE, SHORT) =>
-        buildTreesImpl[Byte, Short, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Byte, Short, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case (BYTE, INT) =>
-        buildTreesImpl[Byte, Int, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Byte, Int, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case (SHORT, BYTE) =>
-        buildTreesImpl[Short, Byte, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Short, Byte, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case (SHORT, SHORT) =>
-        buildTreesImpl[Short, Short, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Short, Short, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case (SHORT, INT) =>
-        buildTreesImpl[Short, Int, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Short, Int, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case (INT, BYTE) =>
-        buildTreesImpl[Int, Byte, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Int, Byte, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case (INT, SHORT) =>
-        buildTreesImpl[Int, Short, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Int, Short, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
 
       case (INT, INT) =>
-        buildTreesImpl[Int, Int, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
+        buildTreesImpl[Int, Int, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, weights, boostConf, iteration, dropped)
     }
   }
 
@@ -343,15 +347,15 @@ object VerticalGBM extends Logging {
   /**
     * build new trees
     *
-    * @param weightLabelBlocks blockified instances containing (weight, labels)
-    * @param rawBlocks         previous raw predictions
-    * @param weights           weights of trees
-    * @param boostConf         boosting configuration
-    * @param iteration         current iteration
-    * @param dropped           indices of trees which are selected to drop during building of current tree
+    * @param rawBlocks previous raw predictions
+    * @param weights   weights of trees
+    * @param boostConf boosting configuration
+    * @param iteration current iteration
+    * @param dropped   indices of trees which are selected to drop during building of current tree
     * @return new trees
     */
-  def buildTreesImpl[T, N, C, B, H, G](weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
+  def buildTreesImpl[T, N, C, B, H, G](weightBlocks: RDD[CompactArray[H]],
+                                       labelBlocks: RDD[ArrayBlock[H]],
                                        binVecBlocks: RDD[KVMatrix[C, B]],
                                        vSubBinVecBlocks: RDD[KVVector[G, B]],
                                        rawBlocks: RDD[ArrayBlock[H]],
@@ -432,13 +436,13 @@ object VerticalGBM extends Logging {
     // These cached datasets are holden in `recoder`, and will be freed after training.
     val (data, vdata) = (boostConf.getSubSampleType, boostConf.getSubSampleRate == 1) match {
       case (_, true) =>
-        adaptTreeInputsForNonSampling[T, N, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
+        adaptTreeInputsForNonSampling[T, N, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
 
       case (GBM.Block, _) =>
-        adaptTreeInputsForBlockSampling[T, N, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
+        adaptTreeInputsForBlockSampling[T, N, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, boostConf, iteration, computeGradBlock, recoder)
 
       case (GBM.Instance, _) =>
-        adaptTreeInputsForInstanceSampling[T, N, C, B, H, G](weightLabelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, boostConf, iteration, computeGrad, recoder)
+        adaptTreeInputsForInstanceSampling[T, N, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, vSubBinVecBlocks, rawBlocks, boostConf, iteration, computeGrad, recoder)
     }
 
     val trees = Tree.trainVertical[T, N, C, B, H](data, vdata, boostConf, baseConfig)
@@ -449,7 +453,8 @@ object VerticalGBM extends Logging {
   }
 
 
-  def adaptTreeInputsForNonSampling[T, N, C, B, H, G](weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
+  def adaptTreeInputsForNonSampling[T, N, C, B, H, G](weightBlocks: RDD[CompactArray[H]],
+                                                      labelBlocks: RDD[ArrayBlock[H]],
                                                       binVecBlocks: RDD[KVMatrix[C, B]],
                                                       vSubBinVecBlocks: RDD[KVVector[G, B]],
                                                       rawBlocks: RDD[ArrayBlock[H]],
@@ -472,7 +477,7 @@ object VerticalGBM extends Logging {
     val vColIds = boostConf.getVerticalColumnIds[C]
     val numCols = boostConf.getNumCols
 
-    val gradBlocks = weightLabelBlocks.zip(rawBlocks)
+    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
       .map { case ((weightBlock, labelBlock), rawBlock) => computeGradBlock(weightBlock, labelBlock, rawBlock) }
       .setName(s"GradientBlocks (iteration $iteration)")
 
@@ -533,7 +538,8 @@ object VerticalGBM extends Logging {
   }
 
 
-  def adaptTreeInputsForBlockSampling[T, N, C, B, H, G](weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
+  def adaptTreeInputsForBlockSampling[T, N, C, B, H, G](weightBlocks: RDD[CompactArray[H]],
+                                                        labelBlocks: RDD[ArrayBlock[H]],
                                                         binVecBlocks: RDD[KVMatrix[C, B]],
                                                         vSubBinVecBlocks: RDD[KVVector[G, B]],
                                                         rawBlocks: RDD[ArrayBlock[H]],
@@ -562,24 +568,25 @@ object VerticalGBM extends Logging {
     logInfo(s"Iteration $iteration, blockSelector $blockSelector")
 
 
-    val gradBlocks = weightLabelBlocks.zip(rawBlocks).mapPartitionsWithIndex { case (partId, iter) =>
-      var blockId = blockIdOffsets(partId) - 1
-      val emptyValue = (ArrayBlock.empty[H], net.emptyArray)
+    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
+      .mapPartitionsWithIndex { case (partId, iter) =>
+        var blockId = blockIdOffsets(partId) - 1
+        val emptyValue = (ArrayBlock.empty[H], net.emptyArray)
 
-      iter.map { case ((weightBlock, labelBlock), rawBlock) =>
-        blockId += 1
+        iter.map { case ((weightBlock, labelBlock), rawBlock) =>
+          blockId += 1
 
-        val treeIds = Array.range(0, numTrees)
-          .filter { i => blockSelector.contains(i, blockId) }.map(int.fromInt)
+          val treeIds = Array.range(0, numTrees)
+            .filter { i => blockSelector.contains(i, blockId) }.map(int.fromInt)
 
-        if (treeIds.nonEmpty) {
-          val gradBlock = computeGradBlock(weightBlock, labelBlock, rawBlock)
-          (gradBlock, treeIds)
-        } else {
-          emptyValue
+          if (treeIds.nonEmpty) {
+            val gradBlock = computeGradBlock(weightBlock, labelBlock, rawBlock)
+            (gradBlock, treeIds)
+          } else {
+            emptyValue
+          }
         }
-      }
-    }.setName(s"GradientBlocks with TreeIds (iteration $iteration)")
+      }.setName(s"GradientBlocks with TreeIds (iteration $iteration)")
 
 
     val data = binVecBlocks.zip(gradBlocks).flatMap { case (binVecBlock, (gradBlock, treeIds)) =>
@@ -652,7 +659,8 @@ object VerticalGBM extends Logging {
   }
 
 
-  def adaptTreeInputsForInstanceSampling[T, N, C, B, H, G](weightLabelBlocks: RDD[(CompactArray[H], ArrayBlock[H])],
+  def adaptTreeInputsForInstanceSampling[T, N, C, B, H, G](weightBlocks: RDD[CompactArray[H]],
+                                                           labelBlocks: RDD[ArrayBlock[H]],
                                                            binVecBlocks: RDD[KVMatrix[C, B]],
                                                            vSubBinVecBlocks: RDD[KVVector[G, B]],
                                                            rawBlocks: RDD[ArrayBlock[H]],
@@ -680,35 +688,36 @@ object VerticalGBM extends Logging {
       boostConf.getNumInstances, numBaseModels, boostConf.getRawSize, boostConf.getSeed + iteration)
     logInfo(s"Iteration $iteration, instanceSelector $instanceSelector")
 
-    val gradBlocks = weightLabelBlocks.zip(rawBlocks).mapPartitionsWithIndex { case (partId, iter) =>
-      var instanceId = instanceIdOffsets(partId) - 1
-      val emptyValue = (neh.emptyArray, net.emptyArray)
+    val gradBlocks = weightBlocks.zip(labelBlocks).zip(rawBlocks)
+      .mapPartitionsWithIndex { case (partId, iter) =>
+        var instanceId = instanceIdOffsets(partId) - 1
+        val emptyValue = (neh.emptyArray, net.emptyArray)
 
-      iter.map { case ((weightBlock, labelBlock), rawBlock) =>
-        require(weightBlock.size == rawBlock.size)
-        require(labelBlock.size == rawBlock.size)
+        iter.map { case ((weightBlock, labelBlock), rawBlock) =>
+          require(weightBlock.size == rawBlock.size)
+          require(labelBlock.size == rawBlock.size)
 
-        val seq = weightBlock.iterator.zip(labelBlock.iterator).zip(rawBlock.iterator)
-          .map { case ((weight, label), rawSeq) =>
-            instanceId += 1
+          val seq = weightBlock.iterator.zip(labelBlock.iterator).zip(rawBlock.iterator)
+            .map { case ((weight, label), rawSeq) =>
+              instanceId += 1
 
-            val treeIds = Array.range(0, numTrees)
-              .filter { i => instanceSelector.contains(i, instanceId) }.map(int.fromInt)
+              val treeIds = Array.range(0, numTrees)
+                .filter { i => instanceSelector.contains(i, instanceId) }.map(int.fromInt)
 
-            if (treeIds.nonEmpty) {
-              val grad = computeGrad(weight, label, rawSeq)
-              (grad, treeIds)
-            } else {
-              emptyValue
-            }
-          }.toSeq
+              if (treeIds.nonEmpty) {
+                val grad = computeGrad(weight, label, rawSeq)
+                (grad, treeIds)
+              } else {
+                emptyValue
+              }
+            }.toSeq
 
-        val gradBlock = ArrayBlock.build[H](seq.iterator.map(_._1))
-        val treeIdBlock = ArrayBlock.build[T](seq.iterator.map(_._2))
+          val gradBlock = ArrayBlock.build[H](seq.iterator.map(_._1))
+          val treeIdBlock = ArrayBlock.build[T](seq.iterator.map(_._2))
 
-        (gradBlock, treeIdBlock)
-      }
-    }.setName(s"GradientBlocks with TreeIds (iteration $iteration)")
+          (gradBlock, treeIdBlock)
+        }
+      }.setName(s"GradientBlocks with TreeIds (iteration $iteration)")
 
 
     val data = binVecBlocks.zip(gradBlocks).flatMap { case (binVecBlock, (gradBlock, treeIdBlock)) =>

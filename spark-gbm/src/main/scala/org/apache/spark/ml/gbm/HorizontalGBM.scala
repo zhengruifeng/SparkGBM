@@ -449,27 +449,28 @@ object HorizontalGBM extends Logging {
       s"duration ${(System.nanoTime - start) / 1e9} seconds")
 
 
-    val baseIdBlocks = gradBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-      val rng = new Random(seedOffset + partId)
-      val rngs = Array.tabulate(numBaseModels)(_ => new XORShiftRandom(rng.nextLong))
+    val baseIdBlocks = gradBlocks
+      .mapPartitionsWithIndex { case (partId, iter) =>
+        val rng = new Random(seedOffset + partId)
+        val rngs = Array.tabulate(numBaseModels)(_ => new XORShiftRandom(rng.nextLong))
 
-      val topBaseIds = Array(int.negate(int.one))
+        val topBaseIds = Array(int.negate(int.one))
 
-      iter.map { case (gradBlock, gradNorms) =>
-        require(gradBlock.size == gradNorms.length)
+        iter.map { case (gradBlock, gradNorms) =>
+          require(gradBlock.size == gradNorms.length)
 
-        val baseIdIter = gradNorms.map { gradNorm =>
-          if (gradNorm >= threshold) {
-            topBaseIds
-          } else {
-            Iterator.range(0, numBaseModels)
-              .filter { i => rngs(i).nextDouble < lowSample }
-              .map(int.fromInt).toArray
+          val baseIdIter = gradNorms.map { gradNorm =>
+            if (gradNorm >= threshold) {
+              topBaseIds
+            } else {
+              Array.range(0, numBaseModels)
+                .filter { i => rngs(i).nextDouble < lowSample }
+                .map(int.fromInt)
+            }
           }
+          ArrayBlock.build[T](baseIdIter.iterator)
         }
-        ArrayBlock.build[T](baseIdIter.iterator)
-      }
-    }.setName(s"BaseIdBlocks (iteration $iteration)")
+      }.setName(s"BaseIdBlocks (iteration $iteration)")
 
 
     val data = binVecBlocks.zip2(gradBlocks, baseIdBlocks)
@@ -591,7 +592,8 @@ object HorizontalGBM extends Logging {
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         val rng = new Random(seedOffset + partId)
-        val selected = Iterator.range(0, numBaseModels).exists(_ => rng.nextDouble < subSample)
+        val selected = Iterator.range(0, numBaseModels)
+          .exists(_ => rng.nextDouble < subSample)
 
         if (selected) {
           iter.map { case (weightBlock, labelBlock, rawBlock) =>
@@ -603,24 +605,26 @@ object HorizontalGBM extends Logging {
       }.setName(s"GradientBlocks (iteration $iteration)")
 
 
-    val data = binVecBlocks.safeZip(gradBlocks).mapPartitionsWithIndex { case (partId, iter) =>
-      val rng = new Random(seedOffset + partId)
-      val baseIds = Iterator.range(0, numBaseModels).filter(_ => rng.nextDouble < subSample).map(int.fromInt).toArray
+    val data = binVecBlocks.safeZip(gradBlocks)
+      .mapPartitionsWithIndex { case (partId, iter) =>
+        val rng = new Random(seedOffset + partId)
+        val baseIds = Array.range(0, numBaseModels)
+          .filter(_ => rng.nextDouble < subSample).map(int.fromInt)
 
-      if (baseIds.nonEmpty) {
-        val treeIds = computeTreeIds(baseIds)
+        if (baseIds.nonEmpty) {
+          val treeIds = computeTreeIds(baseIds)
 
-        iter.flatMap { case (binVecBlock, gradBlock) =>
-          require(binVecBlock.size == gradBlock.size)
-          binVecBlock.iterator
-            .zip(gradBlock.iterator)
-            .map { case (binVec, grad) => (binVec, treeIds, grad) }
+          iter.flatMap { case (binVecBlock, gradBlock) =>
+            require(binVecBlock.size == gradBlock.size)
+            binVecBlock.iterator
+              .zip(gradBlock.iterator)
+              .map { case (binVec, grad) => (binVec, treeIds, grad) }
+          }
+
+        } else {
+          Iterator.empty
         }
-
-      } else {
-        Iterator.empty
-      }
-    }.setName(s"TreeInputs (iteration $iteration) (Partition-Based Sampled)")
+      }.setName(s"TreeInputs (iteration $iteration) (Partition-Based Sampled)")
 
 
     boostConf.getStorageStrategy match {
@@ -679,18 +683,19 @@ object HorizontalGBM extends Logging {
       }.setName(s"GradientBlocks with BaseModelIds (iteration $iteration)")
 
 
-    val data = binVecBlocks.zip(gradBlocks).flatMap { case (binVecBlock, (gradBlock, baseIds)) =>
-      if (baseIds.nonEmpty) {
-        require(binVecBlock.size == gradBlock.size)
-        val treeIds = computeTreeIds(baseIds)
-        binVecBlock.iterator.zip(gradBlock.iterator)
-          .map { case (binVec, grad) => (binVec, treeIds, grad) }
+    val data = binVecBlocks.zip(gradBlocks)
+      .flatMap { case (binVecBlock, (gradBlock, baseIds)) =>
+        if (baseIds.nonEmpty) {
+          require(binVecBlock.size == gradBlock.size)
+          val treeIds = computeTreeIds(baseIds)
+          binVecBlock.iterator.zip(gradBlock.iterator)
+            .map { case (binVec, grad) => (binVec, treeIds, grad) }
 
-      } else {
-        require(gradBlock.isEmpty)
-        Iterator.empty
-      }
-    }.setName(s"TreeInputs (iteration $iteration) (Block-Based Sampled)")
+        } else {
+          require(gradBlock.isEmpty)
+          Iterator.empty
+        }
+      }.setName(s"TreeInputs (iteration $iteration) (Block-Based Sampled)")
 
 
     boostConf.getStorageStrategy match {

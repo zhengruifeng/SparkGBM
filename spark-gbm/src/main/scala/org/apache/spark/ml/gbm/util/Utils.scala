@@ -66,8 +66,11 @@ private[gbm] object Utils extends Logging {
     if (validate) {
       new Iterator[(V1, V2)] {
         def hasNext: Boolean = (iter1.hasNext, iter2.hasNext) match {
+
           case (true, true) => true
+
           case (false, false) => false
+
           case t => throw new Exception(s"Input iterators have different lengths: $t")
         }
 
@@ -95,8 +98,11 @@ private[gbm] object Utils extends Logging {
     if (validate) {
       new Iterator[(V1, V2, V3)] {
         def hasNext: Boolean = (iter1.hasNext, iter2.hasNext, iter3.hasNext) match {
+
           case (true, true, true) => true
+
           case (false, false, false) => false
+
           case t => throw new Exception(s"Input iterators have different lengths: $t")
         }
 
@@ -125,8 +131,11 @@ private[gbm] object Utils extends Logging {
     if (validate) {
       new Iterator[(V1, V2, V3, V4)] {
         def hasNext: Boolean = (iter1.hasNext, iter2.hasNext, iter3.hasNext, iter4.hasNext) match {
+
           case (true, true, true, true) => true
+
           case (false, false, false, false) => false
+
           case t => throw new Exception(s"Input iterators have different lengths: $t")
         }
 
@@ -153,12 +162,16 @@ private[gbm] object Utils extends Logging {
     private var k = Option.empty[K]
 
     private val check = (ascending, strictly) match {
+
       case (true, true) => (i: K, j: K) =>
         require(ork.compare(i, j) < 0, s"($i, $j) breaks strictly ascending")
+
       case (true, false) => (i: K, j: K) =>
         require(ork.compare(i, j) <= 0, s"($i, $j) breaks ascending (non-descending)")
+
       case (false, true) => (i: K, j: K) =>
         require(ork.compare(i, j) > 0, s"($i, $j) breaks strictly descending")
+
       case (false, false) => (i: K, j: K) =>
         require(ork.compare(i, j) >= 0, s"($i, $j) breaks descending (non-ascending)")
     }
@@ -201,12 +214,16 @@ private[gbm] object Utils extends Logging {
     private var kv = Option.empty[(K, V)]
 
     private val check = (ascending, strictly) match {
+
       case (true, true) => (i: K, j: K) =>
         require(ork.compare(i, j) < 0, s"($i, $j) breaks strictly ascending")
+
       case (true, false) => (i: K, j: K) =>
         require(ork.compare(i, j) <= 0, s"($i, $j) breaks ascending (non-descending)")
+
       case (false, true) => (i: K, j: K) =>
         require(ork.compare(i, j) > 0, s"($i, $j) breaks strictly descending")
+
       case (false, false) => (i: K, j: K) =>
         require(ork.compare(i, j) >= 0, s"($i, $j) breaks descending (non-ascending)")
     }

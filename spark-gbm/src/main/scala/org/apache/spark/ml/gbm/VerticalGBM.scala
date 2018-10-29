@@ -535,7 +535,7 @@ object VerticalGBM extends Logging {
     import RDDFunctions._
 
     val blockSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks,
-      boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed + iteration)
+      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + iteration)
     logInfo(s"Iteration $iteration, blockSelector $blockSelector")
 
 
@@ -674,7 +674,7 @@ object VerticalGBM extends Logging {
     import RDDFunctions._
 
     val instanceSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumInstances,
-      boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed + iteration)
+      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + iteration)
     logInfo(s"Iteration $iteration, instanceSelector $instanceSelector")
 
 

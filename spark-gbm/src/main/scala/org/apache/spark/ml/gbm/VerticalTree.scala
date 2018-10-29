@@ -111,7 +111,7 @@ object VerticalTree extends Serializable with Logging {
       val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](data,
         boostConf, newBaseConfig, (n: N) => true)
 
-      splits = Tree.findSplits[T, N, C, B, H](hists, boostConf, baseConf, remainingLeaves, depth)
+//      splits = Tree.findSplitsImpl[T, N, C, B, H](hists, boostConf, baseConf, remainingLeaves, depth)
 
       // update trees
       Tree.updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)

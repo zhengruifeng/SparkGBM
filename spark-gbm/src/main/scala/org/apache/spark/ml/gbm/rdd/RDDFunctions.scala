@@ -5,6 +5,7 @@ import scala.reflect.ClassTag
 import scala.util.Random
 
 import org.apache.spark._
+import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.random.XORShiftRandom
 
@@ -156,18 +157,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
                                        validate: Boolean = true): RDD[(T, V1, V2)] = {
 
     self.zipPartitions(rdd1, rdd2, false) {
-      (thisIter, iter1, iter2) =>
-        new Iterator[(T, V1, V2)] {
-          def hasNext: Boolean = (thisIter.hasNext, iter1.hasNext, iter2.hasNext) match {
-            case (true, true, true) => true
-            case (false, false, false) => false
-            case _ if !validate => false
-            case _ => throw new SparkException("Can only zip3 RDDs with " +
-              "same number of elements in each partition")
-          }
-
-          def next(): (T, V1, V2) = (thisIter.next(), iter1.next(), iter2.next())
-        }
+      (thisIter, iter1, iter2) => Utils.zip3(thisIter, iter1, iter2, validate)
     }
   }
 
@@ -178,18 +168,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
                                                      validate: Boolean = true): RDD[(T, V1, V2, V3)] = {
 
     self.zipPartitions(rdd1, rdd2, rdd3, false) {
-      (thisIter, iter1, iter2, iter3) =>
-        new Iterator[(T, V1, V2, V3)] {
-          def hasNext: Boolean = (thisIter.hasNext, iter1.hasNext, iter2.hasNext, iter3.hasNext) match {
-            case (true, true, true, true) => true
-            case (false, false, false, false) => false
-            case _ if !validate => false
-            case _ => throw new SparkException("Can only zip3 RDDs with " +
-              "same number of elements in each partition")
-          }
-
-          def next(): (T, V1, V2, V3) = (thisIter.next(), iter1.next(), iter2.next(), iter3.next())
-        }
+      (thisIter, iter1, iter2, iter3) => Utils.zip4(thisIter, iter1, iter2, iter3, validate)
     }
   }
 }

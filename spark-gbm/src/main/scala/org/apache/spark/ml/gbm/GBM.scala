@@ -1048,20 +1048,6 @@ private[gbm] object GBM extends Logging {
 
     result.toMap
   }
-
-
-  def getTreeIds[T](rawSize: Int)
-                   (implicit ct: ClassTag[T], int: Integral[T]): Array[T] => Array[T] = {
-    if (rawSize == 1) {
-      baseIds: Array[T] => baseIds
-    } else {
-      baseIds: Array[T] =>
-        baseIds.flatMap { i =>
-          val offset = rawSize * int.toInt(i)
-          Iterator.range(offset, offset + rawSize).map(int.fromInt)
-        }
-    }
-  }
 }
 
 

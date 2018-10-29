@@ -73,7 +73,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
 
       splits = findSplits[T, N, C, B, H](binVecBlocks, treeIdBlocks, gradBlocks, nodeIdBlocks, updater,
-        boostConf, baseConf, splits, remainingLeaves, depth)
+        boostConf, bcBoostConf, baseConf, splits, remainingLeaves, depth)
 
 
       updater.clear()
@@ -214,7 +214,7 @@ private[gbm] object Tree extends Serializable with Logging {
       val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](vdata,
         boostConf, newBaseConfig, (n: N) => true)
 
-      splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, remainingLeaves, depth)
+      splits = findSplitsImpl[T, N, C, B, H](hists, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
 
       // update trees
       updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
@@ -381,6 +381,7 @@ private[gbm] object Tree extends Serializable with Logging {
                                 nodeIdBlocks: RDD[ArrayBlock[N]],
                                 updater: HistogramUpdater[T, N, C, B, H],
                                 boostConf: BoostConfig,
+                                bcBoostConf: Broadcast[BoostConfig],
                                 baseConf: BaseConfig,
                                 splits: Map[(T, N), Split],
                                 remainingLeaves: Array[Int],
@@ -418,7 +419,7 @@ private[gbm] object Tree extends Serializable with Logging {
           histograms
         }
 
-        findSplits[T, N, C, B, H](sampled, boostConf, baseConf, remainingLeaves, depth)
+        findSplitsImpl[T, N, C, B, H](sampled, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
 
 
       case _ =>
@@ -429,7 +430,7 @@ private[gbm] object Tree extends Serializable with Logging {
         val histograms = updater.update(data, boostConf, newBaseConfig, splits, depth)
           .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
 
-        findSplits[T, N, C, B, H](histograms, boostConf, baseConf, remainingLeaves, depth)
+        findSplitsImpl[T, N, C, B, H](histograms, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
     }
   }
 
@@ -440,16 +441,17 @@ private[gbm] object Tree extends Serializable with Logging {
     * @param histograms histogram data of leaves nodes
     * @return optimal splits for each node
     */
-  def findSplits[T, N, C, B, H](histograms: RDD[((T, N, C), KVVector[B, H])],
-                                boostConf: BoostConfig,
-                                baseConf: BaseConfig,
-                                remainingLeaves: Array[Int],
-                                depth: Int)
-                               (implicit ct: ClassTag[T], int: Integral[T],
-                                cn: ClassTag[N], inn: Integral[N],
-                                cc: ClassTag[C], inc: Integral[C],
-                                cb: ClassTag[B], inb: Integral[B],
-                                ch: ClassTag[H], nuh: Numeric[H]): Map[(T, N), Split] = {
+  def findSplitsImpl[T, N, C, B, H](histograms: RDD[((T, N, C), KVVector[B, H])],
+                                    boostConf: BoostConfig,
+                                    bcBoostConf: Broadcast[BoostConfig],
+                                    baseConf: BaseConfig,
+                                    remainingLeaves: Array[Int],
+                                    depth: Int)
+                                   (implicit ct: ClassTag[T], int: Integral[T],
+                                    cn: ClassTag[N], inn: Integral[N],
+                                    cc: ClassTag[C], inc: Integral[C],
+                                    cb: ClassTag[B], inb: Integral[B],
+                                    ch: ClassTag[H], nuh: Numeric[H]): Map[(T, N), Split] = {
     val sc = histograms.sparkContext
 
     val bcRemainingLeaves = sc.broadcast(remainingLeaves)
@@ -466,6 +468,8 @@ private[gbm] object Tree extends Serializable with Logging {
 
     val (splits, Array(numTrials, numSplits, numDenses, sumSize, nnz)) =
       repartitioned.mapPartitionsWithIndex { case (partId, iter) =>
+        val boostConfig_ = bcBoostConf.value
+
         val splits = mutable.OpenHashMap.empty[(T, N), Split]
 
         var numTrials = 0L
@@ -482,7 +486,7 @@ private[gbm] object Tree extends Serializable with Logging {
             numDenses += 1
           }
 
-          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
+          Split.split[H](inc.toInt(colId), hist.toArray, boostConfig_, baseConf)
             .foreach { split =>
               numSplits += 1
               val prevSplit = splits.get((treeId, nodeId))
@@ -527,7 +531,7 @@ private[gbm] object Tree extends Serializable with Logging {
       s"fraction of sparse histograms: ${1 - numDenses.toDouble / numTrials}, " +
       s"sparsity of histogram: ${1 - nnz.toDouble / sumSize}")
 
-    bcRemainingLeaves.destroy(false)
+    bcRemainingLeaves.destroy(true)
 
     splits.toMap
   }

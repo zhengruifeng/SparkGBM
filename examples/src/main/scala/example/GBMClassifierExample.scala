@@ -31,7 +31,7 @@ object GBMClassifierExample {
 
     val gbmc = new GBMClassifier
     gbmc.setBoostType("gbtree")
-      .setParallelismType("feature")
+//      .setParallelismType("feature")
       .setHistogramComputationType("vote")
       .setStepSize(0.2)
       .setMaxIter(10)

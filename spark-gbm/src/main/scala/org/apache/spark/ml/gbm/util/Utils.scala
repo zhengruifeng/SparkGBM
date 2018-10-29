@@ -57,14 +57,59 @@ private[gbm] object Utils extends Logging {
 
 
   /**
+    * zip two iterators
+    */
+  def zip2[V1, V2](iter1: Iterator[V1],
+                   iter2: Iterator[V2],
+                   validate: Boolean = true): Iterator[(V1, V2)] = {
+
+    if (validate) {
+      new Iterator[(V1, V2)] {
+        def hasNext: Boolean = (iter1.hasNext, iter2.hasNext) match {
+          case (true, true) => true
+          case (false, false) => false
+          case t => throw new Exception(s"Input iterators have different lengths: $t")
+        }
+
+        def next(): (V1, V2) = (iter1.next(), iter2.next())
+      }
+
+    } else {
+      new Iterator[(V1, V2)] {
+        def hasNext: Boolean = iter1.hasNext && iter2.hasNext
+
+        def next: (V1, V2) = (iter1.next(), iter2.next())
+      }
+    }
+  }
+
+
+  /**
     * zip three iterators
     */
   def zip3[V1, V2, V3](iter1: Iterator[V1],
                        iter2: Iterator[V2],
-                       iter3: Iterator[V3]): Iterator[(V1, V2, V3)] = new AbstractIterator[(V1, V2, V3)] {
-    def hasNext: Boolean = iter1.hasNext && iter2.hasNext && iter3.hasNext
+                       iter3: Iterator[V3],
+                       validate: Boolean = true): Iterator[(V1, V2, V3)] = {
 
-    def next: (V1, V2, V3) = (iter1.next(), iter2.next(), iter3.next())
+    if (validate) {
+      new Iterator[(V1, V2, V3)] {
+        def hasNext: Boolean = (iter1.hasNext, iter2.hasNext, iter3.hasNext) match {
+          case (true, true, true) => true
+          case (false, false, false) => false
+          case t => throw new Exception(s"Input iterators have different lengths: $t")
+        }
+
+        def next(): (V1, V2, V3) = (iter1.next(), iter2.next(), iter3.next())
+      }
+
+    } else {
+      new Iterator[(V1, V2, V3)] {
+        def hasNext: Boolean = iter1.hasNext && iter2.hasNext && iter3.hasNext
+
+        def next: (V1, V2, V3) = (iter1.next(), iter2.next(), iter3.next())
+      }
+    }
   }
 
 
@@ -74,10 +119,27 @@ private[gbm] object Utils extends Logging {
   def zip4[V1, V2, V3, V4](iter1: Iterator[V1],
                            iter2: Iterator[V2],
                            iter3: Iterator[V3],
-                           iter4: Iterator[V4]): Iterator[(V1, V2, V3, V4)] = new AbstractIterator[(V1, V2, V3, V4)] {
-    def hasNext: Boolean = iter1.hasNext && iter2.hasNext && iter3.hasNext && iter4.hasNext
+                           iter4: Iterator[V4],
+                           validate: Boolean = true): Iterator[(V1, V2, V3, V4)] = {
 
-    def next: (V1, V2, V3, V4) = (iter1.next(), iter2.next(), iter3.next(), iter4.next())
+    if (validate) {
+      new Iterator[(V1, V2, V3, V4)] {
+        def hasNext: Boolean = (iter1.hasNext, iter2.hasNext, iter3.hasNext, iter4.hasNext) match {
+          case (true, true, true, true) => true
+          case (false, false, false, false) => false
+          case t => throw new Exception(s"Input iterators have different lengths: $t")
+        }
+
+        def next(): (V1, V2, V3, V4) = (iter1.next(), iter2.next(), iter3.next(), iter4.next())
+      }
+
+    } else {
+      new Iterator[(V1, V2, V3, V4)] {
+        def hasNext: Boolean = iter1.hasNext && iter2.hasNext && iter3.hasNext && iter4.hasNext
+
+        def next(): (V1, V2, V3, V4) = (iter1.next(), iter2.next(), iter3.next(), iter4.next())
+      }
+    }
   }
 
 

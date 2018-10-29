@@ -677,6 +677,10 @@ class BoostConfig extends Logging with Serializable {
 
   def getBaseModelParallelism: Int = baseModelParallelism
 
+  
+  /** number of trees in one round */
+  def getNumTrees: Int = getBaseModelParallelism * getRawSize
+
 
   /** numerical precision */
   private var floatType: String = "float"

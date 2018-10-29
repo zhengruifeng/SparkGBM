@@ -78,7 +78,7 @@ object VerticalGBM extends Logging {
 
     // vertical train sub-binvec blocks
     val subBinVecBlocks = divideBinVecBlocks[C, B, G](trainBinVecBlocks, boostConf)
-      .setName("Train BinVector Blocks (Vertical)")
+      .setName("Train SubBinVecs (Vertical)")
 
     subBinVecBlocks.persist(boostConf.getStorageLevel2)
 
@@ -95,7 +95,7 @@ object VerticalGBM extends Logging {
     // raw scores and checkpointer
     var trainRawBlocks = GBM.initializeRawBlocks[C, B, H](trainWeightBlocks, trainBinVecBlocks,
       treesBuff.toArray, weightsBuff.toArray, boostConf)
-      .setName("Train Raw Blocks (Iteration 0)")
+      .setName("Initial: Train RawPreds")
     val trainRawBlocksCheckpointer = new Checkpointer[ArrayBlock[H]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel2)
     if (treesBuff.nonEmpty) {
@@ -111,7 +111,7 @@ object VerticalGBM extends Logging {
 
       val newTestRawBlocks = GBM.initializeRawBlocks[C, B, H](testWeightBlocks, testBinVecBlocks,
         treesBuff.toArray, weightsBuff.toArray, boostConf)
-        .setName("Test Raw Blocks (Iteration 0)")
+        .setName("Initial: Test RawPreds")
       if (treesBuff.nonEmpty) {
         testRawBlocksCheckpointer.update(newTestRawBlocks)
       }
@@ -128,12 +128,12 @@ object VerticalGBM extends Logging {
     val dartRng = new Random(boostConf.getSeed)
     val dropped = mutable.Set.empty[Int]
 
-    var iter = 0
+    var iteration = 0
     var finished = false
 
-    while (!finished && iter < boostConf.getMaxIter) {
+    while (!finished && iteration < boostConf.getMaxIter) {
       val numTrees = treesBuff.length
-      val logPrefix = s"Iteration $iter:"
+      val logPrefix = s"Iteration $iteration:"
 
       // drop out
       if (boostConf.getBoostType == GBM.Dart) {
@@ -150,7 +150,7 @@ object VerticalGBM extends Logging {
       logInfo(s"$logPrefix start")
       val start = System.nanoTime
       val trees = buildTrees[C, B, H, G](trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks, subBinVecBlocks, trainRawBlocks,
-        weightsBuff.toArray, boostConf, iter, dropped.toSet)
+        weightsBuff.toArray, boostConf, iteration, dropped.toSet)
       logInfo(s"$logPrefix finished, duration: ${(System.nanoTime - start) / 1e9} sec")
 
       if (trees.forall(_.isEmpty)) {
@@ -168,7 +168,7 @@ object VerticalGBM extends Logging {
         // update train data predictions
         trainRawBlocks = GBM.updateRawBlocks[C, B, H](trainBinVecBlocks, trainRawBlocks,
           trees, weightsBuff.toArray, boostConf, keepWeights)
-          .setName(s"Train Raw Blocks (Iteration ${iter + 1})")
+          .setName(s"Iter $iteration: Train RawPreds")
         trainRawBlocksCheckpointer.update(trainRawBlocks)
 
 
@@ -189,7 +189,7 @@ object VerticalGBM extends Logging {
           // update test data predictions
           val newTestRawBlocks = GBM.updateRawBlocks[C, B, H](testBinVecBlocks, testRawBlocks.get,
             trees, weightsBuff.toArray, boostConf, keepWeights)
-            .setName(s"Test Raw Blocks (Iteration ${iter + 1})")
+            .setName(s"Iter $iteration: Test RawPreds")
 
           testRawBlocks = Some(newTestRawBlocks)
           testRawBlocksCheckpointer.update(testRawBlocks.get)
@@ -210,7 +210,7 @@ object VerticalGBM extends Logging {
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
-            if (callback.compute(spark, boostConf, snapshot, iter + 1,
+            if (callback.compute(spark, boostConf, snapshot, iteration + 1,
               trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
               logInfo(s"$logPrefix callback ${callback.name} stop training")
@@ -220,10 +220,10 @@ object VerticalGBM extends Logging {
       }
 
       logInfo(s"$logPrefix finished, ${treesBuff.length} trees now")
-      iter += 1
+      iteration += 1
     }
 
-    if (iter >= boostConf.getMaxIter) {
+    if (iteration >= boostConf.getMaxIter) {
       logInfo(s"maxIter=${boostConf.getMaxIter} reached, GBM training finished")
     }
 
@@ -478,7 +478,7 @@ object VerticalGBM extends Logging {
             ArrayBlock.fill(weightBlock.size, treeIds)
           }
         }
-      }.setName(s"TreeIdBlocks (iteration $iteration)")
+      }.setName(s"Iter $iteration: TreeIds")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(treeIdBlocks)
@@ -487,11 +487,11 @@ object VerticalGBM extends Logging {
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .map { case (weightBlock, labelBlock, rawBlock) =>
         computeGradBlock(weightBlock, labelBlock, rawBlock)
-      }.setName(s"GradientBlocks (iteration $iteration)")
+      }.setName(s"Iter $iteration: Grads")
 
     val agGradBlocks = gradBlocks
       .allgather(numVParts)
-      .setName(s"GradientBlocks (iteration $iteration) (AllGathered)")
+      .setName(s"Iter $iteration: Grads (AllGathered)")
 
     agGradBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(agGradBlocks)
@@ -507,7 +507,7 @@ object VerticalGBM extends Logging {
           ArrayBlock.fill(gradBlock.size, treeIds)
         }
       }
-    }.setName(s"TreeIdBlocks (iteration $iteration) (AllGathered)")
+    }.setName(s"Iter $iteration: TreeIds (AllGathered)")
 
     agTreeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(agTreeIdBlocks)
@@ -556,7 +556,7 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"BinVecBlocks (iteration $iteration) (Block-Sampled)")
+      }.setName(s"Iter $iteration: BinVecs (Block-Sampled)")
 
     if (boostConf.getStorageStrategy == GBM.Eager) {
       sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
@@ -585,7 +585,7 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"TreeIdBlocks (iteration $iteration) (Block-Sampled)")
+      }.setName(s"Iter $iteration: TreeIds (Block-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(treeIdBlocks)
@@ -593,7 +593,7 @@ object VerticalGBM extends Logging {
 
     val agTreeIdBlocks = treeIdBlocks
       .allgather(boostConf.getNumVerticalPartitions)
-      .setName(s"TreeIdBlocks (iteration $iteration) (AllGathered)")
+      .setName(s"Iter $iteration: TreeIds (Block-Sampled) (AllGathered)")
 
     agTreeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(agTreeIdBlocks)
@@ -617,11 +617,11 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"GradBlocks (iteration $iteration)")
+      }.setName(s"Iter $iteration: Grads (Block-Sampled)")
 
     val agGradBlocks = gradBlocks
       .allgather(boostConf.getNumVerticalPartitions)
-      .setName(s"GradBlocks (iteration $iteration) (AllGathered)")
+      .setName(s"Iter $iteration: Grads (Block-Sampled) (AllGathered)")
 
     agGradBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(agGradBlocks)
@@ -643,7 +643,7 @@ object VerticalGBM extends Logging {
           Iterator.empty
         }
       }
-    }.setName(s"SubBinVecBlocks (iteration $iteration) (Block-Sampled)")
+    }.setName(s"Iter $iteration: SubBinVecs (Block-Sampled)")
 
     if (boostConf.getStorageStrategy == GBM.Eager) {
       sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
@@ -698,7 +698,7 @@ object VerticalGBM extends Logging {
             }
           }.grouped(blockSize)
           .map(KVMatrix.build[C, B])
-      }.setName(s"BinVecBlocks (iteration $iteration) (Instance-Sampled)")
+      }.setName(s"Iter $iteration: BinVecs (Instance-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(sampledBinVecBlocks)
@@ -727,7 +727,7 @@ object VerticalGBM extends Logging {
             }
           }.grouped(blockSize)
           .map(ArrayBlock.build[T])
-      }.setName(s"TreeIdBlocks (iteration $iteration) (Instance-Sampled)")
+      }.setName(s"Iter $iteration: TreeIds (Instance-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(treeIdBlocks)
@@ -735,7 +735,7 @@ object VerticalGBM extends Logging {
 
     val agTreeIdBlocks = treeIdBlocks
       .allgather(boostConf.getNumVerticalPartitions)
-      .setName(s"TreeIdBlocks (iteration $iteration) (AllGathered)")
+      .setName(s"Iter $iteration: TreeIds (Instance-Sampled) (AllGathered)")
 
     agTreeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(agTreeIdBlocks)
@@ -769,11 +769,11 @@ object VerticalGBM extends Logging {
         }.grouped(blockSize)
           .map(ArrayBlock.build[H])
 
-      }.setName(s"GradBlocks (iteration $iteration)")
+      }.setName(s"Iter $iteration: Grads (Instance-Sampled)")
 
     val agGradBlocks = gradBlocks
       .allgather(boostConf.getNumVerticalPartitions)
-      .setName(s"GradBlocks (iteration $iteration) (AllGathered)")
+      .setName(s"Iter $iteration: Grads (Instance-Sampled) (AllGathered)")
 
     agGradBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(agGradBlocks)
@@ -807,10 +807,8 @@ object VerticalGBM extends Logging {
           }
 
         }.grouped(blockSize)
-          .map { seqs =>
-            KVVector.dense[G, B](seqs.flatten.toArray).compress
-          }
-      }.setName(s"SubBinVecBlocks (iteration $iteration) (Instance-Sampled)")
+          .map { seqs => KVVector.dense[G, B](seqs.flatten.toArray).compress }
+      }.setName(s"Iter $iteration: SubBinVecs (Instance-Sampled)")
 
     sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(sampledSubBinVecBlocks)

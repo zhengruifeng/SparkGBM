@@ -126,7 +126,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
       // compute the histogram of right leaves
       val rightHistograms = HistogramUpdater.computeHistograms[T, N, C, B, H](data, boostConf, baseConf,
         (n: N) => inn.gteq(n, minNodeId) && inn.equiv(inn.rem(n, inn.fromInt(2)), inn.one), partitioner)
-        .setName(s"Right Leaves Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
+        .setName(s"Iter ${baseConf.iteration}, depth: $depth: Right Leaves Histograms")
 
       // compute the histogram of both left leaves and right leaves by subtraction
       HistogramUpdater.subtractHistograms[T, N, C, B, H](prevHistograms, rightHistograms, boostConf, partitioner)
@@ -212,7 +212,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
     val localHistograms = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](data,
       boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
-      .setName(s"Local Histograms (Iteration: ${baseConf.iteration}, depth: $depth) (Sorted)")
+      .setName(s"Iter ${baseConf.iteration}, depth: $depth: Local Histograms")
     localHistograms.persist(boostConf.getStorageLevel1)
     recoder.append(localHistograms)
 
@@ -233,14 +233,14 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
           val votes = KVVector.sparse[C, Int](size, colIds, Array.fill(colIds.length)(1))
           ((treeId, nodeId), votes.compress)
         }
-    }.setName("Local Voted TopK")
+    }.setName(s"Iter ${baseConf.iteration}, depth: $depth: Local Voted TopK")
 
 
     val globalVoted = localVoted.reduceByKey(_.plus(_).compress, parallelism)
       .mapValues { votes =>
         votes.activeIterator.toArray.sortBy(_._2)
           .takeRight(top2K).map(_._1).sorted
-      }.setName("Global Voted Top2K")
+      }.setName(s"Iter ${baseConf.iteration}, depth: $depth: Global Voted Top2K")
 
 
 
@@ -282,7 +282,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       val numParts = localHistograms.getNumPartitions
 
       val duplicatedGlobalVoted = globalVoted.allgather(numParts)
-        .setName("Global Voted Top2K (Duplicated) (Sorted)")
+        .setName(s"Iter ${baseConf.iteration}, depth: $depth: Global Voted Top2K (AllGathered)")
 
       localHistograms.zipPartitions(duplicatedGlobalVoted)(f = {
         case (localIter, globalIter) =>

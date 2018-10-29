@@ -68,7 +68,7 @@ private[gbm] object Tree extends Serializable with Logging {
       } else {
         nodeIdBlocks = updateNodeIdBlocks[T, N, C, B](binVecBlocks, treeIdBlocks, nodeIdBlocks, splits)
       }
-      nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
+      nodeIdBlocks.setName(s"Iter ${baseConf.iteration}, depth $depth: NodeIds")
       nodeIdBlocksCheckpointer.update(nodeIdBlocks)
 
 
@@ -148,7 +148,7 @@ private[gbm] object Tree extends Serializable with Logging {
       } else {
         nodeIdBlocks = updateNodeIdBlocks[T, N, C, B](binVecBlocks, treeIdBlocks, nodeIdBlocks, splits)
       }
-      nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
+      nodeIdBlocks.setName(s"Iter ${baseConf.iteration}, depth $depth: NodeIds")
       nodeIdBlocksCheckpointer.update(nodeIdBlocks)
 
 
@@ -213,6 +213,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
       val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](vdata,
         boostConf, newBaseConfig, (n: N) => true)
+        .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
 
       splits = findSplitsImpl[T, N, C, B, H](hists, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
 
@@ -415,7 +416,7 @@ private[gbm] object Tree extends Serializable with Logging {
         // columns selected by `colSamplingByTree`, since the updated histograms will be
         // used in next level, and `colSamplingByLevel` in each level perform differently.
         val histograms = updater.update(data, boostConf, baseConf, splits, depth)
-          .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
+          .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
 
         // perform column sampling by level
         val sampled = if (boostConf.getColSampleRateByLevel < 1) {
@@ -433,7 +434,7 @@ private[gbm] object Tree extends Serializable with Logging {
         val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
 
         val histograms = updater.update(data, boostConf, newBaseConfig, splits, depth)
-          .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
+          .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
 
         findSplitsImpl[T, N, C, B, H](histograms, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
     }

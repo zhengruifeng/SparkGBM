@@ -677,7 +677,7 @@ class BoostConfig extends Logging with Serializable {
 
   def getBaseModelParallelism: Int = baseModelParallelism
 
-  
+
   /** number of trees in one round */
   def getNumTrees: Int = getBaseModelParallelism * getRawSize
 
@@ -737,52 +737,52 @@ class BoostConfig extends Logging with Serializable {
   private[gbm] def isSeq(colId: Int): Boolean = !isCat(colId)
 
 
-  private var numBlocksPerPartition: Array[Long] = Array.emptyLongArray
+  private var numBlocksPerPart: Array[Long] = Array.emptyLongArray
 
-  private[gbm] def setNumBlocksPerPartition(value: Array[Long]): this.type = {
+  private[gbm] def setNumBlocksPerPart(value: Array[Long]): this.type = {
     require(value.nonEmpty)
-    numBlocksPerPartition = value
+    numBlocksPerPart = value
     this
   }
 
-  private[gbm] def getNumBlocksPerPartition: Array[Long] = numBlocksPerPartition
+  private[gbm] def getNumBlocksPerPart: Array[Long] = numBlocksPerPart
 
-  private[gbm] def getNumBlocks: Long = numBlocksPerPartition.sum
+  private[gbm] def getNumBlocks: Long = numBlocksPerPart.sum
 
-  private[gbm] def getBlockIdOffsetPerPartition: Array[Long] = {
-    if (numBlocksPerPartition.nonEmpty) {
-      numBlocksPerPartition.take(numBlocksPerPartition.length - 1).scanLeft(0L)(_ + _)
+  private[gbm] def getBlockIdOffsetPerPart: Array[Long] = {
+    if (numBlocksPerPart.nonEmpty) {
+      numBlocksPerPart.take(numBlocksPerPart.length - 1).scanLeft(0L)(_ + _)
     } else {
       Array.emptyLongArray
     }
   }
 
 
-  private var numInstancesPerPartition: Array[Long] = Array.emptyLongArray
+  private var numInstancesPerPart: Array[Long] = Array.emptyLongArray
 
-  private[gbm] def setNumInstancesPerPartition(value: Array[Long]): this.type = {
+  private[gbm] def setNumInstancesPerPart(value: Array[Long]): this.type = {
     require(value.nonEmpty)
-    numInstancesPerPartition = value
+    numInstancesPerPart = value
     this
   }
 
-  private[gbm] def getNumInstancesPerPartition: Array[Long] = numInstancesPerPartition
+  private[gbm] def getNumInstancesPerPart: Array[Long] = numInstancesPerPart
 
-  private[gbm] def getNumInstances: Long = numInstancesPerPartition.sum
+  private[gbm] def getNumInstances: Long = numInstancesPerPart.sum
 
-  private[gbm] def getInstanceOffsetPerPartition: Array[Long] = {
-    if (numInstancesPerPartition.nonEmpty) {
-      numInstancesPerPartition.take(numInstancesPerPartition.length - 1).scanLeft(0L)(_ + _)
+  private[gbm] def getInstanceOffsetPerPart: Array[Long] = {
+    if (numInstancesPerPart.nonEmpty) {
+      numInstancesPerPart.take(numInstancesPerPart.length - 1).scanLeft(0L)(_ + _)
     } else {
       Array.emptyLongArray
     }
   }
 
-  private[gbm] def splitColumns(parallelism: Int): Unit = {
+  private[gbm] def updateVColsInfo(parallelism: Int): Unit = {
     require(numCols > 0)
     require(parallelism > 0)
 
-    columnIdsPerVerticalPartitions = if (parallelism >= numCols) {
+    colIdsPerVPart = if (parallelism >= numCols) {
       Array.tabulate(numCols)(Array(_))
     } else {
       Array.tabulate(parallelism)(i => Iterator.range(0, numCols).filter(_ % parallelism == i).toArray)
@@ -790,20 +790,20 @@ class BoostConfig extends Logging with Serializable {
   }
 
 
-  private[gbm] var columnIdsPerVerticalPartitions: Array[Array[Int]] = Array.empty
+  private[gbm] var colIdsPerVPart: Array[Array[Int]] = Array.empty
 
 
-  private[gbm] def getNumVerticalPartitions: Int = columnIdsPerVerticalPartitions.length
+  private[gbm] def getNumVParts: Int = colIdsPerVPart.length
 
 
   private[gbm] def getVCols[C]()
                               (implicit cc: ClassTag[C], inc: Integral[C]): Array[Array[C]] = {
-    columnIdsPerVerticalPartitions.map(_.map(inc.fromInt))
+    colIdsPerVPart.map(_.map(inc.fromInt))
   }
 
   private[gbm] def getVCols[C](vPartId: Int)
                               (implicit cc: ClassTag[C], inc: Integral[C]): Array[C] = {
-    columnIdsPerVerticalPartitions(vPartId).map(inc.fromInt)
+    colIdsPerVPart(vPartId).map(inc.fromInt)
   }
 }
 

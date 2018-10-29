@@ -38,7 +38,7 @@ object VerticalGBM extends Logging {
 
     val sc = trainBlocks._1.sparkContext
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
-    boostConf.splitColumns(parallelism)
+    boostConf.updateVColsInfo(parallelism)
 
     val maxCols = boostConf.getVCols[C]().map(_.length).max
 
@@ -244,7 +244,7 @@ object VerticalGBM extends Logging {
                                   cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                   cg: ClassTag[G], ing: Integral[G], neg: NumericExt[G]): RDD[KVVector[G, B]] = {
 
-    val numVParts = boostConf.getNumVerticalPartitions
+    val numVParts = boostConf.getNumVParts
     val colIdsPerVPart = boostConf.getVCols[C]()
     require(numVParts == colIdsPerVPart.length)
 
@@ -461,7 +461,7 @@ object VerticalGBM extends Logging {
                                                       cg: ClassTag[G], ing: Integral[G], neg: NumericExt[G]) = {
     import RDDFunctions._
 
-    val numVParts = boostConf.getNumVerticalPartitions
+    val numVParts = boostConf.getNumVParts
     val rawSize = boostConf.getRawSize
     val numBaseModels = boostConf.getBaseModelParallelism
     val numTrees = numBaseModels * rawSize
@@ -542,7 +542,7 @@ object VerticalGBM extends Logging {
     val sampledBinVecBlocks = binVecBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
         val numBaseModels = bcBoostConf.value.getBaseModelParallelism
-        var blockId = bcBoostConf.value.getBlockIdOffsetPerPartition(partId) - 1
+        var blockId = bcBoostConf.value.getBlockIdOffsetPerPart(partId) - 1
 
         iter.flatMap { binVecBlock =>
           blockId += 1
@@ -569,7 +569,7 @@ object VerticalGBM extends Logging {
         val numBaseModels = bcBoostConf.value.getBaseModelParallelism
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
 
-        var blockId = bcBoostConf.value.getBlockIdOffsetPerPartition(partId) - 1
+        var blockId = bcBoostConf.value.getBlockIdOffsetPerPart(partId) - 1
 
         iter.flatMap { weightBlock =>
           blockId += 1
@@ -592,7 +592,7 @@ object VerticalGBM extends Logging {
 
 
     val agTreeIdBlocks = treeIdBlocks
-      .allgather(boostConf.getNumVerticalPartitions)
+      .allgather(boostConf.getNumVParts)
       .setName(s"Iter $iteration: TreeIds (Block-Sampled) (AllGathered)")
 
     agTreeIdBlocks.persist(boostConf.getStorageLevel1)
@@ -602,7 +602,7 @@ object VerticalGBM extends Logging {
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         val numBaseModels = bcBoostConf.value.getBaseModelParallelism
-        var blockId = bcBoostConf.value.getBlockIdOffsetPerPartition(partId) - 1
+        var blockId = bcBoostConf.value.getBlockIdOffsetPerPart(partId) - 1
 
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           blockId += 1
@@ -620,7 +620,7 @@ object VerticalGBM extends Logging {
       }.setName(s"Iter $iteration: Grads (Block-Sampled)")
 
     val agGradBlocks = gradBlocks
-      .allgather(boostConf.getNumVerticalPartitions)
+      .allgather(boostConf.getNumVParts)
       .setName(s"Iter $iteration: Grads (Block-Sampled) (AllGathered)")
 
     agGradBlocks.persist(boostConf.getStorageLevel1)
@@ -682,7 +682,7 @@ object VerticalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val numBaseModels = bcBoostConf.value.getBaseModelParallelism
         val blockSize = bcBoostConf.value.getBlockSize
-        var instanceId = bcBoostConf.value.getInstanceOffsetPerPartition(partId) - 1
+        var instanceId = bcBoostConf.value.getInstanceOffsetPerPart(partId) - 1
 
         iter.flatMap(_.iterator)
           .flatMap { binVec =>
@@ -710,7 +710,7 @@ object VerticalGBM extends Logging {
         val blockSize = bcBoostConf.value.getBlockSize
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
 
-        var instanceId = bcBoostConf.value.getInstanceOffsetPerPartition(partId) - 1
+        var instanceId = bcBoostConf.value.getInstanceOffsetPerPart(partId) - 1
 
         iter.flatMap(_.iterator)
           .flatMap { _ =>
@@ -734,7 +734,7 @@ object VerticalGBM extends Logging {
 
 
     val agTreeIdBlocks = treeIdBlocks
-      .allgather(boostConf.getNumVerticalPartitions)
+      .allgather(boostConf.getNumVParts)
       .setName(s"Iter $iteration: TreeIds (Instance-Sampled) (AllGathered)")
 
     agTreeIdBlocks.persist(boostConf.getStorageLevel1)
@@ -746,7 +746,7 @@ object VerticalGBM extends Logging {
         val numBaseModels = bcBoostConf.value.getBaseModelParallelism
         val blockSize = bcBoostConf.value.getBlockSize
 
-        var instanceId = bcBoostConf.value.getInstanceOffsetPerPartition(partId) - 1
+        var instanceId = bcBoostConf.value.getInstanceOffsetPerPart(partId) - 1
 
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           require(weightBlock.size == rawBlock.size)
@@ -772,7 +772,7 @@ object VerticalGBM extends Logging {
       }.setName(s"Iter $iteration: Grads (Instance-Sampled)")
 
     val agGradBlocks = gradBlocks
-      .allgather(boostConf.getNumVerticalPartitions)
+      .allgather(boostConf.getNumVParts)
       .setName(s"Iter $iteration: Grads (Instance-Sampled) (AllGathered)")
 
     agGradBlocks.persist(boostConf.getStorageLevel1)

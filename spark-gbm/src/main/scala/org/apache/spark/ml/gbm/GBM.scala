@@ -717,11 +717,11 @@ private[gbm] object GBM extends Logging {
 
     require(array.length == weightBlocks.getNumPartitions)
 
-    boostConf.setNumBlocksPerPartition(array.map(_._2))
-    boostConf.setNumInstancesPerPartition(array.map(_._3))
+    boostConf.setNumBlocksPerPart(array.map(_._2))
+    boostConf.setNumInstancesPerPart(array.map(_._3))
     logInfo(s"${weightBlocks.name}: ${boostConf.getNumInstances} instances, ${boostConf.getNumBlocks} blocks, " +
-      s"numInstancesPerPartition ${boostConf.getNumInstancesPerPartition.mkString("[", ",", "]")}, " +
-      s"numBlocksPerPartition ${boostConf.getNumBlocksPerPartition.mkString("[", ",", "]")}")
+      s"numInstancesPerPartition ${boostConf.getNumInstancesPerPart.mkString("[", ",", "]")}, " +
+      s"numBlocksPerPartition ${boostConf.getNumBlocksPerPart.mkString("[", ",", "]")}")
   }
 
 

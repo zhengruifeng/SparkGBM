@@ -628,22 +628,15 @@ private[gbm] object GBM extends Logging {
     val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
 
     trainWeightBlocks.setName("Train Weight Blocks")
-    trainLabelBlocks.setName("Train Label Blocks")
-    trainBinVecBlocks.setName("Train BinVector Blocks")
-
-    boostConf.getStorageStrategy match {
-      case GBM.Upstream =>
-        trainWeightBlocks.persist(boostConf.getStorageLevel1)
-        trainLabelBlocks.persist(boostConf.getStorageLevel1)
-        trainBinVecBlocks.persist(boostConf.getStorageLevel1)
-
-      case GBM.Eager =>
-        trainWeightBlocks.persist(boostConf.getStorageLevel2)
-        trainLabelBlocks.persist(boostConf.getStorageLevel2)
-        trainBinVecBlocks.persist(boostConf.getStorageLevel2)
-    }
+    trainWeightBlocks.persist(boostConf.getStorageLevel2)
     recoder.append(trainWeightBlocks)
+
+    trainLabelBlocks.setName("Train Label Blocks")
+    trainLabelBlocks.persist(boostConf.getStorageLevel2)
     recoder.append(trainLabelBlocks)
+
+    trainBinVecBlocks.setName("Train BinVector Blocks")
+    trainBinVecBlocks.persist(boostConf.getStorageLevel2)
     recoder.append(trainBinVecBlocks)
 
 
@@ -651,15 +644,15 @@ private[gbm] object GBM extends Logging {
 
     testBlocks.foreach { case (testWeightBlocks, testLabelBlocks, testBinVecBlocks) =>
       testWeightBlocks.setName("Test Weight Blocks")
-      testLabelBlocks.setName("Test Label Blocks")
-      testBinVecBlocks.setName("Test BinVector Blocks")
-
       testWeightBlocks.persist(boostConf.getStorageLevel3)
-      testLabelBlocks.persist(boostConf.getStorageLevel3)
-      testBinVecBlocks.persist(boostConf.getStorageLevel3)
-
       recoder.append(testWeightBlocks)
+
+      testLabelBlocks.setName("Test Label Blocks")
+      testLabelBlocks.persist(boostConf.getStorageLevel3)
       recoder.append(testLabelBlocks)
+
+      testBinVecBlocks.setName("Test BinVector Blocks")
+      testBinVecBlocks.persist(boostConf.getStorageLevel3)
       recoder.append(testBinVecBlocks)
     }
 
@@ -676,6 +669,7 @@ private[gbm] object GBM extends Logging {
 
     model
   }
+
 
   /**
     * blockify and discretize instances to weightAndLabel-blocks and binVec-blocks.

@@ -227,7 +227,7 @@ object VerticalGBM extends Logging {
       logInfo(s"maxIter=${boostConf.getMaxIter} reached, GBM training finished")
     }
 
-    subBinVecBlocks.unpersist(false)
+    subBinVecBlocks.unpersist(true)
     trainRawBlocksCheckpointer.clear(true)
     if (testRawBlocksCheckpointer != null) {
       testRawBlocksCheckpointer.clear(true)

@@ -1037,7 +1037,7 @@ private[gbm] object GBM extends Logging {
     if (boostConf.getBatchEvalFunc.nonEmpty) {
       boostConf.getBatchEvalFunc
         .foreach { eval => result.update(eval.name, eval.compute(scores)) }
-      scores.unpersist(blocking = false)
+      scores.unpersist(blocking = true)
     }
 
     result.toMap

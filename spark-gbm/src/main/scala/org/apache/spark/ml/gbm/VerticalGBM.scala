@@ -80,13 +80,7 @@ object VerticalGBM extends Logging {
     val subBinVecBlocks = divideBinVecBlocks[C, B, G](trainBinVecBlocks, boostConf)
       .setName("Train BinVector Blocks (Vertical)")
 
-    boostConf.getStorageStrategy match {
-      case GBM.Upstream =>
-        subBinVecBlocks.persist(boostConf.getStorageLevel1)
-
-      case GBM.Eager =>
-        subBinVecBlocks.persist(boostConf.getStorageLevel2)
-    }
+    subBinVecBlocks.persist(boostConf.getStorageLevel2)
 
 
     // init tree buffer

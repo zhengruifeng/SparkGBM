@@ -615,7 +615,7 @@ class BoostConfig extends Logging with Serializable {
   def getCallbackFunc: Array[CallbackFunc] = callbackFunc
 
 
-  /** base score for global scalar bias */
+  /** base score for global bias */
   private var baseScore: Array[Double] = Array.empty
 
   private[gbm] def setBaseScore(value: Array[Double]): this.type = {
@@ -624,21 +624,41 @@ class BoostConfig extends Logging with Serializable {
     this
   }
 
-  def getBaseScore: Array[Double] = baseScore
+  def getBaseScore: Array[Double] = baseScore.clone()
 
-  def computeRawBaseScore: Array[Double] = objFunc.inverseTransform(baseScore)
+
+  /** base raw prediction for global bias */
+  private var rawBaseScore: Array[Double] = Array.empty
+
+  private[gbm] def getRawBaseScore: Array[Double] = rawBaseScore.clone()
 
 
   /** length of raw prediction vectors */
   private var rawSize: Int = 0
 
-  private[gbm] def setRawSize(value: Int): this.type = {
-    require(value > 0)
-    rawSize = value
-    this
+  def getRawSize: Int = rawSize
+
+
+  /** helper function to convert baseIds to treeIds */
+  private[gbm] def computeTreeIds[T]()
+                                    (implicit ct: ClassTag[T], int: Integral[T]): Array[T] => Array[T] = {
+    if (rawSize == 1) {
+      baseIds: Array[T] => baseIds
+    } else {
+      baseIds: Array[T] =>
+        baseIds.flatMap { i =>
+          val offset = rawSize * int.toInt(i)
+          Iterator.range(offset, offset + rawSize).map(int.fromInt)
+        }
+    }
   }
 
-  def getRawSize: Int = rawSize
+
+  def updateRawBaseScoreInfo(): Unit = {
+    require(baseScore.nonEmpty)
+    rawBaseScore = objFunc.inverseTransform(baseScore)
+    rawSize = rawBaseScore.length
+  }
 
 
   /** number of base models in one round */
@@ -772,13 +792,13 @@ class BoostConfig extends Logging with Serializable {
   private[gbm] def getNumVerticalPartitions: Int = columnIdsPerVerticalPartitions.length
 
 
-  private[gbm] def getVerticalColumnIds[C]()
-                                          (implicit cc: ClassTag[C], inc: Integral[C]): Array[Array[C]] = {
+  private[gbm] def getVCols[C]()
+                              (implicit cc: ClassTag[C], inc: Integral[C]): Array[Array[C]] = {
     columnIdsPerVerticalPartitions.map(_.map(inc.fromInt))
   }
 
-  private[gbm] def getVerticalColumnIds[C](vPartId: Int)
-                                          (implicit cc: ClassTag[C], inc: Integral[C]): Array[C] = {
+  private[gbm] def getVCols[C](vPartId: Int)
+                              (implicit cc: ClassTag[C], inc: Integral[C]): Array[C] = {
     columnIdsPerVerticalPartitions(vPartId).map(inc.fromInt)
   }
 }

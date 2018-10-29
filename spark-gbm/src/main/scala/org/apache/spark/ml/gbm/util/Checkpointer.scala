@@ -73,7 +73,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     data.persist(storageLevel)
     persistedQueue.enqueue(data)
     while (persistedQueue.length > maxPersisted) {
-      persistedQueue.dequeue.unpersist(false)
+      persistedQueue.dequeue.unpersist(true)
     }
     updateCount += 1
 
@@ -96,9 +96,9 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     }
   }
 
-  def clear(): Unit = {
+  def clear(blocking: Boolean = true): Unit = {
     while (persistedQueue.nonEmpty) {
-      persistedQueue.dequeue.unpersist(false)
+      persistedQueue.dequeue.unpersist(blocking)
     }
     persistedQueue.clear()
 

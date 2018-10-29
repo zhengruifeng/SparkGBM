@@ -127,8 +127,8 @@ object ArrayBlock extends Serializable {
   }
 
 
-  def fill[@spec(Byte, Short, Int, Long, Float, Double) V](array: Array[V],
-                                                           n: Int)
+  def fill[@spec(Byte, Short, Int, Long, Float, Double) V](n: Int,
+                                                           array: Array[V])
                                                           (implicit cv: ClassTag[V], nev: NumericExt[V]): ArrayBlock[V] = {
     require(array != null)
     require(n >= 0)

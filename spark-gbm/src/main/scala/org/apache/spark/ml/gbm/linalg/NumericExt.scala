@@ -14,6 +14,8 @@ private[gbm] trait NumericExt[K] extends Serializable {
 
   def toDouble(array: Array[K]): Array[Double]
 
+  def fromInt(array: Array[Int]): Array[K]
+
   def toInt(array: Array[K]): Array[Int]
 
   def sqrt(value: K): K
@@ -34,6 +36,8 @@ private object ByteNumericExt extends NumericExt[Byte] {
   override def fromDouble(array: Array[Double]): Array[Byte] = array.map(_.toByte)
 
   override def toDouble(array: Array[Byte]): Array[Double] = array.map(_.toDouble)
+
+  override def fromInt(array: Array[Int]): Array[Byte] = array.map(_.toByte)
 
   override def toInt(array: Array[Byte]): Array[Int] = array.map(_.toInt)
 
@@ -56,6 +60,8 @@ private object ShortNumericExt extends NumericExt[Short] {
 
   override def toDouble(array: Array[Short]): Array[Double] = array.map(_.toDouble)
 
+  override def fromInt(array: Array[Int]): Array[Short] = array.map(_.toShort)
+
   override def toInt(array: Array[Short]): Array[Int] = array.map(_.toInt)
 
   override def sqrt(value: Short): Short = math.sqrt(value).toByte
@@ -76,6 +82,8 @@ private object IntNumericExt extends NumericExt[Int] {
   override def fromDouble(array: Array[Double]): Array[Int] = array.map(_.toInt)
 
   override def toDouble(array: Array[Int]): Array[Double] = array.map(_.toDouble)
+
+  override def fromInt(array: Array[Int]): Array[Int] = array
 
   override def toInt(array: Array[Int]): Array[Int] = array
 
@@ -98,6 +106,8 @@ private object LongNumericExt extends NumericExt[Long] {
 
   override def toDouble(array: Array[Long]): Array[Double] = array.map(_.toDouble)
 
+  override def fromInt(array: Array[Int]): Array[Long] = array.map(_.toLong)
+
   override def toInt(array: Array[Long]): Array[Int] = array.map(_.toInt)
 
   override def sqrt(value: Long): Long = math.sqrt(value).toLong
@@ -119,6 +129,8 @@ private object FloatNumericExt extends NumericExt[Float] {
 
   override def toDouble(array: Array[Float]): Array[Double] = array.map(_.toDouble)
 
+  override def fromInt(array: Array[Int]): Array[Float] = array.map(_.toFloat)
+
   override def toInt(array: Array[Float]): Array[Int] = array.map(_.toInt)
 
   override def sqrt(value: Float): Float = math.sqrt(value).toFloat
@@ -139,6 +151,8 @@ private object DoubleNumericExt extends NumericExt[Double] {
   override def fromDouble(array: Array[Double]): Array[Double] = array
 
   override def toDouble(array: Array[Double]): Array[Double] = array
+
+  override def fromInt(array: Array[Int]): Array[Double] = array.map(_.toDouble)
 
   override def toInt(array: Array[Double]): Array[Int] = array.map(_.toInt)
 

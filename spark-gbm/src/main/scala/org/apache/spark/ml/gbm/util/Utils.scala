@@ -69,6 +69,19 @@ private[gbm] object Utils extends Logging {
 
 
   /**
+    * zip four iterators
+    */
+  def zip4[V1, V2, V3, V4](iter1: Iterator[V1],
+                           iter2: Iterator[V2],
+                           iter3: Iterator[V3],
+                           iter4: Iterator[V4]): Iterator[(V1, V2, V3, V4)] = new AbstractIterator[(V1, V2, V3, V4)] {
+    def hasNext: Boolean = iter1.hasNext && iter2.hasNext && iter3.hasNext && iter4.hasNext
+
+    def next: (V1, V2, V3, V4) = (iter1.next(), iter2.next(), iter3.next(), iter4.next())
+  }
+
+
+  /**
     * Validate the ordering, and return the same iterator
     */
   def validateOrdering[K](iterator: Iterator[K],

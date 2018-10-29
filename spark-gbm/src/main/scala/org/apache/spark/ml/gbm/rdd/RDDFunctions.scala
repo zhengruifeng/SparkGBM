@@ -151,27 +151,46 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
   }
 
 
-  def zip2[V1: ClassTag, V2: ClassTag](other1: RDD[V1], other2: RDD[V2]): RDD[(T, V1, V2)] = {
+  def zip2[V1: ClassTag, V2: ClassTag](rdd1: RDD[V1],
+                                       rdd2: RDD[V2],
+                                       validate: Boolean = true): RDD[(T, V1, V2)] = {
 
-    self.zipPartitions(other1, other2, false) {
-      (thisIter, otherIter1, otherIter2) =>
+    self.zipPartitions(rdd1, rdd2, false) {
+      (thisIter, iter1, iter2) =>
         new Iterator[(T, V1, V2)] {
-          def hasNext: Boolean = (thisIter.hasNext, otherIter1.hasNext, otherIter2.hasNext) match {
+          def hasNext: Boolean = (thisIter.hasNext, iter1.hasNext, iter2.hasNext) match {
             case (true, true, true) => true
             case (false, false, false) => false
-            case _ => throw new SparkException("Can only zip2 RDDs with " +
+            case _ if !validate => false
+            case _ => throw new SparkException("Can only zip3 RDDs with " +
               "same number of elements in each partition")
           }
 
-          def next(): (T, V1, V2) = (thisIter.next(), otherIter1.next(), otherIter2.next())
+          def next(): (T, V1, V2) = (thisIter.next(), iter1.next(), iter2.next())
         }
     }
   }
 
 
-  def safeZip[U: ClassTag](other: RDD[U]): RDD[(T, U)] = {
+  def zip3[V1: ClassTag, V2: ClassTag, V3: ClassTag](rdd1: RDD[V1],
+                                                     rdd2: RDD[V2],
+                                                     rdd3: RDD[V3],
+                                                     validate: Boolean = true): RDD[(T, V1, V2, V3)] = {
 
-    self.zipPartitions(other, preservesPartitioning = false)(_.zip(_))
+    self.zipPartitions(rdd1, rdd2, rdd3, false) {
+      (thisIter, iter1, iter2, iter3) =>
+        new Iterator[(T, V1, V2, V3)] {
+          def hasNext: Boolean = (thisIter.hasNext, iter1.hasNext, iter2.hasNext, iter3.hasNext) match {
+            case (true, true, true, true) => true
+            case (false, false, false, false) => false
+            case _ if !validate => false
+            case _ => throw new SparkException("Can only zip3 RDDs with " +
+              "same number of elements in each partition")
+          }
+
+          def next(): (T, V1, V2, V3) = (thisIter.next(), iter1.next(), iter2.next(), iter3.next())
+        }
+    }
   }
 }
 

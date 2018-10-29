@@ -40,7 +40,7 @@ class ArrayBlockSuite extends FunSuite {
 
 
   test("fill") {
-    val block = fill(Array(1, 2, 3), 4)
+    val block = fill(4, Array(1, 2, 3))
 
     assert(block.size === 4)
     assert(block.flag === -4)

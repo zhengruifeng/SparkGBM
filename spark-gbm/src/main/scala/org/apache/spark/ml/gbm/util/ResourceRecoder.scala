@@ -29,22 +29,22 @@ private[gbm] class ResourceRecoder extends Logging {
     bcBuff.append(bc)
   }
 
-  def clear(): Unit = {
+  def clear(blocking: Boolean = true): Unit = {
     datasetBuff.foreach { dataset =>
       if (dataset.storageLevel != StorageLevel.NONE) {
-        dataset.unpersist(false)
+        dataset.unpersist(blocking)
       }
     }
     datasetBuff.clear()
 
     rddBuff.foreach { rdd =>
       if (rdd.getStorageLevel != StorageLevel.NONE) {
-        rdd.unpersist(false)
+        rdd.unpersist(blocking)
       }
     }
     rddBuff.clear()
 
-    bcBuff.foreach(_.destroy(false))
+    bcBuff.foreach(_.destroy(blocking))
     bcBuff.clear()
   }
 }

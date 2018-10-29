@@ -486,13 +486,13 @@ class GBM extends Logging with Serializable {
         s"${boostConf.getBaseScore.mkString(",")}")
     }
 
-    val rawBase = boostConf.computeRawBaseScore
+    boostConf.updateRawBaseScoreInfo()
+
+    val rawBase = boostConf.getRawBaseScore
     logInfo(s"base score vector: ${boostConf.getBaseScore.mkString(",")}, " +
       s"raw base vector: ${rawBase.mkString(",")}")
 
-    boostConf
-      .setNumCols(numCols)
-      .setRawSize(rawBase.length)
+    boostConf.setNumCols(numCols)
 
     GBM.boost(data, test, boostConf, discretizer, initialModel)
   }
@@ -672,7 +672,7 @@ private[gbm] object GBM extends Logging {
         VerticalGBM.boost[C, B, H](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
     }
 
-    recoder.clear()
+    recoder.clear(true)
 
     model
   }
@@ -726,7 +726,7 @@ private[gbm] object GBM extends Logging {
     boostConf.setNumBlocksPerPartition(array.map(_._2))
     boostConf.setNumInstancesPerPartition(array.map(_._3))
     logInfo(s"${weightBlocks.name}: ${boostConf.getNumInstances} instances, ${boostConf.getNumBlocks} blocks, " +
-      s"numInstancesPerPartition ${boostConf.getNumInstancesPerPartition.mkString("[", ",", "]")}" +
+      s"numInstancesPerPartition ${boostConf.getNumInstancesPerPartition.mkString("[", ",", "]")}, " +
       s"numBlocksPerPartition ${boostConf.getNumBlocksPerPartition.mkString("[", ",", "]")}")
   }
 
@@ -801,7 +801,7 @@ private[gbm] object GBM extends Logging {
                 boostConf: BoostConfig,
                 numTrees: Int,
                 dartRng: Random): Unit = {
-    dropped.clear
+    dropped.clear()
 
     if (boostConf.getDropSkip < 1 &&
       dartRng.nextDouble < 1 - boostConf.getDropSkip) {
@@ -845,8 +845,9 @@ private[gbm] object GBM extends Logging {
     require(trees.length == weights.length)
     require(trees.length % boostConf.getRawSize == 0)
 
-    val rawBase = neh.fromDouble(boostConf.computeRawBaseScore)
+    val rawBase = neh.fromDouble(boostConf.getRawBaseScore)
     val rawSize = boostConf.getRawSize
+    val blockSize = boostConf.getBlockSize
     require(rawSize == rawBase.length)
 
     if (trees.nonEmpty) {
@@ -888,12 +889,12 @@ private[gbm] object GBM extends Logging {
     } else {
 
       weightBlocks.mapPartitions { iter =>
-        val defaultRawBlock = ArrayBlock.fill[H](rawBase, boostConf.getBlockSize)
+        val defaultRawBlock = ArrayBlock.fill[H](blockSize, rawBase)
         iter.map { weightBlock =>
           if (weightBlock.size == defaultRawBlock.size) {
             defaultRawBlock
           } else {
-            ArrayBlock.fill[H](rawBase, weightBlock.size)
+            ArrayBlock.fill[H](weightBlock.size, rawBase)
           }
         }
       }
@@ -931,7 +932,7 @@ private[gbm] object GBM extends Logging {
 
     boostConf.getBoostType match {
       case Dart =>
-        val rawBase = neh.fromDouble(boostConf.computeRawBaseScore)
+        val rawBase = neh.fromDouble(boostConf.getRawBaseScore)
         require(rawSize == rawBase.length)
 
         binVecBlocks.zip(rawBlocks).map { case (binVecBlock, rawBlock) =>

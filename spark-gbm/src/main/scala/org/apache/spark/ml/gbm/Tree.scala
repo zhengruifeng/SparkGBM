@@ -3,6 +3,7 @@ package org.apache.spark.ml.gbm
 import scala.collection.mutable
 import scala.reflect.ClassTag
 
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.rdd._
@@ -18,27 +19,29 @@ private[gbm] object Tree extends Serializable with Logging {
 
   /**
     *
-    * @param data      instances containing (bins, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
-    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] =>
-    *                  {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
-    * @param boostConf boosting configure
-    * @param baseConf  trees-growth configure
+    * @param gradBlocks grad&hess is recurrent for compression. i.e
+    *                   treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] =>
+    *                   {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
+    * @param boostConf  boosting configure
+    * @param baseConf   trees-growth configure
     * @return tree models
     */
-  def trainHorizontal[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
+  def trainHorizontal[T, N, C, B, H](binVecBlocks: RDD[KVMatrix[C, B]],
+                                     treeIdBlocks: RDD[ArrayBlock[T]],
+                                     gradBlocks: RDD[ArrayBlock[H]],
                                      boostConf: BoostConfig,
+                                     bcBoostConf: Broadcast[BoostConfig],
                                      baseConf: BaseConfig)
                                     (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                      cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                      cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
-
-    val sc = data.sparkContext
+    val sc = binVecBlocks.sparkContext
 
     logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
 
-    var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
+    var nodeIdBlocks: RDD[ArrayBlock[N]] = null
     val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel1)
 
@@ -58,18 +61,18 @@ private[gbm] object Tree extends Serializable with Logging {
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
       val start = System.nanoTime()
 
-      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
+      logInfo(s"Iteration ${baseConf.iteration}, Depth $depth: splitting start")
 
       if (depth == 0) {
-        nodeIdBlocks = initializeNodeIdBlocks[T, N, C, B, H](data, boostConf)
+        nodeIdBlocks = initializeNodeIdBlocks[T, N](treeIdBlocks)
       } else {
-        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B, H](data, nodeIdBlocks, boostConf, splits)
+        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B](binVecBlocks, treeIdBlocks, nodeIdBlocks, splits)
       }
       nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
       nodeIdBlocksCheckpointer.update(nodeIdBlocks)
 
 
-      splits = findSplits[T, N, C, B, H](data, nodeIdBlocks.flatMap(_.iterator), updater,
+      splits = findSplits[T, N, C, B, H](binVecBlocks, treeIdBlocks, gradBlocks, nodeIdBlocks, updater,
         boostConf, baseConf, splits, remainingLeaves, depth)
 
 
@@ -77,7 +80,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
       // update trees
       updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
-      logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished," +
+      logInfo(s"Iteration ${baseConf.iteration}, Depth $depth: growth finished," +
         s" duration ${(System.nanoTime - start) / 1e9} seconds")
 
       depth += 1
@@ -98,32 +101,33 @@ private[gbm] object Tree extends Serializable with Logging {
 
   /**
     *
-    * @param data      instances containing (binVec, treeIds, grad-hess), grad&hess is recurrent for compression. i.e
-    *                  treeIds = [t1,t2,t5,t6], grad-hess = [g1,h1,g2,h2] -> {t1:(g1,h1), t2:(g2,h2), t5:(g1,h1), t6:(g2,h2)}
-    * @param vdata     vertical instances containing (subBinVec (col-sliced binVec), treeIds, grad-hess),
-    *                  grad&hess is also recurrent for compression.
     * @param boostConf boosting configure
     * @param baseConf  trees-growth configure
     * @return tree models
     */
-  def trainVertical[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
-                                   vdata: RDD[(KVVector[C, B], Array[T], Array[H])],
-                                   boostConf: BoostConfig,
-                                   baseConf: BaseConfig)
-                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                   cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                   cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+  def trainVertical[T, N, C, B, H, G](binVecBlocks: RDD[KVMatrix[C, B]],
+                                      treeIdBlocks: RDD[ArrayBlock[T]],
+                                      subBinVecBlocks: RDD[KVVector[G, B]],
+                                      agTreeIdBlocks: RDD[ArrayBlock[T]],
+                                      agGradBlocks: RDD[ArrayBlock[H]],
+                                      boostConf: BoostConfig,
+                                      bcBoostConf: Broadcast[BoostConfig],
+                                      baseConf: BaseConfig)
+                                     (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                      cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                      cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H],
+                                      cg: ClassTag[G], ing: Integral[G], neg: NumericExt[G]): Array[TreeModel] = {
+    import RDDFunctions._
 
-    val sc = data.sparkContext
+    val sc = binVecBlocks.sparkContext
 
     logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
 
-    var nodeIdBlocks = sc.emptyRDD[ArrayBlock[N]]
+    var nodeIdBlocks: RDD[ArrayBlock[N]] = null
     val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel1)
-
 
     val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
     val remainingLeaves = Array.fill(baseConf.numTrees)(boostConf.getMaxLeaves - 1)
@@ -132,7 +136,7 @@ private[gbm] object Tree extends Serializable with Logging {
     var depth = 0
     var splits = Map.empty[(T, N), Split]
 
-    val numVParts = vdata.getNumPartitions
+    val numVParts = subBinVecBlocks.getNumPartitions
 
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
       val start = System.nanoTime
@@ -140,9 +144,9 @@ private[gbm] object Tree extends Serializable with Logging {
       logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
 
       if (depth == 0) {
-        nodeIdBlocks = initializeNodeIdBlocks[T, N, C, B, H](data, boostConf)
+        nodeIdBlocks = initializeNodeIdBlocks[T, N](treeIdBlocks)
       } else {
-        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B, H](data, nodeIdBlocks, boostConf, splits)
+        nodeIdBlocks = updateNodeIdBlocks[T, N, C, B](binVecBlocks, treeIdBlocks, nodeIdBlocks, splits)
       }
       nodeIdBlocks.setName(s"NodeIdBlocks (Iteration ${baseConf.iteration}, depth $depth)")
       nodeIdBlocksCheckpointer.update(nodeIdBlocks)
@@ -152,15 +156,32 @@ private[gbm] object Tree extends Serializable with Logging {
       val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
 
 
-      val vdateWithNodeIds = if (depth == 0) {
-        vdata.map { case (subBinVec, treeIds, gradHess) =>
-          ((subBinVec, treeIds, gradHess), Array.fill(treeIds.length)(inn.one))
-        }
+      val vdata = if (depth == 0) {
+
+        subBinVecBlocks.zip2(agTreeIdBlocks, agGradBlocks)
+          .mapPartitionsWithIndex { case (vPartId, iter) =>
+            val numCols = bcBoostConf.value.getNumCols
+            val localColIds = bcBoostConf.value.getVCols[C](vPartId)
+            val numLocalCols = localColIds.length
+
+            iter.flatMap { case (subBinVecBlock, treeIdBlock, gradBlock) =>
+              require(treeIdBlock.size == gradBlock.size)
+              require(treeIdBlock.size * numLocalCols == subBinVecBlock.size)
+
+              val subBinVecIter = subBinVecBlock.iterator
+                .map(_._2).grouped(numLocalCols)
+                .map { values => KVVector.sparse[C, B](numCols, localColIds, values.toArray) }
+
+              Utils.zip3(subBinVecIter, treeIdBlock.iterator, gradBlock.iterator)
+                .map { case (subBinVec, treeIds, grad) =>
+                  (subBinVec, treeIds, Array.fill(treeIds.length)(inn.one), grad)
+                }
+            }
+          }
 
       } else {
-        import RDDFunctions._
 
-        val selectedVPartIds = boostConf.getVerticalColumnIds[C]().iterator
+        val vPartIds = boostConf.getVCols[C]().iterator
           .zipWithIndex.filter { case (colIds, _) =>
           colIds.exists { colId =>
             Iterator.range(0, newBaseConfig.numTrees)
@@ -168,15 +189,29 @@ private[gbm] object Tree extends Serializable with Logging {
           }
         }.map(_._2).toArray
 
-        nodeIdBlocks.allgather(numVParts, selectedVPartIds)
-          .flatMap(_.iterator)
-          .safeZip(vdata)
-          .map { case (nodeIds, (subBinVec, treeIds, gradHess)) =>
-            ((subBinVec, treeIds, gradHess), nodeIds)
+        val agNodeIdBlocks = nodeIdBlocks.allgather(numVParts, vPartIds)
+
+        subBinVecBlocks.zip3(agTreeIdBlocks, agGradBlocks, agNodeIdBlocks, false)
+          .mapPartitionsWithIndex { case (vPartId, iter) =>
+            val numCols = bcBoostConf.value.getNumCols
+            val localColIds = bcBoostConf.value.getVCols[C](vPartId)
+            val numLocalCols = localColIds.length
+
+            iter.flatMap { case (subBinVecBlock, treeIdBlock, gradBlock, nodeIdBlock) =>
+              require(treeIdBlock.size == gradBlock.size)
+              require(treeIdBlock.size == nodeIdBlock.size)
+              require(treeIdBlock.size * numLocalCols == subBinVecBlock.size)
+
+              val subBinVecIter = subBinVecBlock.iterator
+                .map(_._2).grouped(numLocalCols)
+                .map { values => KVVector.sparse[C, B](numCols, localColIds, values.toArray) }
+
+              Utils.zip4(subBinVecIter, treeIdBlock.iterator, nodeIdBlock.iterator, gradBlock.iterator())
+            }
           }
       }
 
-      val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](vdateWithNodeIds,
+      val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](vdata,
         boostConf, newBaseConfig, (n: N) => true)
 
       splits = findSplits[T, N, C, B, H](hists, boostConf, baseConf, remainingLeaves, depth)
@@ -289,60 +324,61 @@ private[gbm] object Tree extends Serializable with Logging {
   }
 
 
-  def initializeNodeIdBlocks[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
-                                            boostConf: BoostConfig)
-                                           (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                            cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                            cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                            cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                            ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[N]] = {
-    val blockSize = boostConf.getBlockSize
-
-    data.mapPartitions {
-      _.map { case (_, treeIds, _) => treeIds.length }
-        .grouped(blockSize)
-        .map { lens =>
-          val it = lens.iterator.map(len => Array.fill(len)(inn.one))
-          ArrayBlock.build[N](it)
-        }
+  def initializeNodeIdBlocks[T, N](treeIdBlocks: RDD[ArrayBlock[T]])
+                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N]): RDD[ArrayBlock[N]] = {
+    treeIdBlocks.map { treeIdBlock =>
+      val iter = treeIdBlock.iterator.map { treeIds =>
+        Array.fill(treeIds.length)(inn.one)
+      }
+      ArrayBlock.build(iter)
     }
   }
 
 
-  def updateNodeIdBlocks[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
-                                        nodeIdBlocks: RDD[ArrayBlock[N]],
-                                        boostConf: BoostConfig,
-                                        splits: Map[(T, N), Split])
-                                       (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                        cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                        cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[ArrayBlock[N]] = {
-    val blockSize = boostConf.getBlockSize
+  def updateNodeIdBlocks[T, N, C, B](binVecBlocks: RDD[KVMatrix[C, B]],
+                                     treeIdBlocks: RDD[ArrayBlock[T]],
+                                     nodeIdBlocks: RDD[ArrayBlock[N]],
+                                     splits: Map[(T, N), Split])
+                                    (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                     cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                     cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                     cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): RDD[ArrayBlock[N]] = {
+    import RDDFunctions._
 
-    data.zip(nodeIdBlocks.flatMap(_.iterator)).mapPartitions {
-      _.map { case ((bins, treeIds, _), nodeIds) =>
-        treeIds.zip(nodeIds).map { case (treeId, nodeId) =>
-          val split = splits.get((treeId, nodeId))
-          if (split.nonEmpty) {
-            val leftNodeId = inn.plus(nodeId, nodeId)
-            if (split.get.goLeft[B](bins.apply)) {
-              leftNodeId
-            } else {
-              inn.plus(leftNodeId, inn.one)
+    binVecBlocks.zip2(treeIdBlocks, nodeIdBlocks)
+      .map { case (binVecBlock, treeIdBlock, nodeIdBlock) =>
+        require(binVecBlock.size == treeIdBlock.size)
+        require(binVecBlock.size == nodeIdBlock.size)
+
+        val iter = Utils.zip3(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator)
+          .map { case (binVec, treeIds, nodeIds) =>
+            require(treeIds.length == nodeIds.length)
+
+            treeIds.zip(nodeIds).map { case (treeId, nodeId) =>
+              val split = splits.get((treeId, nodeId))
+              if (split.nonEmpty) {
+                val leftNodeId = inn.plus(nodeId, nodeId)
+                if (split.get.goLeft[B](binVec.apply)) {
+                  leftNodeId
+                } else {
+                  inn.plus(leftNodeId, inn.one)
+                }
+              } else {
+                nodeId
+              }
             }
-          } else {
-            nodeId
           }
-        }
-      }.grouped(blockSize)
-        .map { seq => ArrayBlock.build[N](seq.iterator) }
-    }
+
+        ArrayBlock.build(iter)
+      }
   }
 
 
-  def findSplits[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[H])],
-                                nodeIds: RDD[Array[N]],
+  def findSplits[T, N, C, B, H](binVecBlocks: RDD[KVMatrix[C, B]],
+                                treeIdBlocks: RDD[ArrayBlock[T]],
+                                gradBlocks: RDD[ArrayBlock[H]],
+                                nodeIdBlocks: RDD[ArrayBlock[N]],
                                 updater: HistogramUpdater[T, N, C, B, H],
                                 boostConf: BoostConfig,
                                 baseConf: BaseConfig,
@@ -355,12 +391,24 @@ private[gbm] object Tree extends Serializable with Logging {
                                 cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                 ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Map[(T, N), Split] = {
 
+    import RDDFunctions._
+
+    val data = binVecBlocks.zip3(treeIdBlocks, nodeIdBlocks, gradBlocks)
+      .flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
+        require(binVecBlock.size == treeIdBlock.size)
+        require(binVecBlock.size == nodeIdBlock.size)
+        require(binVecBlock.size == gradBlock.size)
+
+        Utils.zip4(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator, gradBlock.iterator)
+      }
+
+
     updater match {
       case _: SubtractHistogramUpdater[_, _, _, _, _] =>
         // If we update histograms by subtraction, we should compute histogram on all
         // columns selected by `colSamplingByTree`, since the updated histograms will be
         // used in next level, and `colSamplingByLevel` in each level perform differently.
-        val histograms = updater.update(data.zip(nodeIds), boostConf, baseConf, splits, depth)
+        val histograms = updater.update(data, boostConf, baseConf, splits, depth)
           .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
 
         // perform column sampling by level
@@ -378,7 +426,7 @@ private[gbm] object Tree extends Serializable with Logging {
         // so we can merge `colSamplingByLevel` into the BaseConf.
         val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
 
-        val histograms = updater.update(data.zip(nodeIds), boostConf, newBaseConfig, splits, depth)
+        val histograms = updater.update(data, boostConf, newBaseConfig, splits, depth)
           .setName(s"Histograms (Iteration: ${baseConf.iteration}, depth: $depth)")
 
         findSplits[T, N, C, B, H](histograms, boostConf, baseConf, remainingLeaves, depth)

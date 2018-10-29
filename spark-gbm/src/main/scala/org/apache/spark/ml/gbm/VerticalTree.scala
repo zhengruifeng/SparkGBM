@@ -111,7 +111,7 @@ object VerticalTree extends Serializable with Logging {
       val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](data,
         boostConf, newBaseConfig, (n: N) => true)
 
-//      splits = Tree.findSplitsImpl[T, N, C, B, H](hists, boostConf, baseConf, remainingLeaves, depth)
+      //      splits = Tree.findSplitsImpl[T, N, C, B, H](hists, boostConf, baseConf, remainingLeaves, depth)
 
       // update trees
       Tree.updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
@@ -127,7 +127,7 @@ object VerticalTree extends Serializable with Logging {
       logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
     }
 
-    nodeIdBlocksCheckpointer.clear()
+    nodeIdBlocksCheckpointer.clear(true)
 
     roots.map(TreeModel.createModel)
   }
@@ -170,11 +170,6 @@ object VerticalTree extends Serializable with Logging {
 
     val sc = subBinVecBlocks.sparkContext
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
-
-
-
-
-
 
 
     val localUpdated =
@@ -281,32 +276,25 @@ object VerticalTree extends Serializable with Logging {
   }
 
 
-
-
   def updateNodeIdBlocks2[T, N, C, B, G](subBinVecBlocks: RDD[KVVector[G, B]],
-                                        agTreeIdBlocks: RDD[ArrayBlock[T]],
-                                        agNodeIdBlocks: RDD[ArrayBlock[N]],
-                                        nodeIdBlocks: RDD[(Long, ArrayBlock[N])],
-                                        boostConf: BoostConfig,
-                                        bcBoostConf: Broadcast[BoostConfig],
-                                        splits: Map[(T, N), Split])
-                                       (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                        cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                        cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                        cg: ClassTag[G], ing: Integral[G], neg: NumericExt[G]): RDD[(Long, ArrayBlock[N])] = {
+                                         agTreeIdBlocks: RDD[ArrayBlock[T]],
+                                         agNodeIdBlocks: RDD[ArrayBlock[N]],
+                                         nodeIdBlocks: RDD[(Long, ArrayBlock[N])],
+                                         boostConf: BoostConfig,
+                                         bcBoostConf: Broadcast[BoostConfig],
+                                         splits: Map[(T, N), Split])
+                                        (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                         cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                         cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                         cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                         cg: ClassTag[G], ing: Integral[G], neg: NumericExt[G]): RDD[(Long, ArrayBlock[N])] = {
     import RDDFunctions._
 
     val sc = subBinVecBlocks.sparkContext
     val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
 
-//    subBinVecBlocks.safeZip2(agTreeIdBlocks, agNodeIdBlocks)
-
-
-
-
-
+    //    subBinVecBlocks.safeZip2(agTreeIdBlocks, agNodeIdBlocks)
 
 
     val localUpdated =

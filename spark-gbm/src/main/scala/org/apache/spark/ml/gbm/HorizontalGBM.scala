@@ -190,9 +190,9 @@ object HorizontalGBM extends Logging {
       logInfo(s"maxIter=${boostConf.getMaxIter} reached, GBM training finished")
     }
 
-    trainRawBlocksCheckpointer.clear()
+    trainRawBlocksCheckpointer.clear(true)
     if (testRawBlocksCheckpointer != null) {
-      testRawBlocksCheckpointer.clear()
+      testRawBlocksCheckpointer.clear(true)
     }
 
     new GBMModel(boostConf.getObjFunc, discretizer, boostConf.getRawBaseScore,

@@ -233,9 +233,9 @@ object VerticalGBM extends Logging {
     }
 
     subBinVecBlocks.unpersist(false)
-    trainRawBlocksCheckpointer.clear()
+    trainRawBlocksCheckpointer.clear(true)
     if (testRawBlocksCheckpointer != null) {
-      testRawBlocksCheckpointer.clear()
+      testRawBlocksCheckpointer.clear(true)
     }
 
     new GBMModel(boostConf.getObjFunc, discretizer, boostConf.getRawBaseScore,

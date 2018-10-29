@@ -159,7 +159,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
   override def destroy(): Unit = {
     if (checkpointer != null) {
-      checkpointer.clear()
+      checkpointer.clear(true)
       checkpointer = null
     }
     prevHistograms = null

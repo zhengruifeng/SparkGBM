@@ -92,7 +92,7 @@ private[gbm] object Tree extends Serializable with Logging {
       logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
     }
 
-    nodeIdBlocksCheckpointer.clear()
+    nodeIdBlocksCheckpointer.clear(true)
     updater.destroy()
 
     roots.map(TreeModel.createModel)
@@ -230,7 +230,7 @@ private[gbm] object Tree extends Serializable with Logging {
       logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
     }
 
-    nodeIdBlocksCheckpointer.clear()
+    nodeIdBlocksCheckpointer.clear(true)
 
     roots.map(TreeModel.createModel)
   }

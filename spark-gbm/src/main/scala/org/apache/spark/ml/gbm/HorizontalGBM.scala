@@ -499,6 +499,9 @@ object HorizontalGBM extends Logging {
           .map(ArrayBlock.build[T])
       }.setName(s"TreeIdBlocks (iteration $iteration) (GOSS)")
 
+    treeIdBlocks.persist(boostConf.getStorageLevel1)
+    recoder.append(treeIdBlocks)
+
 
     val gradBlocks = gradNormBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
@@ -539,9 +542,6 @@ object HorizontalGBM extends Logging {
     recoder.append(gradBlocks)
 
 
-    treeIdBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(treeIdBlocks)
-
     (sampledBinVecBlocks, treeIdBlocks, gradBlocks)
   }
 
@@ -581,24 +581,11 @@ object HorizontalGBM extends Logging {
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(treeIdBlocks)
 
+
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .map { case (weightBlock, labelBlock, rawBlock) =>
         computeGradBlock(weightBlock, labelBlock, rawBlock)
       }.setName(s"GradBlocks (iteration $iteration)")
-
-
-    boostConf.getStorageStrategy match {
-      case GBM.Upstream =>
-        gradBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(gradBlocks)
-
-      case GBM.Eager =>
-        treeIdBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(treeIdBlocks)
-
-        gradBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(gradBlocks)
-    }
 
     gradBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(gradBlocks)
@@ -642,6 +629,11 @@ object HorizontalGBM extends Logging {
         }
       }.setName(s"BinVecBlocks (iteration $iteration) (Partition-Sampled)")
 
+    if (boostConf.getStorageStrategy == GBM.Eager) {
+      sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
+      recoder.append(sampledBinVecBlocks)
+    }
+
 
     val treeIdBlocks = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
@@ -669,6 +661,9 @@ object HorizontalGBM extends Logging {
         }
       }.setName(s"TreeIdBlocks (iteration $iteration) (Partition-Sampled)")
 
+    treeIdBlocks.persist(boostConf.getStorageLevel1)
+    recoder.append(treeIdBlocks)
+
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
@@ -688,22 +683,9 @@ object HorizontalGBM extends Logging {
         }
       }.setName(s"GradBlocks (iteration $iteration) (Partition-Sampled)")
 
+    gradBlocks.persist(boostConf.getStorageLevel1)
+    recoder.append(gradBlocks)
 
-    boostConf.getStorageStrategy match {
-      case GBM.Upstream =>
-        gradBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(gradBlocks)
-
-      case GBM.Eager =>
-        sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(sampledBinVecBlocks)
-
-        treeIdBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(treeIdBlocks)
-
-        gradBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(gradBlocks)
-    }
 
     (sampledBinVecBlocks, treeIdBlocks, gradBlocks)
   }
@@ -741,6 +723,11 @@ object HorizontalGBM extends Logging {
         }
       }.setName(s"BinVecBlocks (iteration $iteration) (Block-Sampled)")
 
+    if (boostConf.getStorageStrategy == GBM.Eager) {
+      sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
+      recoder.append(sampledBinVecBlocks)
+    }
+
 
     val treeIdBlocks = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
@@ -763,6 +750,9 @@ object HorizontalGBM extends Logging {
         }
       }.setName(s"TreeIdBlocks (iteration $iteration) (Block-Sampled)")
 
+    treeIdBlocks.persist(boostConf.getStorageLevel1)
+    recoder.append(treeIdBlocks)
+
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
@@ -784,22 +774,9 @@ object HorizontalGBM extends Logging {
         }
       }.setName(s"GradBlocks (iteration $iteration) (Block-Sampled)")
 
+    gradBlocks.persist(boostConf.getStorageLevel1)
+    recoder.append(gradBlocks)
 
-    boostConf.getStorageStrategy match {
-      case GBM.Upstream =>
-        gradBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(gradBlocks)
-
-      case GBM.Eager =>
-        sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(sampledBinVecBlocks)
-
-        treeIdBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(treeIdBlocks)
-
-        gradBlocks.persist(boostConf.getStorageLevel1)
-        recoder.append(gradBlocks)
-    }
 
     (sampledBinVecBlocks, treeIdBlocks, gradBlocks)
   }
@@ -843,6 +820,9 @@ object HorizontalGBM extends Logging {
           .map(KVMatrix.build[C, B])
       }.setName(s"BinVecBlocks (iteration $iteration) (Instance-Sampled)")
 
+    sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
+    recoder.append(sampledBinVecBlocks)
+
 
     val treeIdBlocks = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
@@ -869,6 +849,9 @@ object HorizontalGBM extends Logging {
         }.grouped(blockSize)
           .map(ArrayBlock.build[T])
       }.setName(s"TreeIdBlocks (iteration $iteration) (Instance-Sampled)")
+
+    treeIdBlocks.persist(boostConf.getStorageLevel1)
+    recoder.append(treeIdBlocks)
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
@@ -899,15 +882,9 @@ object HorizontalGBM extends Logging {
           .map(ArrayBlock.build[H])
       }.setName(s"GradBlocks (iteration $iteration) (Instance-Sampled)")
 
-
     gradBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(gradBlocks)
 
-    sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(sampledBinVecBlocks)
-
-    treeIdBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(treeIdBlocks)
 
     (sampledBinVecBlocks, treeIdBlocks, gradBlocks)
   }

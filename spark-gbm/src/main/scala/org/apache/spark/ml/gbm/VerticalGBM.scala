@@ -566,8 +566,10 @@ object VerticalGBM extends Logging {
         }
       }.setName(s"BinVecBlocks (iteration $iteration) (Block-Sampled)")
 
-    sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(sampledBinVecBlocks)
+    if (boostConf.getStorageStrategy == GBM.Eager) {
+      sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
+      recoder.append(sampledBinVecBlocks)
+    }
 
 
     val treeIdBlocks = weightBlocks
@@ -651,8 +653,11 @@ object VerticalGBM extends Logging {
       }
     }.setName(s"SubBinVecBlocks (iteration $iteration) (Block-Sampled)")
 
-    sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(sampledSubBinVecBlocks)
+    if (boostConf.getStorageStrategy == GBM.Eager) {
+      sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
+      recoder.append(sampledSubBinVecBlocks)
+    }
+
 
     (sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, agTreeIdBlocks, agGradBlocks)
   }

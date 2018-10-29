@@ -169,7 +169,8 @@ object HorizontalGBM extends Logging {
         if (boostConf.getCallbackFunc.nonEmpty) {
           // using cloning to avoid model modification
           val snapshot = new GBMModel(boostConf.getObjFunc, discretizer.copy(),
-            boostConf.getRawBaseScore.clone(), treesBuff.toArray.clone(), neh.toDouble(weightsBuff.toArray).clone())
+            boostConf.getRawBaseScore.clone(), treesBuff.toArray.clone(),
+            neh.toDouble(weightsBuff.toArray).clone())
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
@@ -330,9 +331,7 @@ object HorizontalGBM extends Logging {
       val iter = Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
         .map { case (weight, label, rawSeq) => computeGrad(weight, label, rawSeq) }
 
-      val gradBlock = ArrayBlock.build[H](iter)
-      require(gradBlock.size == rawBlock.size)
-      gradBlock
+      ArrayBlock.build[H](iter)
     }
 
 
@@ -809,14 +808,12 @@ object HorizontalGBM extends Logging {
 
         val sampleRNG = new XORShiftRandom(seedOffset + partId)
 
-        iter.flatMap { binVecBlock =>
-          binVecBlock.iterator
-            .filter { _ =>
-              val baseIds = Array.range(0, numBaseModels)
-                .filter(_ => sampleRNG.nextDouble < subSample)
-              baseIds.nonEmpty
-            }
-        }.grouped(blockSize)
+        iter.flatMap(_.iterator)
+          .filter { _ =>
+            val baseIds = Array.range(0, numBaseModels)
+              .filter(_ => sampleRNG.nextDouble < subSample)
+            baseIds.nonEmpty
+          }.grouped(blockSize)
           .map(KVMatrix.build[C, B])
       }.setName(s"BinVecBlocks (iteration $iteration) (Instance-Sampled)")
 
@@ -835,17 +832,18 @@ object HorizontalGBM extends Logging {
 
         iter.flatMap { weightBlock =>
           Iterator.range(0, weightBlock.size)
-            .flatMap { _ =>
-              val baseIds = Array.range(0, numBaseModels)
-                .filter(_ => sampleRNG.nextDouble < subSample)
 
-              if (baseIds.nonEmpty) {
-                val treeIds = computeTreeIds(net.fromInt(baseIds))
-                Iterator.single(treeIds)
-              } else {
-                Iterator.empty
-              }
-            }
+        }.flatMap { _ =>
+          val baseIds = Array.range(0, numBaseModels)
+            .filter(_ => sampleRNG.nextDouble < subSample)
+
+          if (baseIds.nonEmpty) {
+            val treeIds = computeTreeIds(net.fromInt(baseIds))
+            Iterator.single(treeIds)
+          } else {
+            Iterator.empty
+          }
+
         }.grouped(blockSize)
           .map(ArrayBlock.build[T])
       }.setName(s"TreeIdBlocks (iteration $iteration) (Instance-Sampled)")
@@ -862,22 +860,24 @@ object HorizontalGBM extends Logging {
 
         val sampleRNG = new XORShiftRandom(seedOffset + partId)
 
+
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           require(weightBlock.size == rawBlock.size)
           require(labelBlock.size == rawBlock.size)
 
           Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
-            .flatMap { case (weight, label, rawSeq) =>
-              val baseIds = Array.range(0, numBaseModels)
-                .filter(_ => sampleRNG.nextDouble < subSample)
 
-              if (baseIds.nonEmpty) {
-                val grad = computeGrad(weight, label, rawSeq)
-                Iterator.single(grad)
-              } else {
-                Iterator.empty
-              }
-            }
+        }.flatMap { case (weight, label, rawSeq) =>
+          val baseIds = Array.range(0, numBaseModels)
+            .filter(_ => sampleRNG.nextDouble < subSample)
+
+          if (baseIds.nonEmpty) {
+            val grad = computeGrad(weight, label, rawSeq)
+            Iterator.single(grad)
+          } else {
+            Iterator.empty
+          }
+
         }.grouped(blockSize)
           .map(ArrayBlock.build[H])
       }.setName(s"GradBlocks (iteration $iteration) (Instance-Sampled)")

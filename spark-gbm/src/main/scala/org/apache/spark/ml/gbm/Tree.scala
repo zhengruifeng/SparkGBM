@@ -328,9 +328,8 @@ private[gbm] object Tree extends Serializable with Logging {
                                   (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                    cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N]): RDD[ArrayBlock[N]] = {
     treeIdBlocks.map { treeIdBlock =>
-      val iter = treeIdBlock.iterator.map { treeIds =>
-        Array.fill(treeIds.length)(inn.one)
-      }
+      val iter = treeIdBlock.iterator
+        .map { treeIds => Array.fill(treeIds.length)(inn.one) }
       ArrayBlock.build(iter)
     }
   }
@@ -355,19 +354,25 @@ private[gbm] object Tree extends Serializable with Logging {
           .map { case (binVec, treeIds, nodeIds) =>
             require(treeIds.length == nodeIds.length)
 
-            treeIds.zip(nodeIds).map { case (treeId, nodeId) =>
-              val split = splits.get((treeId, nodeId))
-              if (split.nonEmpty) {
-                val leftNodeId = inn.plus(nodeId, nodeId)
-                if (split.get.goLeft[B](binVec.apply)) {
-                  leftNodeId
-                } else {
-                  inn.plus(leftNodeId, inn.one)
+            var i = 0
+            while (i < treeIds.length) {
+              val treeId = treeIds(i)
+              val nodeId = nodeIds(i)
+
+              splits.get((treeId, nodeId))
+                .foreach { split =>
+                  val leftNodeId = inn.plus(nodeId, nodeId)
+                  if (split.goLeft[B](binVec.apply)) {
+                    nodeIds(i) = leftNodeId
+                  } else {
+                    nodeIds(i) = inn.plus(leftNodeId, inn.one)
+                  }
                 }
-              } else {
-                nodeId
-              }
+
+              i += 1
             }
+
+            nodeIds
           }
 
         ArrayBlock.build(iter)

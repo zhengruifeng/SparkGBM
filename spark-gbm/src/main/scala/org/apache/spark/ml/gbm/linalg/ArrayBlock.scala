@@ -66,7 +66,7 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
     } else {
       // IMPORTANT!
       // Iterator.fill(-flag)(values) will not work here!
-      // adopt `clone` to avoid in-place modification in previous iterations
+      // adopt `clone` to avoid in-place modification.
       Iterator.range(0, -flag).map(_ => values.clone())
     }
   }

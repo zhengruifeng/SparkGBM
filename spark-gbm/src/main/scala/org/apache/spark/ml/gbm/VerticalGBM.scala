@@ -205,7 +205,8 @@ object VerticalGBM extends Logging {
         if (boostConf.getCallbackFunc.nonEmpty) {
           // using cloning to avoid model modification
           val snapshot = new GBMModel(boostConf.getObjFunc, discretizer.copy(),
-            boostConf.getRawBaseScore.clone(), treesBuff.toArray.clone(), neh.toDouble(weightsBuff.toArray).clone())
+            boostConf.getRawBaseScore.clone(), treesBuff.toArray.clone(),
+            neh.toDouble(weightsBuff.toArray).clone())
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
@@ -414,9 +415,7 @@ object VerticalGBM extends Logging {
       val iter = Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
         .map { case (weight, label, rawSeq) => computeGrad(weight, label, rawSeq) }
 
-      val gradBlock = ArrayBlock.build[H](iter)
-      require(gradBlock.size == rawBlock.size)
-      gradBlock
+      ArrayBlock.build[H](iter)
     }
 
 
@@ -425,8 +424,7 @@ object VerticalGBM extends Logging {
     // To alleviate memory footprint in caching layer, different schemas of intermediate dataset are designed.
     // Each `prepareTreeInput**` method will internally cache necessary datasets in a compact fashion.
     // These cached datasets are holden in `recoder`, and will be freed after training.
-    val (sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, agTreeIdBlocks, agGradBlocks) =
-    (boostConf.getSubSampleType, boostConf.getSubSampleRate == 1) match {
+    val (sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, agTreeIdBlocks, agGradBlocks) = (boostConf.getSubSampleType, boostConf.getSubSampleRate == 1) match {
       case (_, true) =>
         adaptTreeInputsForNonSampling[T, N, C, B, H, G](weightBlocks, labelBlocks, binVecBlocks, subBinVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, recoder)
 

@@ -541,46 +541,6 @@ private[gbm] object Utils extends Logging {
 
 
   /**
-    * Partially aggregate elements
-    */
-  def partialAggregate[V, C, U](iterator: Iterator[V],
-                                createCombiner: () => C,
-                                mergeValue: (C, V) => C,
-                                pause: (C, Long, Long) => Boolean,
-                                iterate: C => Iterator[U]): Iterator[U] = {
-    var index = -1L
-    var partialIndex = -1L
-
-    var combiner = createCombiner()
-
-    iterator.flatMap { value =>
-      index += 1
-      partialIndex += 1
-
-      combiner = mergeValue(combiner, value)
-
-      if (pause(combiner, partialIndex, index)) {
-        iterate(combiner) ++ {
-          partialIndex = -1
-          combiner = createCombiner()
-          Iterator.empty
-        }
-
-      } else {
-        Iterator.empty
-      }
-
-    } ++ {
-      if (partialIndex >= 0) {
-        iterate(combiner)
-      } else {
-        Iterator.empty
-      }
-    }
-  }
-
-
-  /**
     * Traverse all the elements of a vector
     */
   def getTotalIter(vec: Vector): Iterator[(Int, Double)] = {

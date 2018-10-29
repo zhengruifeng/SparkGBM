@@ -109,32 +109,6 @@ class UtilsSuite extends FunSuite {
   }
 
 
-  test("partialAggregate") {
-    val buff = mutable.ArrayBuffer.empty[Int]
-
-    assert(partialAggregate[Int, mutable.ArrayBuffer[Int], Array[Int]](Seq.empty[Int].iterator,
-      () => {
-        buff.clear()
-        buff
-      },
-      _ += _,
-      (buff: mutable.ArrayBuffer[Int], index: Long, partIndex: Long) => buff.size >= 3,
-      (buff: mutable.ArrayBuffer[Int]) => Iterator(buff.toArray)).isEmpty)
-
-    buff.clear()
-
-    assert(partialAggregate[Int, mutable.ArrayBuffer[Int], Array[Int]](Iterator.range(0, 9),
-      () => {
-        buff.clear()
-        buff
-      },
-      _ += _,
-      (buff: mutable.ArrayBuffer[Int], index: Long, partIndex: Long) => buff.size >= 3,
-      (buff: mutable.ArrayBuffer[Int]) => Iterator(buff.toArray)).toArray
-      === Array.range(0, 9).grouped(3).toArray)
-  }
-
-
   test("getTotalIter") {
     assert(getTotalIter(Vectors.dense(Array(1.0, 2.0))).toArray === Array((0, 1.0), (1, 2.0)))
 

@@ -70,10 +70,13 @@ object VerticalGBM extends Logging {
 
     // train blocks
     val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
+    GBM.touchWeightBlocksAndUpdateSizeInfo[H](trainWeightBlocks, boostConf, true)
     GBM.touchWeightBlocksAndUpdateSizeInfo[H](trainWeightBlocks, boostConf)
 
     // test blocks
-    testBlocks.foreach { case (testWeightBlocks, _, _) => GBM.touchWeightBlocks(testWeightBlocks, boostConf) }
+    testBlocks.foreach { case (testWeightBlocks, _, _) =>
+      GBM.touchWeightBlocksAndUpdateSizeInfo(testWeightBlocks, boostConf, false)
+    }
 
 
     // vertical train sub-binvec blocks
@@ -419,7 +422,8 @@ object VerticalGBM extends Logging {
     }
 
 
-    val baseConfig = BaseConfig.create(boostConf, iteration, boostConf.getBaseModelParallelism, boostConf.getSeed + iteration)
+    val baseConfig = BaseConfig.create(boostConf, iteration, boostConf.getSeed + iteration)
+    logInfo(s"Iter $iteration: ColSelector ${baseConfig.colSelector}")
 
     // To alleviate memory footprint in caching layer, different schemas of intermediate dataset are designed.
     // Each `prepareTreeInput**` method will internally cache necessary datasets in a compact fashion.
@@ -536,7 +540,7 @@ object VerticalGBM extends Logging {
 
     val blockSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + iteration)
-    logInfo(s"Iteration $iteration, blockSelector $blockSelector")
+    logInfo(s"Iter $iteration: BlockSelector $blockSelector")
 
 
     val sampledBinVecBlocks = binVecBlocks
@@ -673,9 +677,9 @@ object VerticalGBM extends Logging {
                                                            cg: ClassTag[G], ing: Integral[G], neg: NumericExt[G]) = {
     import RDDFunctions._
 
-    val instanceSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumInstances,
+    val instanceSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumRows,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + iteration)
-    logInfo(s"Iteration $iteration, instanceSelector $instanceSelector")
+    logInfo(s"Iter $iteration: InstanceSelector $instanceSelector")
 
 
     val sampledBinVecBlocks = binVecBlocks

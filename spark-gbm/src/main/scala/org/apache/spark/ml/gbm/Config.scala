@@ -250,7 +250,9 @@ class BoostConfig extends Logging with Serializable {
   def getOtherRate: Double = otherRate
 
 
-  private[gbm] def computeOtherReweight: Double = (1 - getTopRate) / getOtherRate
+  private[gbm] def getOtherReweight: Double = (1 - getTopRate) / getOtherRate
+
+  private[gbm] def getOtherSampleRate: Double = getOtherRate / (1 - getTopRate)
 
 
   /** subsample ratio of columns when constructing each tree */
@@ -608,7 +610,8 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateCallbackFunc(value: Array[CallbackFunc]): this.type = {
-    logInfo(s"callbackFunc was changed from ${callbackFunc.map(_.name).mkString("(", ",", ")")} to ${value.map(_.name).mkString("(", ",", ")")}")
+    logInfo(s"callbackFunc was changed from ${callbackFunc.map(_.name).mkString("(", ",", ")")} " +
+      s"to ${value.map(_.name).mkString("(", ",", ")")}")
     setCallbackFunc(value)
   }
 
@@ -747,7 +750,28 @@ class BoostConfig extends Logging with Serializable {
 
   private[gbm] def getNumBlocksPerPart: Array[Long] = numBlocksPerPart
 
-  private[gbm] def getNumBlocks: Long = numBlocksPerPart.sum
+
+  private[gbm] var numBlocks: Long = -1
+
+  private[gbm] def setNumBlocks(value: Long): this.type = {
+    require(value > 0)
+    numBlocks = value
+    this
+  }
+
+  private[gbm] def getNumBlocks: Long = numBlocks
+
+
+  private[gbm] var numRows: Long = -1
+
+  private[gbm] def setNumRows(value: Long): this.type = {
+    require(value > 0)
+    numRows = value
+    this
+  }
+
+  private[gbm] def getNumRows: Long = numRows
+
 
   private[gbm] def getBlockIdOffsetPerPart: Array[Long] = {
     if (numBlocksPerPart.nonEmpty) {
@@ -756,7 +780,6 @@ class BoostConfig extends Logging with Serializable {
       Array.emptyLongArray
     }
   }
-
 
   private var numInstancesPerPart: Array[Long] = Array.emptyLongArray
 
@@ -768,7 +791,6 @@ class BoostConfig extends Logging with Serializable {
 
   private[gbm] def getNumInstancesPerPart: Array[Long] = numInstancesPerPart
 
-  private[gbm] def getNumInstances: Long = numInstancesPerPart.sum
 
   private[gbm] def getInstanceOffsetPerPart: Array[Long] = {
     if (numInstancesPerPart.nonEmpty) {
@@ -818,13 +840,12 @@ private[gbm] object BaseConfig extends Serializable {
 
   def create(boostConf: BoostConfig,
              iteration: Int,
-             numBaseModels: Int,
              seed: Long): BaseConfig = {
 
-    val colSelector = Selector.create(boostConf.getColSampleRateByTree,
-      boostConf.getNumCols, numBaseModels, boostConf.getRawSize, seed)
+    val colSelector = Selector.create(boostConf.getColSampleRateByTree, boostConf.getNumCols,
+      boostConf.getBaseModelParallelism, boostConf.getRawSize, seed)
 
-    val numTrees = numBaseModels * boostConf.getRawSize
+    val numTrees = boostConf.getBaseModelParallelism * boostConf.getRawSize
 
     new BaseConfig(iteration, numTrees, colSelector)
   }

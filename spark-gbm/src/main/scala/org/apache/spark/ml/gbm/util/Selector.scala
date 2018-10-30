@@ -2,6 +2,7 @@ package org.apache.spark.ml.gbm.util
 
 import java.{util => ju}
 
+import scala.reflect.ClassTag
 import scala.util.Random
 
 import org.apache.spark.unsafe.hash.Murmur3_x86_32
@@ -17,8 +18,31 @@ private[gbm] trait Selector extends Serializable {
 
   def size: Int
 
-  def contains[T, C](setId: T, value: C)
-                    (implicit int: Integral[T], inc: Integral[C]): Boolean
+  def contains[K, V](setId: K, value: V)
+                    (implicit ink: Integral[K], inv: Integral[V]): Boolean
+
+  def exists[K, V](setIds: Array[K], value: V)
+                  (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    setIds.exists { setId => contains[K, V](setId, value) }
+  }
+
+  def exists[V](value: V)
+               (implicit inv: Integral[V]): Boolean = {
+    exists[Int, V](Array.range(0, size), value)
+  }
+
+  def index[K, V](setIds: Array[K], value: V)
+                 (implicit ck: ClassTag[K], ink: Integral[K],
+                  inv: Integral[V]): Array[K] = {
+    setIds.filter { setId => contains[K, V](setId, value) }
+  }
+
+  def index[K, V](value: V)
+                 (implicit ck: ClassTag[K], ink: Integral[K],
+                  inv: Integral[V]): Array[K] = {
+    index[Int, V](Array.range(0, size), value)
+      .map(ink.fromInt)
+  }
 }
 
 
@@ -30,39 +54,46 @@ private[gbm] object Selector extends Serializable {
     */
   def create(rate: Double,
              cardinality: Long,
-             distinct: Int,
-             replica: Int,
+             numDistinctSets: Int,
+             numReplicated: Int,
              seed: Long): Selector = {
+    require(rate >= 0 && rate <= 1)
+    require(cardinality > 0)
+    require(numDistinctSets > 0)
+    require(numReplicated > 0)
 
     if (rate == 1) {
-      TrueSelector(distinct * replica)
+      TrueSelector(numDistinctSets * numReplicated)
 
-    } else if (cardinality * rate > 32) {
-      val rng = new Random(seed)
-      val maximum = (Int.MaxValue * rate).ceil.toInt
-
-      val seeds = Array.range(0, distinct).flatMap { i =>
-        val s = rng.nextInt
-        Iterator.fill(replica)(s)
-      }
-
-      HashSelector(maximum, seeds)
-
-    } else {
+    } else if (cardinality * rate * numDistinctSets * numReplicated <= 4096) {
       // When size of selected elements is small, it is hard for hashing to perform robust sampling,
       // we then switch to `SetSelector` for exactly sampling.
       val rng = new Random(seed)
       val numSelected = (cardinality * rate).ceil.toInt
 
-      val sets = Array.range(0, distinct).flatMap { i =>
-        val selected = rng.shuffle(Seq.range(0, cardinality))
-          .take(numSelected).toArray.sorted
-        Iterator.fill(replica)(selected)
-      }
+      val sets = Array.range(0, numDistinctSets)
+        .flatMap { _ =>
+          val selected = rng.shuffle(Seq.range(0, cardinality))
+            .take(numSelected).toArray.sorted
+          Iterator.fill(numReplicated)(selected)
+        }
 
       SetSelector(sets)
+
+    } else {
+      val rng = new Random(seed)
+      val maximum = (Int.MaxValue * rate).ceil.toInt
+
+      val seeds = Array.range(0, numDistinctSets)
+        .flatMap { _ =>
+          val s = rng.nextInt
+          Iterator.fill(numReplicated)(s)
+        }
+
+      HashSelector(maximum, seeds)
     }
   }
+
 
   /**
     * Merge several selectors into one, will skip redundant `TrueSelector`.
@@ -87,9 +118,9 @@ private[gbm] object Selector extends Serializable {
 
 private[gbm] case class TrueSelector(size: Int) extends Selector {
 
-  override def contains[T, C](setId: T, value: C)
-                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    val t = int.toInt(setId)
+  override def contains[K, V](setId: K, value: V)
+                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    val t = ink.toInt(setId)
     require(t >= 0 && t < size)
     true
   }
@@ -106,9 +137,65 @@ private[gbm] case class HashSelector(maximum: Int,
 
   override def size: Int = seeds.length
 
-  override def contains[T, C](setId: T, value: C)
-                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    Murmur3_x86_32.hashLong(inc.toLong(value), seeds(int.toInt(setId))).abs < maximum
+  override def contains[K, V](setId: K, value: V)
+                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    Murmur3_x86_32.hashLong(inv.toLong(value), seeds(ink.toInt(setId))).abs < maximum
+  }
+
+  override def exists[K, V](setIds: Array[K], value: V)
+                           (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    if (setIds.nonEmpty) {
+      val value_ = inv.toLong(value)
+
+      var seed = seeds(ink.toInt(setIds.head))
+      var ret = Murmur3_x86_32.hashLong(value_, seed).abs < maximum
+
+      var i = 1
+      while (i < setIds.length && !ret) {
+        val seed_ = seeds(ink.toInt(setIds(i)))
+        if (seed_ != seed) {
+          seed = seed_
+          ret = Murmur3_x86_32.hashLong(value_, seed).abs < maximum
+        }
+        i += 1
+      }
+
+      ret
+
+    } else {
+      false
+    }
+  }
+
+  override def index[K, V](setIds: Array[K], value: V)
+                          (implicit ck: ClassTag[K], ink: Integral[K],
+                           inv: Integral[V]): Array[K] = {
+
+    if (setIds.nonEmpty) {
+      val value_ = inv.toLong(value)
+
+      var seed = seeds(ink.toInt(setIds.head))
+      var ret = Murmur3_x86_32.hashLong(value_, seed).abs < maximum
+
+      val rets = Array.ofDim[Boolean](setIds.length)
+      rets(0) = ret
+
+      var i = 1
+      while (i < setIds.length) {
+        val seed_ = seeds(ink.toInt(setIds(i)))
+        if (seed_ != seed) {
+          seed = seed_
+          ret = Murmur3_x86_32.hashLong(value_, seed).abs < maximum
+        }
+        rets(i) = ret
+        i += 1
+      }
+
+      setIds.zip(rets).filter(_._2).map(_._1)
+
+    } else {
+      Array.empty
+    }
   }
 
   override def toString: String = {
@@ -123,13 +210,13 @@ private[gbm] case class SetSelector(sets: Array[Array[Long]]) extends Selector {
 
   override def size: Int = sets.length
 
-  override def contains[T, C](setId: T, value: C)
-                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    ju.Arrays.binarySearch(sets(int.toInt(setId)), inc.toLong(value)) >= 0
+  override def contains[K, V](setId: K, value: V)
+                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    ju.Arrays.binarySearch(sets(ink.toInt(setId)), inv.toLong(value)) >= 0
   }
 
   override def toString: String = {
-    s"SetSelector(sets: ${sets.mkString("{", ",", "}")})"
+    s"SetSelector(sets: ${sets.map(_.mkString("(", ",", ")")).mkString("[", ",", "]")})"
   }
 }
 
@@ -139,9 +226,9 @@ private[gbm] case class UnionSelector(selectors: Seq[Selector]) extends Selector
 
   override def size: Int = selectors.head.size
 
-  override def contains[T, C](setId: T, value: C)
-                             (implicit int: Integral[T], inc: Integral[C]): Boolean = {
-    selectors.forall(_.contains[T, C](setId, value))
+  override def contains[K, V](setId: K, value: V)
+                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    selectors.forall(_.contains[K, V](setId, value))
   }
 
   override def toString: String = {

@@ -454,6 +454,7 @@ class GBM extends Logging with Serializable {
     val row = data.first()
     val numCols = row._3.size
     require(numCols > 0)
+    logInfo(s"numCols: $numCols")
 
     var discretizer: Discretizer = null
 
@@ -717,23 +718,34 @@ private[gbm] object GBM extends Logging {
 
     require(array.length == weightBlocks.getNumPartitions)
 
+    boostConf.setNumBlocks(array.map(_._2).sum)
+    boostConf.setNumRows(array.map(_._3).sum)
+
     boostConf.setNumBlocksPerPart(array.map(_._2))
     boostConf.setNumInstancesPerPart(array.map(_._3))
-    logInfo(s"${weightBlocks.name}: ${boostConf.getNumInstances} instances, ${boostConf.getNumBlocks} blocks, " +
+    logInfo(s"${weightBlocks.name}: ${boostConf.getNumRows} instances, ${boostConf.getNumBlocks} blocks, " +
       s"numInstancesPerPartition ${boostConf.getNumInstancesPerPart.mkString("[", ",", "]")}, " +
       s"numBlocksPerPartition ${boostConf.getNumBlocksPerPart.mkString("[", ",", "]")}")
   }
 
 
-  def touchWeightBlocks[H](weightBlocks: RDD[CompactArray[H]],
-                           boostConf: BoostConfig): Unit = {
-    val (numInstances, numBlocks) =
+  def touchWeightBlocksAndUpdateSizeInfo[H](weightBlocks: RDD[CompactArray[H]],
+                                            boostConf: BoostConfig,
+                                            update: Boolean): Unit = {
+    val (numRows, numBlocks) =
       weightBlocks.map { weightBlock =>
         (weightBlock.size.toLong, 1L)
       }.treeReduce(f = {
         case (t1, t2) => (t1._1 + t2._1, t1._2 + t2._2)
       }, depth = boostConf.getAggregationDepth)
-    logInfo(s"${weightBlocks.name}: $numInstances instances, $numBlocks blocks")
+
+    if (update) {
+      boostConf.setNumBlocks(numBlocks)
+      boostConf.setNumRows(numRows)
+    }
+
+    logInfo(s"${weightBlocks.name}: $numRows rows, $numBlocks blocks, " +
+      s"${weightBlocks.getNumPartitions} partitions")
   }
 
 

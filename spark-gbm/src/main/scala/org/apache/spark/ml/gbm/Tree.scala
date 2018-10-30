@@ -474,7 +474,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
     val (splits, Array(numTrials, numSplits, numDenses, sumSize, nnz)) =
       repartitioned.mapPartitionsWithIndex { case (partId, iter) =>
-        val boostConfig_ = bcBoostConf.value
+        val boostConfig = bcBoostConf.value
 
         val splits = mutable.OpenHashMap.empty[(T, N), Split]
 
@@ -492,7 +492,7 @@ private[gbm] object Tree extends Serializable with Logging {
             numDenses += 1
           }
 
-          Split.split[H](inc.toInt(colId), hist.toArray, boostConfig_, baseConf)
+          Split.split[H](inc.toInt(colId), hist.toArray, boostConfig, baseConf)
             .foreach { split =>
               numSplits += 1
               val prevSplit = splits.get((treeId, nodeId))

@@ -44,7 +44,7 @@ class KVMatrixSuite extends FunSuite {
 
 
   test("all vectors are empty") {
-    val iter = Iterator.range(0, 10).map(i => KVVector.empty[Int, Long])
+    val iter = Iterator.range(0, 10).map(_ => KVVector.empty[Int, Long])
     val matrix = build(iter)
 
     assert(matrix.size === 10)
@@ -57,6 +57,22 @@ class KVMatrixSuite extends FunSuite {
     val matrix = build(seq)
 
     assert(matrix.isEmpty)
+  }
+
+
+  test("slice") {
+    val vecs = Seq(
+      KVVector.sparse[Int, Long](5, Array(3), Array(1L)),
+      KVVector.dense[Int, Long](Array(0L, 1L, 2L, 3L, 4L)),
+      KVVector.dense[Int, Long](Array(0L, -1L, -2L, -3L, -4L)),
+      KVVector.sparse[Int, Long](5, Array(2), Array(-1L)))
+    val matrix = sliceAndBuild(Array(2, 4), vecs)
+
+    assert(matrix.iterator.map(_.toArray).toArray ===
+      Array(Array(0L, 0L, 0L, 0L, 0L),
+        Array(0L, 0L, 2L, 0L, 4L),
+        Array(0L, 0L, -2L, 0L, -4L),
+        Array(0L, 0L, -1L, 0L, 0L)))
   }
 }
 

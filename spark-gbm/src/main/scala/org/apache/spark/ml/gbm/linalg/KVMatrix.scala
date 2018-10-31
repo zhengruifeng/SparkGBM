@@ -7,127 +7,153 @@ import scala.{specialized => spec}
 
 /**
   * Compress a block of vectors in a compact fashion.
-  * Note: all vectors are of the same length.
+  * Note: all vectors must be of the same length.
   *
-  * @param indices concatenated indices of SparseVectors
-  * @param values  concatenated indices of both DenseVectors and SparseVectors
-  * @param steps   If non-empty, means length of vector-values (not vector-size).
-  *                - Positive step indicate that the vector is a DenseVector,
-  *                - Negative step indicate that the vector is a SparseVector (size of active values).
-  *                If empty, means all vectors are dense.
-  * @param flag    if positive, means vector-size;
-  *                if negative, means number of empty-vector;
-  *                if zero, means empty matrix.
   */
 class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices: Array[K],
                                                                      val values: Array[V],
-                                                                     val steps: Array[Int],
-                                                                     val flag: Int) extends Serializable {
-  if (flag > 0 && steps.isEmpty) {
-    require(values.length % flag == 0)
+                                                                     val status: Array[Int]) extends Serializable {
+
+  require(status.length >= 3)
+
+  require(status(0) >= 0 && status(0) <= 4)
+
+  if (status(0) == 0) {
+    require(indices.isEmpty)
+    require(values.isEmpty)
+    require(status.length == 3)
+
+  } else if (status(0) == 1) {
+    require(status.length == status(1) + 3)
+
+  } else if (status(0) == 2) {
+    require(indices.isEmpty)
+    require(values.length == status(1) * status(2))
+    require(status.length == 3)
+
+  } else if (status(0) == 3) {
+    require(indices.length * status(1) == values.length)
+    require(status.length == 3)
   }
 
 
-  def size: Int = {
-    if (flag <= 0) {
-      -flag
+  def size: Int = status(1)
 
-    } else {
-      if (steps.nonEmpty) {
-        steps.length
-      } else {
-        values.length / flag
-      }
-    }
-  }
+  def vectorSize: Int = status(2)
 
   def isEmpty: Boolean = size == 0
 
   def nonEmpty: Boolean = !isEmpty
 
-  private def getStep(i: Int): Int = {
-    if (steps.nonEmpty) {
-      steps(i)
-    } else {
-      flag
-    }
-  }
-
   def iterator()
               (implicit ck: ClassTag[K], nek: NumericExt[K],
-               cv: ClassTag[V], nev: NumericExt[V]): Iterator[KVVector[K, V]] = {
+               cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): Iterator[KVVector[K, V]] = {
 
-    if (flag <= 0) {
-      Iterator.fill(-flag)(KVVector.empty[K, V])
+    status(0) match {
+      case 0 =>
+        // all vectors are empty
+        if (size != 0) {
+          val empty = KVVector.empty[K, V]
+          Iterator.fill(size)(empty)
+        } else {
+          Iterator.empty
+        }
 
-    } else {
+      case 1 =>
+        // dense and sparse
+        val size_ = size
 
-      val size_ = size
+        new Iterator[KVVector[K, V]]() {
+          private var i = 0
+          private var indexIdx = 0
+          private var valueIdx = 0
 
-      new Iterator[KVVector[K, V]]() {
-        private var i = 0
-        private var indexIdx = 0
-        private var valueIdx = 0
+          private val emptyVec = KVVector.sparse[K, V](vectorSize, nek.emptyArray, nev.emptyArray)
 
-        private val emptyVec = KVVector.sparse[K, V](flag, nek.emptyArray, nev.emptyArray)
+          override def hasNext: Boolean = i < size_
 
-        override def hasNext: Boolean = i < size_
+          override def next(): KVVector[K, V] = {
+            val step = status(i + 3)
 
-        override def next(): KVVector[K, V] = {
-          val step = getStep(i)
+            if (step > 0) {
+              val ret = KVVector.dense[K, V](values.slice(valueIdx, valueIdx + step))
 
-          if (step > 0) {
-            val ret = KVVector.dense[K, V](values.slice(valueIdx, valueIdx + step))
+              valueIdx += step
+              i += 1
 
-            valueIdx += step
-            i += 1
+              ret
 
-            ret
+            } else if (step < 0) {
+              val ret = KVVector.sparse[K, V](vectorSize,
+                indices.slice(indexIdx, indexIdx - step),
+                values.slice(valueIdx, valueIdx - step))
 
-          } else if (step < 0) {
-            val ret = KVVector.sparse[K, V](flag, indices.slice(indexIdx, indexIdx - step),
-              values.slice(valueIdx, valueIdx - step))
+              indexIdx -= step
+              valueIdx -= step
+              i += 1
 
-            indexIdx -= step
-            valueIdx -= step
-            i += 1
+              ret
 
-            ret
-
-          } else {
-            i += 1
-            emptyVec
+            } else {
+              i += 1
+              emptyVec
+            }
           }
         }
-      }
+
+      case 2 =>
+        // all vectors are dense
+        values.iterator.grouped(vectorSize)
+          .map { values => KVVector.dense[K, V](values.toArray) }
+
+      case 3 =>
+        // all vectors are sparse, and share the same indices.
+        // the indices are stored in array `indices`,
+        // the values of all vectors are stored in array `values`
+        values.grouped(indices.length)
+          .map { v => KVVector.sparse[K, V](vectorSize, indices, v) }
+
+      case 4 =>
+        // all vectors are sparse, and share the same indices.
+        // the indices are stored in array `indices`,
+        // the values of all vectors are stored as a sparse vector,
+        // whose indices are in array `status` (after 3 elements), and values in array `values`.
+        val valueVec = KVVector.sparse[Int, V](indices.length * size,
+          status.slice(3, status.length), values)
+
+        valueVec.iterator.map(_._2)
+          .grouped(indices.length)
+          .map { v => KVVector.sparse[K, V](vectorSize, indices, v.toArray) }
     }
   }
-
 }
 
 
 object KVMatrix extends Serializable {
 
   def build[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](iterator: Iterator[KVVector[K, V]])
-                                                                 (implicit ck: ClassTag[K],
-                                                                  cv: ClassTag[V]): KVMatrix[K, V] = {
+                                                                 (implicit ck: ClassTag[K], nek: NumericExt[K],
+                                                                  cv: ClassTag[V], nev: NumericExt[V]): KVMatrix[K, V] = {
+
     val indexBuilder = mutable.ArrayBuilder.make[K]
     val valueBuilder = mutable.ArrayBuilder.make[V]
     val stepBuilder = mutable.ArrayBuilder.make[Int]
 
-    var cnt = 0
-    var vecSize = -1
+    var count = 0
+    var vectorSize = -1
     var allDense = true
 
-    iterator.foreach { vec =>
-      cnt += 1
+    while (iterator.hasNext) {
+      val vector = iterator.next()
 
-      if (vecSize < 0) {
-        vecSize = vec.size
+      count += 1
+
+      if (vectorSize < 0) {
+        vectorSize = vector.size
       }
-      require(vecSize == vec.size)
+      require(vectorSize == vector.size)
 
-      vec match {
+      vector match {
         case dv: DenseKVVector[K, V] =>
           valueBuilder ++= dv.values
           stepBuilder += dv.values.length
@@ -140,30 +166,94 @@ object KVMatrix extends Serializable {
       }
     }
 
+    if (vectorSize < 0) {
+      // mode 0: empty input
+      new KVMatrix[K, V](nek.emptyArray, nev.emptyArray, Array(0, 0, -1))
 
-    if (vecSize < 0) {
-      // empty input
-      new KVMatrix[K, V](Array.empty[K], Array.empty[V], Array.emptyIntArray, 0)
-
-    } else if (vecSize == 0) {
-      // all input vectors are empty
-      new KVMatrix[K, V](Array.empty[K], Array.empty[V], Array.emptyIntArray, -cnt)
+    } else if (vectorSize == 0) {
+      // mode 0: all vectors are empty
+      new KVMatrix[K, V](nek.emptyArray, nev.emptyArray, Array(0, count, 0))
 
     } else {
 
-      if (allDense) {
-        // all vec-value are of same length
-        new KVMatrix[K, V](indexBuilder.result(), valueBuilder.result(), Array.emptyIntArray, vecSize)
+      if (!allDense) {
+        // mode 1: dense and sparse
+        new KVMatrix[K, V](indexBuilder.result(), valueBuilder.result(), Array(1, count, vectorSize) ++ stepBuilder.result())
+
       } else {
-        new KVMatrix[K, V](indexBuilder.result(), valueBuilder.result(), stepBuilder.result(), vecSize)
+        // mode 2: all vectors are dense
+        new KVMatrix[K, V](nek.emptyArray, valueBuilder.result(), Array(2, count, vectorSize))
       }
     }
   }
 
-  def build[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](seq: Iterable[KVVector[K, V]])
-                                                                 (implicit ck: ClassTag[K],
-                                                                  cv: ClassTag[V]): KVMatrix[K, V] = {
-    build[K, V](seq.iterator)
+
+  def build[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](list: Iterable[KVVector[K, V]])
+                                                                 (implicit ck: ClassTag[K], nek: NumericExt[K],
+                                                                  cv: ClassTag[V], nev: NumericExt[V]): KVMatrix[K, V] = {
+    build[K, V](list.iterator)
+  }
+
+
+  def sliceAndBuild[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](indices: Array[K],
+                                                                          iterator: Iterator[KVVector[K, V]])
+                                                                         (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                                                                          cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVMatrix[K, V] = {
+
+    require(indices.nonEmpty)
+
+    val indices_ = nek.toInt(indices)
+
+    var count = 0
+    var vectorSize = -1
+    val valueBuilder = mutable.ArrayBuilder.make[V]
+
+    while (iterator.hasNext) {
+      val vector = iterator.next()
+
+      count += 1
+
+      if (vectorSize < 0) {
+        vectorSize = vector.size
+      }
+      require(vectorSize == vector.size)
+
+      var i = 0
+      while (i < indices.length) {
+        valueBuilder += vector(indices_(i))
+        i += 1
+      }
+    }
+
+
+    if (vectorSize < 0) {
+      // mode 0: empty input
+      new KVMatrix[K, V](nek.emptyArray, nev.emptyArray, Array(0, 0, -1))
+
+    } else {
+
+      val valueVector = KVVector.dense[Int, V](valueBuilder.result()).compress()
+
+      valueVector match {
+        case dv: DenseKVVector[Int, V] =>
+          // mode 3
+          new KVMatrix[K, V](indices, dv.values, Array(3, count, vectorSize))
+
+        case sv: SparseKVVector[Int, V] =>
+          // mode 4
+          new KVMatrix[K, V](indices, sv.values, Array(4, count, vectorSize) ++ sv.indices)
+      }
+    }
+  }
+
+
+  def sliceAndBuild[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](indices: Array[K],
+                                                                          list: Iterable[KVVector[K, V]])
+                                                                         (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                                                                          cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVMatrix[K, V] = {
+    sliceAndBuild[K, V](indices, list.iterator)
   }
 }
+
+
 

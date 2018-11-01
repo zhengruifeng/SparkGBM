@@ -17,6 +17,8 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
   require(status.length >= 3)
 
   require(status(0) >= 0 && status(0) <= 4)
+  require(status(1) >= 0)
+  require(status(2) >= -1)
 
   if (status(0) == 0) {
     require(indices.isEmpty)

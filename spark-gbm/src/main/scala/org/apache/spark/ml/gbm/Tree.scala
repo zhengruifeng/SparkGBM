@@ -105,20 +105,19 @@ private[gbm] object Tree extends Serializable with Logging {
     * @param baseConf  trees-growth configure
     * @return tree models
     */
-  def trainVertical[T, N, C, B, H, G](binVecBlocks: RDD[KVMatrix[C, B]],
-                                      treeIdBlocks: RDD[ArrayBlock[T]],
-                                      subBinVecBlocks: RDD[KVVector[G, B]],
-                                      agTreeIdBlocks: RDD[ArrayBlock[T]],
-                                      agGradBlocks: RDD[ArrayBlock[H]],
-                                      boostConf: BoostConfig,
-                                      bcBoostConf: Broadcast[BoostConfig],
-                                      baseConf: BaseConfig)
-                                     (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                      cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                      cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H],
-                                      cg: ClassTag[G], ing: Integral[G], neg: NumericExt[G]): Array[TreeModel] = {
+  def trainVertical[T, N, C, B, H](binVecBlocks: RDD[KVMatrix[C, B]],
+                                   treeIdBlocks: RDD[ArrayBlock[T]],
+                                   subBinVecBlocks: RDD[KVMatrix[C, B]],
+                                   agTreeIdBlocks: RDD[ArrayBlock[T]],
+                                   agGradBlocks: RDD[ArrayBlock[H]],
+                                   boostConf: BoostConfig,
+                                   bcBoostConf: Broadcast[BoostConfig],
+                                   baseConf: BaseConfig)
+                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                   cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                   cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     import RDDFunctions._
 
     val sc = binVecBlocks.sparkContext
@@ -160,19 +159,11 @@ private[gbm] object Tree extends Serializable with Logging {
 
         subBinVecBlocks.zip2(agTreeIdBlocks, agGradBlocks)
           .mapPartitionsWithIndex { case (vPartId, iter) =>
-            val numCols = bcBoostConf.value.getNumCols
-            val localColIds = bcBoostConf.value.getVCols[C](vPartId)
-            val numLocalCols = localColIds.length
-
             iter.flatMap { case (subBinVecBlock, treeIdBlock, gradBlock) =>
-              require(treeIdBlock.size == gradBlock.size)
-              require(treeIdBlock.size * numLocalCols == subBinVecBlock.size)
+              require(subBinVecBlock.size == treeIdBlock.size)
+              require(subBinVecBlock.size == gradBlock.size)
 
-              val subBinVecIter = subBinVecBlock.iterator
-                .map(_._2).grouped(numLocalCols)
-                .map { values => KVVector.sparse[C, B](numCols, localColIds, values.toArray) }
-
-              Utils.zip3(subBinVecIter, treeIdBlock.iterator, gradBlock.iterator)
+              Utils.zip3(subBinVecBlock.iterator, treeIdBlock.iterator, gradBlock.iterator)
                 .map { case (subBinVec, treeIds, grad) =>
                   (subBinVec, treeIds, Array.fill(treeIds.length)(inn.one), grad)
                 }
@@ -193,20 +184,12 @@ private[gbm] object Tree extends Serializable with Logging {
 
         subBinVecBlocks.zip3(agTreeIdBlocks, agGradBlocks, agNodeIdBlocks, false)
           .mapPartitionsWithIndex { case (vPartId, iter) =>
-            val numCols = bcBoostConf.value.getNumCols
-            val localColIds = bcBoostConf.value.getVCols[C](vPartId)
-            val numLocalCols = localColIds.length
-
             iter.flatMap { case (subBinVecBlock, treeIdBlock, gradBlock, nodeIdBlock) =>
-              require(treeIdBlock.size == gradBlock.size)
-              require(treeIdBlock.size == nodeIdBlock.size)
-              require(treeIdBlock.size * numLocalCols == subBinVecBlock.size)
+              require(subBinVecBlock.size == treeIdBlock.size)
+              require(subBinVecBlock.size == gradBlock.size)
+              require(subBinVecBlock.size == nodeIdBlock.size)
 
-              val subBinVecIter = subBinVecBlock.iterator
-                .map(_._2).grouped(numLocalCols)
-                .map { values => KVVector.sparse[C, B](numCols, localColIds, values.toArray) }
-
-              Utils.zip4(subBinVecIter, treeIdBlock.iterator, nodeIdBlock.iterator, gradBlock.iterator())
+              Utils.zip4(subBinVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator, gradBlock.iterator())
             }
           }
       }

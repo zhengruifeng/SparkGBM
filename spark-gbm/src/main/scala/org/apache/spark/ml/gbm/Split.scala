@@ -128,16 +128,16 @@ private[gbm] object Split extends Logging {
   /**
     * find the best split
     *
-    * @param colId      feature index
-    * @param hist       histogram
-    * @param boostConf  boosting config info
-    * @param treeConfig tree config info
+    * @param colId     feature index
+    * @param hist      histogram
+    * @param boostConf boosting config info
+    * @param baseConf  tree config info
     * @return best split if any
     */
   def split[@spec(Float, Double) H](colId: Int,
                                     hist: Array[H],
                                     boostConf: BoostConfig,
-                                    treeConfig: BaseConfig)
+                                    baseConf: BaseConfig)
                                    (implicit nuh: Numeric[H]): Option[Split] = {
     require(hist.length % 2 == 0)
 

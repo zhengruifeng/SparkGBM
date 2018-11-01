@@ -158,16 +158,14 @@ private[gbm] object Tree extends Serializable with Logging {
       val vdata = if (depth == 0) {
 
         subBinVecBlocks.zip2(agTreeIdBlocks, agGradBlocks)
-          .mapPartitionsWithIndex { case (vPartId, iter) =>
-            iter.flatMap { case (subBinVecBlock, treeIdBlock, gradBlock) =>
-              require(subBinVecBlock.size == treeIdBlock.size)
-              require(subBinVecBlock.size == gradBlock.size)
+          .map { case (subBinVecBlock, treeIdBlock, gradBlock) =>
+            require(subBinVecBlock.size == treeIdBlock.size)
+            require(subBinVecBlock.size == gradBlock.size)
 
-              Utils.zip3(subBinVecBlock.iterator, treeIdBlock.iterator, gradBlock.iterator)
-                .map { case (subBinVec, treeIds, grad) =>
-                  (subBinVec, treeIds, Array.fill(treeIds.length)(inn.one), grad)
-                }
-            }
+            val iter2 = treeIdBlock.iterator
+              .map { treeIds => Array.fill(treeIds.length)(inn.one) }
+            val nodeIdBlock = ArrayBlock.build[N](iter2)
+            (subBinVecBlock, treeIdBlock, nodeIdBlock, gradBlock)
           }
 
       } else {
@@ -182,16 +180,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
         val agNodeIdBlocks = nodeIdBlocks.allgather(numVParts, vPartIds)
 
-        subBinVecBlocks.zip3(agTreeIdBlocks, agGradBlocks, agNodeIdBlocks, false)
-          .mapPartitionsWithIndex { case (vPartId, iter) =>
-            iter.flatMap { case (subBinVecBlock, treeIdBlock, gradBlock, nodeIdBlock) =>
-              require(subBinVecBlock.size == treeIdBlock.size)
-              require(subBinVecBlock.size == gradBlock.size)
-              require(subBinVecBlock.size == nodeIdBlock.size)
-
-              Utils.zip4(subBinVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator, gradBlock.iterator())
-            }
-          }
+        subBinVecBlocks.zip3(agTreeIdBlocks, agNodeIdBlocks, agGradBlocks, false)
       }
 
       val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](vdata,
@@ -384,14 +373,6 @@ private[gbm] object Tree extends Serializable with Logging {
     import RDDFunctions._
 
     val data = binVecBlocks.zip3(treeIdBlocks, nodeIdBlocks, gradBlocks)
-      .flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
-        require(binVecBlock.size == treeIdBlock.size)
-        require(binVecBlock.size == nodeIdBlock.size)
-        require(binVecBlock.size == gradBlock.size)
-
-        Utils.zip4(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator, gradBlock.iterator)
-      }
-
 
     updater match {
       case _: SubtractHistogramUpdater[_, _, _, _, _] =>
@@ -457,7 +438,7 @@ private[gbm] object Tree extends Serializable with Logging {
 
     val (splits, Array(numTrials, numSplits, numDenses, sumSize, nnz)) =
       repartitioned.mapPartitionsWithIndex { case (partId, iter) =>
-        val boostConfig = bcBoostConf.value
+        val boostConf = bcBoostConf.value
 
         val splits = mutable.OpenHashMap.empty[(T, N), Split]
 
@@ -475,7 +456,7 @@ private[gbm] object Tree extends Serializable with Logging {
             numDenses += 1
           }
 
-          Split.split[H](inc.toInt(colId), hist.toArray, boostConfig, baseConf)
+          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
             .foreach { split =>
               numSplits += 1
               val prevSplit = splits.get((treeId, nodeId))

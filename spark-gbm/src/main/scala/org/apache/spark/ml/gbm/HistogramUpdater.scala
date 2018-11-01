@@ -18,7 +18,7 @@ private[gbm] trait HistogramUpdater[T, N, C, B, H] extends Logging {
   /**
     * Compute histograms of current level
     */
-  def update(data: RDD[(KVVector[C, B], Array[T], Array[N], Array[H])],
+  def update(data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
              boostConf: BoostConfig,
              baseConf: BaseConfig,
              splits: Map[(T, N), Split],
@@ -45,7 +45,7 @@ private[gbm] trait HistogramUpdater[T, N, C, B, H] extends Logging {
 
 private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[T, N, C, B, H] {
 
-  override def update(data: RDD[(KVVector[C, B], Array[T], Array[N], Array[H])],
+  override def update(data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
                       boostConf: BoostConfig,
                       baseConf: BaseConfig,
                       splits: Map[(T, N), Split],
@@ -89,7 +89,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
   private var checkpointer: Checkpointer[((T, N, C), KVVector[B, H])] = null
 
-  override def update(data: RDD[(KVVector[C, B], Array[T], Array[N], Array[H])],
+  override def update(data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
                       boostConf: BoostConfig,
                       baseConf: BaseConfig,
                       splits: Map[(T, N), Split],
@@ -174,7 +174,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
   private var delta = 1.0
 
-  override def update(data: RDD[(KVVector[C, B], Array[T], Array[N], Array[H])],
+  override def update(data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
                       boostConf: BoostConfig,
                       baseConf: BaseConfig,
                       splits: Map[(T, N), Split],
@@ -322,14 +322,14 @@ private[gbm] object HistogramUpdater extends Logging {
     * @param f    function to filter nodeIds
     * @return histogram data containing (treeId, nodeId, columnId, histogram)
     */
-  def computeLocalHistograms[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[N], Array[H])],
+  def computeLocalHistograms[T, N, C, B, H](data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
                                             boostConf: BoostConfig,
                                             baseConf: BaseConfig,
                                             f: N => Boolean,
                                             sorted: Boolean = false)
                                            (implicit ct: ClassTag[T], int: Integral[T],
                                             cn: ClassTag[N], inn: Integral[N],
-                                            cc: ClassTag[C], inc: Integral[C],
+                                            cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                             cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                             ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
     import PairRDDFunctions._
@@ -343,7 +343,10 @@ private[gbm] object HistogramUpdater extends Logging {
     data.mapPartitions { iter =>
       val histSums = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
-      iter.flatMap { case (binVec, treeIds, nodeIds, gradHess) =>
+      iter.flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
+        Utils.zip4(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator, gradBlock.iterator)
+
+      }.flatMap { case (binVec, treeIds, nodeIds, gradHess) =>
         require(treeIds.length == nodeIds.length)
 
         val gradSize = gradHess.length >> 1
@@ -411,14 +414,14 @@ private[gbm] object HistogramUpdater extends Logging {
     * @param f    function to filter nodeIds
     * @return histogram data containing (treeId, nodeId, columnId, histogram)
     */
-  def computeHistograms[T, N, C, B, H](data: RDD[(KVVector[C, B], Array[T], Array[N], Array[H])],
+  def computeHistograms[T, N, C, B, H](data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
                                        boostConf: BoostConfig,
                                        baseConf: BaseConfig,
                                        f: N => Boolean,
                                        partitioner: Partitioner)
                                       (implicit ct: ClassTag[T], int: Integral[T],
                                        cn: ClassTag[N], inn: Integral[N],
-                                       cc: ClassTag[C], inc: Integral[C],
+                                       cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 

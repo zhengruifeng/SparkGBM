@@ -38,6 +38,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
     require(status.length == 3)
   }
 
+  def mode: Int = status(0)
 
   def size: Int = status(1)
 
@@ -51,7 +52,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
               (implicit ck: ClassTag[K], nek: NumericExt[K],
                cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): Iterator[KVVector[K, V]] = {
 
-    status(0) match {
+    mode match {
       case 0 =>
         // all vectors are empty
         if (size != 0) {
@@ -60,6 +61,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
         } else {
           Iterator.empty
         }
+
 
       case 1 =>
         // dense and sparse
@@ -78,15 +80,15 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
             val step = status(i + 3)
 
             if (step > 0) {
-              val ret = KVVector.dense[K, V](values.slice(valueIdx, valueIdx + step))
+              val vector = KVVector.dense[K, V](values.slice(valueIdx, valueIdx + step))
 
               valueIdx += step
               i += 1
 
-              ret
+              vector
 
             } else if (step < 0) {
-              val ret = KVVector.sparse[K, V](vectorSize,
+              val vector = KVVector.sparse[K, V](vectorSize,
                 indices.slice(indexIdx, indexIdx - step),
                 values.slice(valueIdx, valueIdx - step))
 
@@ -94,7 +96,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
               valueIdx -= step
               i += 1
 
-              ret
+              vector
 
             } else {
               i += 1
@@ -103,17 +105,20 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
           }
         }
 
+
       case 2 =>
         // all vectors are dense
-        values.iterator.grouped(vectorSize)
-          .map { values => KVVector.dense[K, V](values.toArray) }
+        values.grouped(vectorSize)
+          .map(KVVector.dense[K, V])
+
 
       case 3 =>
         // all vectors are sparse, and share the same indices.
         // the indices are stored in array `indices`,
         // the values of all vectors are stored in array `values`
         values.grouped(indices.length)
-          .map { v => KVVector.sparse[K, V](vectorSize, indices, v) }
+          .map { array => KVVector.sparse[K, V](vectorSize, indices, array) }
+
 
       case 4 =>
         // all vectors are sparse, and share the same indices.
@@ -125,7 +130,161 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
 
         valueVec.iterator.map(_._2)
           .grouped(indices.length)
-          .map { v => KVVector.sparse[K, V](vectorSize, indices, v.toArray) }
+          .map { seq => KVVector.sparse[K, V](vectorSize, indices, seq.toArray) }
+    }
+  }
+
+
+  def activeIterator()
+                    (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                     cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): Iterator[Iterator[(K, V)]] = {
+
+    mode match {
+      case 0 =>
+        // all vectors are empty
+        if (size != 0) {
+          Iterator.fill(size)(Iterator.empty)
+        } else {
+          Iterator.empty
+        }
+
+
+      case 1 =>
+        // dense and sparse
+        val size_ = size
+
+        new Iterator[Iterator[(K, V)]]() {
+          private var i = 0
+          private var indexIdx = 0
+          private var valueIdx = 0
+
+          override def hasNext: Boolean = i < size_
+
+          override def next(): Iterator[(K, V)] = {
+            val step = status(i + 3)
+
+            if (step > 0) {
+              val vi = valueIdx
+
+              valueIdx += step
+              i += 1
+
+              Iterator.range(0, step)
+                .flatMap { j =>
+                  val v = values(vi + j)
+                  if (v != nuv.zero) {
+                    Iterator.single((ink.fromInt(j), v))
+                  } else {
+                    Iterator.empty
+                  }
+                }
+
+            } else if (step < 0) {
+              val ii = indexIdx
+              val vi = valueIdx
+
+              indexIdx -= step
+              valueIdx -= step
+              i += 1
+
+              Iterator.range(0, -step)
+                .flatMap { j =>
+                  val v = values(vi + j)
+                  if (v != nuv.zero) {
+                    Iterator.single((indices(ii + j), v))
+                  } else {
+                    Iterator.empty
+                  }
+                }
+
+            } else {
+              i += 1
+              Iterator.empty
+            }
+          }
+        }
+
+
+      case 2 =>
+        // all vectors are dense
+        val size_ = size
+
+        new Iterator[Iterator[(K, V)]]() {
+          private var i = 0
+          private var valueIdx = 0
+
+          override def hasNext: Boolean = i < size_
+
+          override def next(): Iterator[(K, V)] = {
+            val vi = valueIdx
+
+            valueIdx += vectorSize
+            i += 1
+
+            Iterator.range(0, vectorSize)
+              .flatMap { j =>
+                val v = values(vi + j)
+                if (v != nuv.zero) {
+                  Iterator.single((ink.fromInt(j), v))
+                } else {
+                  Iterator.empty
+                }
+              }
+          }
+        }
+
+
+      case 3 =>
+        // all vectors are sparse, and share the same indices.
+        // the indices are stored in array `indices`,
+        // the values of all vectors are stored in array `values`
+        val size_ = size
+
+        new Iterator[Iterator[(K, V)]]() {
+          private var i = 0
+          private var valueIdx = 0
+
+          override def hasNext: Boolean = i < size_
+
+          override def next(): Iterator[(K, V)] = {
+            val vi = valueIdx
+
+            valueIdx += indices.length
+            i += 1
+
+            Iterator.range(0, indices.length)
+              .flatMap { j =>
+                val v = values(vi + j)
+                if (v != nuv.zero) {
+                  Iterator.single((indices(j), v))
+                } else {
+                  Iterator.empty
+                }
+              }
+          }
+        }
+
+
+      case 4 =>
+        // all vectors are sparse, and share the same indices.
+        // the indices are stored in array `indices`,
+        // the values of all vectors are stored as a sparse vector,
+        // whose indices are in array `status` (after 3 elements), and values in array `values`.
+        val valueVec = KVVector.sparse[Int, V](indices.length * size,
+          status.slice(3, status.length), values)
+
+        valueVec.iterator.map(_._2)
+          .grouped(indices.length)
+          .map {
+            _.iterator.zip(indices.iterator)
+              .flatMap { case (v, j) =>
+                if (v != nuv.zero) {
+                  Iterator.single((j, v))
+                } else {
+                  Iterator.empty
+                }
+              }
+          }
     }
   }
 }

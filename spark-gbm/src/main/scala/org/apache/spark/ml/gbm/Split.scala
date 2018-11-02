@@ -388,7 +388,12 @@ private[gbm] object Split extends Logging {
           val score = score1 + score2
           if (score > bestScore) {
             bestSet1.clear()
-            set1.foreach(bestSet1.add)
+
+            val iter = set1.iterator
+            while (iter.hasNext) {
+              bestSet1.add(iter.next())
+            }
+            
             bestScore = score
 
             stats(0) = weight1
@@ -451,8 +456,8 @@ private[gbm] object Split extends Logging {
     var hessLeft = 0.0F
     var hessRight = 0.0F
 
-
-    (0 until gradSeq.length - 1).foreach { i =>
+    var i = 0
+    while (i < gradSeq.length - 1) {
       if (gradSeq(i) != 0 || hessSeq(i) != 0) {
         gradLeft += gradSeq(i)
         gradRight = gradSum - gradLeft
@@ -481,8 +486,9 @@ private[gbm] object Split extends Logging {
           }
 
         }
-
       }
+
+      i += 1
     }
 
     if (!validate(stats :+ bestScore)) {
@@ -551,17 +557,21 @@ private[gbm] object Split extends Logging {
 
     // ignore zero hist
     val set1 = mutable.Set.empty[Int]
-    indices1.foreach { i =>
+    var i = 0
+    while (i < indices1.length) {
       if (gradSeq(i) != 0 || hessSeq(i) != 0) {
         set1.add(i)
       }
+      i += 1
     }
 
     val set2 = mutable.Set.empty[Int]
-    gradSeq.indices.foreach { i =>
+    i = 0
+    while (i < gradSeq.length) {
       if ((gradSeq(i) != 0 || hessSeq(i) != 0) && !set1.contains(i)) {
         set2.add(i)
       }
+      i += 1
     }
 
     // remove index of missing value

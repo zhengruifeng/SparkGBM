@@ -88,7 +88,8 @@ object ArrayBlock extends Serializable {
     var identical = true
     var prevArray: Array[V] = null
 
-    iterator.foreach { array =>
+    while (iterator.hasNext) {
+      val array = iterator.next()
       require(array != null)
 
       if (prevArray == null) {

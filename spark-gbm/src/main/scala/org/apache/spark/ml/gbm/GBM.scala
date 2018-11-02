@@ -709,10 +709,13 @@ private[gbm] object GBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         var numBlocks = 0L
         var numInstances = 0L
-        iter.foreach { weightBlock =>
+
+        while (iter.hasNext) {
+          val weightBlock = iter.next()
           numBlocks += 1
           numInstances += weightBlock.size
         }
+
         Iterator.single((partId, numBlocks, numInstances))
       }.collect().sorted
 
@@ -1049,7 +1052,7 @@ private[gbm] object GBM extends Logging {
     if (boostConf.getBatchEvalFunc.nonEmpty) {
       boostConf.getBatchEvalFunc
         .foreach { eval => result.update(eval.name, eval.compute(scores)) }
-      scores.unpersist(blocking = true)
+      scores.unpersist(true)
     }
 
     result.toMap

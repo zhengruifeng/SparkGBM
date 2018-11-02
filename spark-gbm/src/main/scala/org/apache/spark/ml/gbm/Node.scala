@@ -206,7 +206,7 @@ private[gbm] object NodeData {
     // We fill `finalNodes` in reverse order.  Since node IDs are assigned via a pre-order
     // traversal, this guarantees that child nodes will be built before parent nodes.
     val finalNodes = new Array[Node](nodes.length)
-    nodes.reverseIterator.foreach { n: NodeData =>
+    nodes.reverseIterator.foreach { n =>
       val node = if (n.leftNode != -1) {
         val leftChild = finalNodes(n.leftNode)
         val rightChild = finalNodes(n.rightNode)

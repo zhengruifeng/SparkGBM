@@ -38,7 +38,8 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
       Utils.getTotalIter(vec)
     }
 
-    iter.foreach { case (i, v) =>
+    while (iter.hasNext) {
+      val (i, v) = iter.next()
       val bin = discretizeWithIndex(v, i)
       bins(i) = inb.fromInt(bin)
     }
@@ -129,10 +130,13 @@ private[gbm] object Discretizer extends Logging {
         val nans = mutable.OpenHashMap.empty[Int, Long]
 
         // only absorb non-zero values
-        iter.foreach { vec =>
+        while (iter.hasNext) {
+          val vec = iter.next()
           require(vec.size == numCols)
 
-          Utils.getActiveIter(vec).foreach { case (i, v) =>
+          val iter2 = Utils.getActiveIter(vec)
+          while (iter2.hasNext) {
+            val (i, v) = iter2.next()
             if (!v.isNaN && !v.isInfinity) {
               aggs(i).update(v)
             } else if (!zeroAsMissing) {
@@ -140,6 +144,7 @@ private[gbm] object Discretizer extends Logging {
               nans.update(i, cnt + 1)
             }
           }
+
           cnt += 1
         }
 
@@ -220,7 +225,8 @@ private[gbm] object Discretizer extends Logging {
         var weightSum = 0.0
 
         // only absorb non-zero values
-        iter.foreach { case (weight, label, vec) =>
+        while (iter.hasNext) {
+          val (weight, label, vec) = iter.next()
           require(vec.size == numCols)
 
           // update avg of label
@@ -238,7 +244,9 @@ private[gbm] object Discretizer extends Logging {
           weightSum += weight
 
           // update column metrics
-          Utils.getActiveIter(vec).foreach { case (i, v) =>
+          val iter2 = Utils.getActiveIter(vec)
+          while (iter2.hasNext) {
+            val (i, v) = iter2.next()
             if (!v.isNaN && !v.isInfinity) {
               aggs(i).update(v)
             } else if (!zeroAsMissing) {
@@ -246,6 +254,7 @@ private[gbm] object Discretizer extends Logging {
               nans.update(i, cnt + 1)
             }
           }
+
           cnt += 1
         }
 
@@ -710,12 +719,13 @@ private[gbm] class CatColAgg(val maxBins: Int) extends ColAgg {
   }
 
   override def merge(other: ColAgg): CatColAgg = {
-    other.asInstanceOf[CatColAgg].counter
-      .foreach { case (v, c) =>
-        val cnt = counter.getOrElse(v, 0L)
-        counter.update(v, cnt + c)
-        require(counter.size <= maxBins)
-      }
+    val iter = other.asInstanceOf[CatColAgg].counter.iterator
+    while (iter.hasNext) {
+      val (v, c) = iter.next()
+      val cnt = counter.getOrElse(v, 0L)
+      counter.update(v, cnt + c)
+      require(counter.size <= maxBins)
+    }
     this
   }
 
@@ -758,7 +768,9 @@ private[gbm] class RankColAgg(val maxBins: Int) extends ColAgg {
 
   override def merge(other: ColAgg): RankColAgg = {
     val o = other.asInstanceOf[RankColAgg]
-    o.set.foreach { v =>
+    val iter = o.set.iterator
+    while (iter.hasNext) {
+      val v = iter.next()
       set.add(v)
       require(set.size <= maxBins)
     }

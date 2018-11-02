@@ -602,8 +602,13 @@ private[gbm] object Utils extends Logging {
                      path: String): Unit = {
     require(dataframes.length == names.length)
     require(names.length == names.distinct.length)
-    dataframes.zip(names).foreach { case (df, name) =>
-      df.write.parquet(new Path(path, name).toString)
+
+    var i = 0
+    while (i < dataframes.length) {
+      dataframes(i).write
+        .parquet(new Path(path, names(i)).toString)
+
+      i += 1
     }
   }
 

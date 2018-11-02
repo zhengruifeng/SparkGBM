@@ -234,21 +234,39 @@ class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Flo
     other match {
       case dv: DenseKVVector[K, V] =>
         if (size >= dv.size) {
-          dv.activeIterator.foreach{ case (k, v) => values(ink.toInt(k)) += v }
+          val iter = dv.activeIterator
+          while (iter.hasNext) {
+            val (k, v) = iter.next()
+            values(ink.toInt(k)) += v
+          }
           this
+
         } else {
-          activeIterator.foreach { case (k, v) => dv.values(ink.toInt(k)) += v }
+          val iter = activeIterator
+          while (iter.hasNext) {
+            val (k, v) = iter.next()
+            dv.values(ink.toInt(k)) += v
+          }
           dv
         }
 
 
       case sv: SparseKVVector[K, V] =>
         if (size >= sv.size) {
-          sv.activeIterator.foreach { case (k, v) => values(ink.toInt(k)) += v }
+          val iter = sv.activeIterator
+          while (iter.hasNext) {
+            val (k, v) = iter.next()
+            values(ink.toInt(k)) += v
+          }
           this
+
         } else {
           val newValues = values ++ Array.fill(sv.size - size)(zero)
-          sv.activeIterator.foreach { case (k, v) => newValues(ink.toInt(k)) += v }
+          val iter = sv.activeIterator
+          while (iter.hasNext) {
+            val (k, v) = iter.next()
+            newValues(ink.toInt(k)) += v
+          }
           KVVector.dense[K, V](newValues)
         }
     }
@@ -394,11 +412,20 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
     other match {
       case dv: DenseKVVector[K, V] =>
         if (size <= dv.size) {
-          activeIterator.foreach { case (k, v) => dv.values(ink.toInt(k)) += v }
+          val iter = this.activeIterator
+          while (iter.hasNext) {
+            val (k, v) = iter.next()
+            dv.values(ink.toInt(k)) += v
+          }
           dv
+
         } else {
           val newValues = dv.values ++ Array.fill(size - dv.size)(zero)
-          activeIterator.foreach { case (k, v) => newValues(ink.toInt(k)) += v }
+          val iter = this.activeIterator
+          while (iter.hasNext) {
+            val (k, v) = iter.next()
+            newValues(ink.toInt(k)) += v
+          }
           KVVector.dense[K, V](newValues)
         }
 

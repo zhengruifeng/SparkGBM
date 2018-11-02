@@ -234,7 +234,8 @@ private[gbm] object Tree extends Serializable with Logging {
       val cnts = splits.keysIterator.toSeq.groupBy(_._1).mapValues(_.length)
       var numFinished = 0
 
-      Iterator.range(0, baseConf.numTrees).filterNot(finished).foreach { treeId =>
+      Iterator.range(0, baseConf.numTrees)
+        .filterNot(finished).foreach { treeId =>
         val rem = remainingLeaves(treeId)
         val cnt = cnts.getOrElse(int.fromInt(treeId), 0)
         require(cnt <= rem)
@@ -253,8 +254,9 @@ private[gbm] object Tree extends Serializable with Logging {
         s" growth finished, ${splits.size} leaves split, total gain=${splits.valuesIterator.map(_.gain).sum}.")
 
     } else {
+      Iterator.range(0, finished.length)
+        .foreach(finished(_) = true)
       logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: no more splits found, trees growth finished.")
-      Iterator.range(0, finished.length).foreach(finished(_) = true)
     }
   }
 
@@ -448,7 +450,8 @@ private[gbm] object Tree extends Serializable with Logging {
         var sumSize = 0L
         var nnz = 0L
 
-        iter.foreach { case ((treeId, nodeId, colId), hist) =>
+        while (iter.hasNext) {
+          val ((treeId, nodeId, colId), hist) = iter.next()
           numTrials += 1
           sumSize += hist.size
           nnz += hist.nnz
@@ -492,7 +495,12 @@ private[gbm] object Tree extends Serializable with Logging {
             array.sortBy(_._2.gain).takeRight(rem)
           }.toArray
 
-          Iterator.range(0, metrics1.length).foreach(i => metrics1(i) += metrics2(i))
+          var i = 0
+          while (i < metrics1.length) {
+            metrics1(i) += metrics2(i)
+            i += 1
+          }
+
           (splits, metrics1)
       }, boostConf.getAggregationDepth)
 

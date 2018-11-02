@@ -142,8 +142,6 @@ class GBMRegressor(override val uid: String) extends
 
   def setReduceParallelism(value: Double): this.type = set(reduceParallelism, value)
 
-  def setTrialParallelism(value: Double): this.type = set(trialParallelism, value)
-
   def setSubSampleType(value: String): this.type = set(subSampleType, value)
 
   def setHistogramComputationType(value: String): this.type = set(histogramComputationType, value)
@@ -251,7 +249,6 @@ class GBMRegressor(override val uid: String) extends
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setReduceParallelism($(reduceParallelism))
-      .setTrialParallelism($(trialParallelism))
       .setSubSampleType($(subSampleType))
       .setHistogramComputationType($(histogramComputationType))
       .setBaseModelParallelism($(baseModelParallelism))

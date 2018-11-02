@@ -412,7 +412,7 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
     other match {
       case dv: DenseKVVector[K, V] =>
         if (size <= dv.size) {
-          val iter = this.activeIterator
+          val iter = activeIterator
           while (iter.hasNext) {
             val (k, v) = iter.next()
             dv.values(ink.toInt(k)) += v
@@ -421,7 +421,7 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
 
         } else {
           val newValues = dv.values ++ Array.fill(size - dv.size)(zero)
-          val iter = this.activeIterator
+          val iter = activeIterator
           while (iter.hasNext) {
             val (k, v) = iter.next()
             newValues(ink.toInt(k)) += v

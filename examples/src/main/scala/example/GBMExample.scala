@@ -62,8 +62,7 @@ object GBMExample {
 
     /** User defined callback function */
     val lrUpdater = new CallbackFunc {
-      override def compute(spark: SparkSession,
-                           boostConfig: BoostConfig,
+      override def compute(boostConfig: BoostConfig,
                            model: GBMModel,
                            iteration: Int,
                            trainMetrics: Array[Map[String, Double]],

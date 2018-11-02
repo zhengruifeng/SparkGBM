@@ -146,8 +146,6 @@ class GBMClassifier(override val uid: String)
 
   def setReduceParallelism(value: Double): this.type = set(reduceParallelism, value)
 
-  def setTrialParallelism(value: Double): this.type = set(trialParallelism, value)
-
   def setSubSampleType(value: String): this.type = set(subSampleType, value)
 
   def setHistogramComputationType(value: String): this.type = set(histogramComputationType, value)
@@ -229,9 +227,9 @@ class GBMClassifier(override val uid: String)
         None
       }
 
-
     val gbm = new GBM
-    gbm.setMaxIter($(maxIter))
+    gbm.setSparkSession(dataset.sparkSession)
+      .setMaxIter($(maxIter))
       .setMaxDepth($(maxDepth))
       .setMaxLeaves($(maxLeaves))
       .setMaxBins($(maxBins))
@@ -268,7 +266,6 @@ class GBMClassifier(override val uid: String)
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setReduceParallelism($(reduceParallelism))
-      .setTrialParallelism($(trialParallelism))
       .setSubSampleType($(subSampleType))
       .setHistogramComputationType($(histogramComputationType))
       .setBaseModelParallelism($(baseModelParallelism))

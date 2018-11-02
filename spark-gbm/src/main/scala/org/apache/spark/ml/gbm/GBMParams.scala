@@ -586,22 +586,6 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Parallelism of split searching. If negative, means times of defaultParallelism of Spark.
-    * (default = -1)
-    *
-    * @group param
-    */
-  final val trialParallelism: DoubleParam =
-    new DoubleParam(this, "trialParallelism", "Parallelism of split searching. " +
-      "If negative, means times of defaultParallelism of Spark.",
-      (value: Double) => value != 0 && !value.isNaN && !value.isInfinity)
-
-  def getTrialParallelism: Double = $(trialParallelism)
-
-  setDefault(trialParallelism -> -1.0)
-
-
-  /**
     * Method of data sampling.
     * (default = "block")
     *
@@ -609,7 +593,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     */
   final val subSampleType: Param[String] =
     new Param[String](this, "subSampleType", "Method of data sampling.",
-      ParamValidators.inArray[String](Array("instance", "block", "partition", "goss")))
+      ParamValidators.inArray[String](Array("row", "block", "partition", "goss")))
 
   def getSubSampleType: String = $(subSampleType)
 

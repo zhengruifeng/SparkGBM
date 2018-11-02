@@ -10,7 +10,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.param.Params
 import org.apache.spark.ml.util.DefaultParamsWriter
-import org.apache.spark.sql.SparkSession
+
 
 /**
   * trait for callback function, will be called after each iteration
@@ -20,15 +20,13 @@ trait CallbackFunc extends Logging with Serializable {
   /**
     * callback function
     *
-    * @param spark        spark session
-    * @param boostConfig  boosting configuration, be careful to update it
+    * @param boostConf    boosting configuration, be careful to update it
     * @param model        snapshot of current model
     * @param trainMetrics training metric
     * @param testMetrics  validation metric
     * @return whether to stop training
     */
-  def compute(spark: SparkSession,
-              boostConfig: BoostConfig,
+  def compute(boostConf: BoostConfig,
               model: GBMModel,
               iteration: Int,
               trainMetrics: Array[Map[String, Double]],
@@ -48,8 +46,7 @@ class EarlyStop(val iters: Int) extends CallbackFunc {
 
   def this() = this(10)
 
-  override def compute(spark: SparkSession,
-                       boostConfig: BoostConfig,
+  override def compute(boostConf: BoostConfig,
                        model: GBMModel,
                        iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
@@ -59,7 +56,7 @@ class EarlyStop(val iters: Int) extends CallbackFunc {
     if (testMetrics.length > iters) {
       val len = iters + 1
 
-      boostConfig.getEvalFunc.foreach { eval =>
+      boostConf.getEvalFunc.foreach { eval =>
         val values = testMetrics.takeRight(len).map(_ (eval.name))
         val start = values.head
         val end = values.last
@@ -89,8 +86,7 @@ class MetricRecoder extends CallbackFunc {
   val trainMetricsRecoder = mutable.ArrayBuffer.empty[Map[String, Double]]
   val testMetricsRecoder = mutable.ArrayBuffer.empty[Map[String, Double]]
 
-  override def compute(spark: SparkSession,
-                       boostConfig: BoostConfig,
+  override def compute(boostConf: BoostConfig,
                        model: GBMModel,
                        iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
@@ -118,8 +114,7 @@ class ModelCheckpoint(val interval: Int,
                       val path: String) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
-  override def compute(spark: SparkSession,
-                       boostConfig: BoostConfig,
+  override def compute(boostConf: BoostConfig,
                        model: GBMModel,
                        iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
@@ -127,7 +122,9 @@ class ModelCheckpoint(val interval: Int,
 
     if (iteration % interval == 0) {
       Future {
-        val start = System.nanoTime
+        val start = System.nanoTime()
+        val spark = boostConf.getSparkSession
+
         val currentPath = new Path(path, s"model-${model.numTrees}").toString
         GBMModel.save(spark, model, currentPath)
         (System.nanoTime - start) / 1e9
@@ -160,15 +157,15 @@ class ClassificationModelCheckpoint(val interval: Int,
                                     val params: Params) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
-  override def compute(spark: SparkSession,
-                       boostConfig: BoostConfig,
+  override def compute(boostConf: BoostConfig,
                        model: GBMModel,
                        iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (iteration % interval == 0) {
       Future {
-        val start = System.nanoTime
+        val start = System.nanoTime()
+        val spark = boostConf.getSparkSession
 
         val currentPath = new Path(path, s"model-$iteration").toString
 
@@ -212,15 +209,15 @@ class RegressionModelCheckpoint(val interval: Int,
                                 val params: Params) extends CallbackFunc {
   require(interval >= 1 && path.nonEmpty)
 
-  override def compute(spark: SparkSession,
-                       boostConfig: BoostConfig,
+  override def compute(boostConf: BoostConfig,
                        model: GBMModel,
                        iteration: Int,
                        trainMetrics: Array[Map[String, Double]],
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (iteration % interval == 0) {
       Future {
-        val start = System.nanoTime
+        val start = System.nanoTime()
+        val spark = boostConf.getSparkSession
 
         val currentPath = new Path(path, s"model-$iteration").toString
 

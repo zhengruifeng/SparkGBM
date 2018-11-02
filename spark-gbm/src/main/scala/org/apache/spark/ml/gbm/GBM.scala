@@ -11,6 +11,7 @@ import org.apache.spark.ml.gbm.rdd._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.ml.linalg._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 
 
@@ -20,6 +21,11 @@ import org.apache.spark.storage.StorageLevel
 class GBM extends Logging with Serializable {
 
   val boostConf = new BoostConfig
+
+  private[spark] def setSparkSession(value: SparkSession): this.type = {
+    boostConf.setSparkSession(value)
+    this
+  }
 
   /** maximum number of iterations */
   def setMaxIter(value: Int): this.type = {
@@ -252,15 +258,6 @@ class GBM extends Logging with Serializable {
   def getReduceParallelism: Double = boostConf.getReduceParallelism
 
 
-  /** parallelism of split searching */
-  def setTrialParallelism(value: Double): this.type = {
-    boostConf.setTrialParallelism(value)
-    this
-  }
-
-  def getTrialParallelism: Double = boostConf.getTrialParallelism
-
-
   /** parallelism type */
   def setParallelismType(value: String): this.type = {
     boostConf.setParallelismType(value)
@@ -447,6 +444,11 @@ class GBM extends Logging with Serializable {
   /** training with validation if any, dataset contains (weight, label, vec) */
   private[ml] def fit(data: RDD[(Double, Array[Double], Vector)],
                       test: Option[RDD[(Double, Array[Double], Vector)]]): GBMModel = {
+    if (boostConf.getSparkSession == null) {
+      boostConf.setSparkSession(SparkSession.builder().getOrCreate())
+    }
+    boostConf.updateParallelismInfo()
+
     if (getBoostType == GBM.Dart) {
       require(getMaxDrop >= getMinDrop)
     }
@@ -511,7 +513,7 @@ private[gbm] object GBM extends Logging {
   val Upstream = "upstream"
   val Eager = "eager"
 
-  val Instance = "instance"
+  val Row = "row"
   val Block = "block"
   val Partition = "partition"
   val Goss = "goss"
@@ -725,9 +727,9 @@ private[gbm] object GBM extends Logging {
     boostConf.setNumRows(array.map(_._3).sum)
 
     boostConf.setNumBlocksPerPart(array.map(_._2))
-    boostConf.setNumInstancesPerPart(array.map(_._3))
+    boostConf.setNumRowsPerPart(array.map(_._3))
     logInfo(s"${weightBlocks.name}: ${boostConf.getNumRows} instances, ${boostConf.getNumBlocks} blocks, " +
-      s"numInstancesPerPartition ${boostConf.getNumInstancesPerPart.mkString("[", ",", "]")}, " +
+      s"numInstancesPerPartition ${boostConf.getNumRowsPerPart.mkString("[", ",", "]")}, " +
       s"numBlocksPerPartition ${boostConf.getNumBlocksPerPart.mkString("[", ",", "]")}")
   }
 
@@ -944,58 +946,60 @@ private[gbm] object GBM extends Logging {
         val rawBase = neh.fromDouble(boostConf.getRawBaseScore)
         require(rawSize == rawBase.length)
 
-        binVecBlocks.zip(rawBlocks).map { case (binVecBlock, rawBlock) =>
-          require(rawBlock.size == binVecBlock.size)
+        binVecBlocks.zip(rawBlocks)
+          .map { case (binVecBlock, rawBlock) =>
+            require(rawBlock.size == binVecBlock.size)
 
-          val iter = binVecBlock.iterator
-            .zip(rawBlock.iterator)
-            .map { case (binVec, raw) =>
-              require(raw.length == rawSize + treeOffset)
-              val newRaw = raw ++ newTrees.map(tree => neh.fromDouble(tree.predict(binVec.apply)))
+            val iter = binVecBlock.iterator
+              .zip(rawBlock.iterator)
+              .map { case (binVec, raw) =>
+                require(raw.length == rawSize + treeOffset)
+                val newRaw = raw ++ newTrees.map(tree => neh.fromDouble(tree.predict(binVec.apply)))
 
-              if (keepWeights) {
-                var j = 0
-                while (j < newTrees.length) {
-                  val p = newRaw(rawSize + treeOffset + j)
-                  newRaw(j % rawSize) += p * weights(treeOffset + j)
-                  j += 1
+                if (keepWeights) {
+                  var j = 0
+                  while (j < newTrees.length) {
+                    val p = newRaw(rawSize + treeOffset + j)
+                    newRaw(j % rawSize) += p * weights(treeOffset + j)
+                    j += 1
+                  }
+
+                } else {
+                  Array.copy(rawBase, 0, newRaw, 0, rawSize)
+                  var j = 0
+                  while (j < weights.length) {
+                    val p = newRaw(rawSize + j)
+                    newRaw(j % rawSize) += p * weights(j)
+                    j += 1
+                  }
                 }
 
-              } else {
-                Array.copy(rawBase, 0, newRaw, 0, rawSize)
-                var j = 0
-                while (j < weights.length) {
-                  val p = newRaw(rawSize + j)
-                  newRaw(j % rawSize) += p * weights(j)
-                  j += 1
-                }
+                newRaw
               }
 
-              newRaw
-            }
-
-          ArrayBlock.build[H](iter)
-        }
+            ArrayBlock.build[H](iter)
+          }
 
       case _ =>
-        binVecBlocks.zip(rawBlocks).map { case (binVecBlock, rawBlock) =>
-          require(rawBlock.size == binVecBlock.size)
+        binVecBlocks.zip(rawBlocks)
+          .map { case (binVecBlock, rawBlock) =>
+            require(rawBlock.size == binVecBlock.size)
 
-          val iter = binVecBlock.iterator
-            .zip(rawBlock.iterator)
-            .map { case (binVec, raw) =>
-              require(raw.length == rawSize)
-              var j = 0
-              while (j < newTrees.length) {
-                val p = neh.fromDouble(newTrees(j).predict(binVec.apply))
-                raw(j % rawSize) += p * weights(treeOffset + j)
-                j += 1
+            val iter = binVecBlock.iterator
+              .zip(rawBlock.iterator)
+              .map { case (binVec, raw) =>
+                require(raw.length == rawSize)
+                var j = 0
+                while (j < newTrees.length) {
+                  val p = neh.fromDouble(newTrees(j).predict(binVec.apply))
+                  raw(j % rawSize) += p * weights(treeOffset + j)
+                  j += 1
+                }
+                raw
               }
-              raw
-            }
 
-          ArrayBlock.build[H](iter)
-        }
+            ArrayBlock.build[H](iter)
+          }
     }
   }
 

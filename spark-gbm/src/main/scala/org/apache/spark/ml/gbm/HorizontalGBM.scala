@@ -35,8 +35,7 @@ object HorizontalGBM extends Logging {
                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
 
-    val spark = SparkSession.builder().getOrCreate()
-    val sc = spark.sparkContext
+    val sc = trainBlocks._1.sparkContext
 
     // train blocks
     val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
@@ -175,7 +174,7 @@ object HorizontalGBM extends Logging {
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
-            if (callback.compute(spark, boostConf, snapshot, iteration + 1,
+            if (callback.compute(boostConf, snapshot, iteration + 1,
               trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
               logInfo(s"$logPrefix callback ${callback.name} stop training")
@@ -356,7 +355,7 @@ object HorizontalGBM extends Logging {
       case GBM.Block =>
         adaptTreeInputsForBlockSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, recoder)
 
-      case GBM.Instance =>
+      case GBM.Row =>
         adaptTreeInputsForRowSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGrad, recoder)
     }
 

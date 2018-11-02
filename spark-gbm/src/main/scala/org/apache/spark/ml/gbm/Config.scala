@@ -5,10 +5,37 @@ import scala.reflect.ClassTag
 
 import org.apache.spark.ml.gbm.util.Selector
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 
 
 class BoostConfig extends Logging with Serializable {
+
+
+  @transient private var spark: SparkSession = null
+
+  private[gbm] def setSparkSession(value: SparkSession): this.type = {
+    spark = value
+    this
+  }
+
+  private[gbm] def getSparkSession: SparkSession = spark
+
+
+  var realParallelism = -1
+
+  private[gbm] def updateParallelismInfo(): Unit = {
+    realParallelism = if (reduceParallelism > 0) {
+      reduceParallelism.ceil.toInt
+    } else {
+      (spark.sparkContext.defaultParallelism * reduceParallelism.abs).ceil.toInt
+    }
+
+    require(realParallelism > 0)
+  }
+
+  private[gbm] def getRealParallelism: Int = realParallelism
+
 
   /** parallelism type */
   private var parallelismType: String = "data"
@@ -460,7 +487,7 @@ class BoostConfig extends Logging with Serializable {
   private var subSampleType: String = "block"
 
   private[gbm] def setSubSampleType(value: String): this.type = {
-    require(Array("instance", "block", "partition", "goss").contains(value))
+    require(Array("row", "block", "partition", "goss").contains(value))
     subSampleType = value
     this
   }
@@ -501,39 +528,7 @@ class BoostConfig extends Logging with Serializable {
     this
   }
 
-  def updateReduceParallelism(value: Double): this.type = {
-    logInfo(s"reduceParallelism was changed from $reduceParallelism to $value")
-    setReduceParallelism(value)
-  }
-
   def getReduceParallelism: Double = reduceParallelism
-
-
-  /** parallelism of split searching */
-  private var trialParallelism: Double = -1.0
-
-  private[gbm] def setTrialParallelism(value: Double): this.type = {
-    require(value != 0 && !value.isNaN && !value.isInfinity)
-    trialParallelism = value
-    this
-  }
-
-  def updateTrialParallelism(value: Double): this.type = {
-    logInfo(s"trialParallelism was changed from $trialParallelism to $value")
-    setTrialParallelism(value)
-  }
-
-  def getTrialParallelism: Double = trialParallelism
-
-
-  private[gbm] def getRealParallelism(value: Double, base: Int): Int = {
-    require(base > 0)
-    if (value > 0) {
-      value.ceil.toInt
-    } else {
-      (value.abs * base).ceil.toInt
-    }
-  }
 
 
   /** random number seed */
@@ -773,7 +768,7 @@ class BoostConfig extends Logging with Serializable {
   private[gbm] def getNumRows: Long = numRows
 
 
-  private[gbm] def getBlockIdOffsetPerPart: Array[Long] = {
+  private[gbm] def getBlockOffsetPerPart: Array[Long] = {
     if (numBlocksPerPart.nonEmpty) {
       numBlocksPerPart.take(numBlocksPerPart.length - 1).scanLeft(0L)(_ + _)
     } else {
@@ -781,33 +776,33 @@ class BoostConfig extends Logging with Serializable {
     }
   }
 
-  private var numInstancesPerPart: Array[Long] = Array.emptyLongArray
+  private var numRowsPerPart: Array[Long] = Array.emptyLongArray
 
-  private[gbm] def setNumInstancesPerPart(value: Array[Long]): this.type = {
+  private[gbm] def setNumRowsPerPart(value: Array[Long]): this.type = {
     require(value.nonEmpty)
-    numInstancesPerPart = value
+    numRowsPerPart = value
     this
   }
 
-  private[gbm] def getNumInstancesPerPart: Array[Long] = numInstancesPerPart
+  private[gbm] def getNumRowsPerPart: Array[Long] = numRowsPerPart
 
 
-  private[gbm] def getInstanceOffsetPerPart: Array[Long] = {
-    if (numInstancesPerPart.nonEmpty) {
-      numInstancesPerPart.take(numInstancesPerPart.length - 1).scanLeft(0L)(_ + _)
+  private[gbm] def getRowOffsetPerPart: Array[Long] = {
+    if (numRowsPerPart.nonEmpty) {
+      numRowsPerPart.take(numRowsPerPart.length - 1).scanLeft(0L)(_ + _)
     } else {
       Array.emptyLongArray
     }
   }
 
-  private[gbm] def updateVColsInfo(parallelism: Int): Unit = {
+  private[gbm] def updateVPartsInfo(): Unit = {
     require(numCols > 0)
-    require(parallelism > 0)
+    require(realParallelism > 0)
 
-    colIdsPerVPart = if (parallelism >= numCols) {
+    colIdsPerVPart = if (realParallelism >= numCols) {
       Array.tabulate(numCols)(Array(_))
     } else {
-      Array.tabulate(parallelism)(i => Iterator.range(0, numCols).filter(_ % parallelism == i).toArray)
+      Array.tabulate(realParallelism)(i => Iterator.range(0, numCols).filter(_ % realParallelism == i).toArray)
     }
   }
 

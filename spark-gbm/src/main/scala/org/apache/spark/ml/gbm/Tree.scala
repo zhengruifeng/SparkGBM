@@ -425,21 +425,11 @@ private[gbm] object Tree extends Serializable with Logging {
                                     cb: ClassTag[B], inb: Integral[B],
                                     ch: ClassTag[H], nuh: Numeric[H]): Map[(T, N), Split] = {
     val sc = histograms.sparkContext
-
     val bcRemainingLeaves = sc.broadcast(remainingLeaves)
 
-    val parallelism = boostConf.getRealParallelism(boostConf.getTrialParallelism, sc.defaultParallelism)
-    val repartitioned = if (parallelism == histograms.getNumPartitions) {
-      histograms
-    } else if (parallelism < histograms.getNumPartitions) {
-      histograms.coalesce(parallelism, false)
-    } else {
-      import RDDFunctions._
-      histograms.extendPartitions(parallelism)
-    }
 
     val (splits, Array(numTrials, numSplits, numDenses, sumSize, nnz)) =
-      repartitioned.mapPartitionsWithIndex { case (partId, iter) =>
+      histograms.mapPartitionsWithIndex { case (partId, iter) =>
         val boostConf = bcBoostConf.value
 
         val splits = mutable.OpenHashMap.empty[(T, N), Split]

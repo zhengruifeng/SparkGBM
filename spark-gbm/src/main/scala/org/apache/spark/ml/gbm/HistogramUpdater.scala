@@ -56,8 +56,8 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
-    val sc = data.sparkContext
-    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
+    //    val sc = data.sparkContext
+    //    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
     val treeNodeIds = if (depth == 0) {
       Array.tabulate(baseConf.numTrees)(t => (int.fromInt(t), inn.one))
@@ -71,7 +71,7 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
         }.toArray.sorted
     }
 
-    val partitioner = new RangePratitioner[T, N, C](parallelism, boostConf.getNumCols, treeNodeIds)
+    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealParallelism, boostConf.getNumCols, treeNodeIds)
     logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
@@ -102,7 +102,6 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     val sc = data.sparkContext
-    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
     val minNodeId = inn.fromInt(1 << depth)
 
     val (treeIds, prevPartitioner) = if (depth == 0) {
@@ -116,7 +115,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
     }
 
     val partitioner = HistogramUpdater.updatePartitioner[T, N, C](boostConf,
-      treeIds, depth, parallelism, prevPartitioner)
+      treeIds, depth, boostConf.getRealParallelism, prevPartitioner)
     logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
 
     val histograms = if (depth == 0) {
@@ -187,7 +186,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     val sc = data.sparkContext
-    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
+    //    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
     val treeNodeIds = if (depth == 0) {
       recoder = new ResourceRecoder
@@ -203,7 +202,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
         }.toArray.sorted
     }
 
-    val partitioner = new RangePratitioner[T, N, C](parallelism, boostConf.getNumCols, treeNodeIds)
+    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealParallelism, boostConf.getNumCols, treeNodeIds)
     logInfo(s"Iteration ${baseConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
@@ -239,7 +238,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
 
     val globalVoted = localVoted
-      .reduceByKey(_.plus(_).compress, parallelism)
+      .reduceByKey(_.plus(_).compress, boostConf.getRealParallelism)
       .mapValues { votes =>
         votes.activeIterator.toArray.sortBy(_._2)
           .takeRight(top2K).map(_._1).sorted

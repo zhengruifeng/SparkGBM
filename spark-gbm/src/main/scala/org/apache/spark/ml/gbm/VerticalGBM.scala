@@ -11,7 +11,6 @@ import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.rdd._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql._
 
 
 object VerticalGBM extends Logging {
@@ -35,11 +34,8 @@ object VerticalGBM extends Logging {
                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
 
-    val spark = SparkSession.builder().getOrCreate()
-    val sc = spark.sparkContext
-
-    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
-    boostConf.updateVColsInfo(parallelism)
+    val sc = trainBlocks._1.sparkContext
+    boostConf.updateVPartsInfo()
 
     // train blocks
     val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
@@ -186,7 +182,7 @@ object VerticalGBM extends Logging {
 
           // callback can update boosting configuration
           boostConf.getCallbackFunc.foreach { callback =>
-            if (callback.compute(spark, boostConf, snapshot, iteration + 1,
+            if (callback.compute(boostConf, snapshot, iteration + 1,
               trainMetricsHistory.toArray.clone(), testMetricsHistory.toArray.clone())) {
               finished = true
               logInfo(s"$logPrefix callback ${callback.name} stop training")
@@ -397,7 +393,7 @@ object VerticalGBM extends Logging {
       case (GBM.Block, _) =>
         adaptTreeInputsForBlockSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, recoder)
 
-      case (GBM.Instance, _) =>
+      case (GBM.Row, _) =>
         adaptTreeInputsForInstanceSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, boostConf, bcBoostConf, iteration, computeGrad, recoder)
     }
 
@@ -510,7 +506,7 @@ object VerticalGBM extends Logging {
     val sampledBinVecBlocks = binVecBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSelector = bcBlockSelector.value
-        var blockId = bcBoostConf.value.getBlockIdOffsetPerPart(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffsetPerPart(partId) - 1
 
         iter.flatMap { binVecBlock =>
           blockId += 1
@@ -530,7 +526,7 @@ object VerticalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSelector = bcBlockSelector.value
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
-        var blockId = bcBoostConf.value.getBlockIdOffsetPerPart(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffsetPerPart(partId) - 1
 
         iter.flatMap { weightBlock =>
           blockId += 1
@@ -560,7 +556,7 @@ object VerticalGBM extends Logging {
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSelector = bcBlockSelector.value
-        var blockId = bcBoostConf.value.getBlockIdOffsetPerPart(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffsetPerPart(partId) - 1
 
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           blockId += 1
@@ -633,7 +629,7 @@ object VerticalGBM extends Logging {
     val sampledBinVecBlocks = binVecBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getInstanceOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
 
         iter.map { binVecBlock =>
           val iter2 = binVecBlock.iterator
@@ -657,7 +653,7 @@ object VerticalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getInstanceOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
 
         iter.map { weightBlock =>
           val iter2 = weightBlock.iterator.flatMap { _ =>
@@ -689,7 +685,7 @@ object VerticalGBM extends Logging {
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getInstanceOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
 
         iter.map { case (weightBlock, labelBlock, rawBlock) =>
           require(weightBlock.size == rawBlock.size)

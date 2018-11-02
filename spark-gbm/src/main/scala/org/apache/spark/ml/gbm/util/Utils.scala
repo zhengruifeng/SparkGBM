@@ -607,7 +607,6 @@ private[gbm] object Utils extends Logging {
     while (i < dataframes.length) {
       dataframes(i).write
         .parquet(new Path(path, names(i)).toString)
-
       i += 1
     }
   }

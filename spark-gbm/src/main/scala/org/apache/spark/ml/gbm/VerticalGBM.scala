@@ -219,21 +219,20 @@ object VerticalGBM extends Logging {
     val colIdsPerVPart = boostConf.getVCols[C]()
     require(numVParts == colIdsPerVPart.length)
 
-    trainBinVecBlocks
-      .mapPartitionsWithIndex { case (partId, iter) =>
-        var localBlockId = -1L
-        iter.flatMap { binVecBlock =>
-          localBlockId += 1
-          val binVecs = binVecBlock.iterator.toArray
-          colIdsPerVPart.iterator
-            .zipWithIndex.map { case (colIds, vPartId) =>
+    trainBinVecBlocks.mapPartitionsWithIndex { case (partId, iter) =>
+      var localBlockId = -1L
+      iter.flatMap { binVecBlock =>
+        localBlockId += 1
+        val binVecs = binVecBlock.iterator.toArray
+        colIdsPerVPart.iterator.zipWithIndex
+          .map { case (colIds, vPartId) =>
             val subBinVecBlock = KVMatrix.sliceAndBuild(colIds, binVecs)
             require(subBinVecBlock.size == binVecBlock.size)
             ((partId, localBlockId, vPartId), subBinVecBlock)
           }
-        }
+      }
 
-      }.repartitionAndSortWithinPartitions(new Partitioner {
+    }.repartitionAndSortWithinPartitions(new Partitioner {
 
       override def numPartitions: Int = numVParts
 
@@ -510,7 +509,7 @@ object VerticalGBM extends Logging {
 
         iter.flatMap { binVecBlock =>
           blockId += 1
-          if (blockSelector.exists[Long](blockId)) {
+          if (blockSelector.contains[Long](blockId)) {
             Iterator.single(binVecBlock)
           } else {
             Iterator.empty
@@ -560,7 +559,7 @@ object VerticalGBM extends Logging {
 
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           blockId += 1
-          if (blockSelector.exists[Long](blockId)) {
+          if (blockSelector.contains[Long](blockId)) {
             val gradBlock = computeGradBlock(weightBlock, labelBlock, rawBlock)
             Iterator.single(gradBlock)
           } else {
@@ -585,7 +584,7 @@ object VerticalGBM extends Logging {
 
         iter.flatMap { subBinVecBlock =>
           blockId += 1
-          if (blockSelector.exists[Long](blockId)) {
+          if (blockSelector.contains[Long](blockId)) {
             Iterator.single(subBinVecBlock)
           } else {
             Iterator.empty
@@ -635,7 +634,7 @@ object VerticalGBM extends Logging {
           val iter2 = binVecBlock.iterator
             .flatMap { binVec =>
               rowId += 1
-              if (rowSelector.exists[Long](rowId)) {
+              if (rowSelector.contains[Long](rowId)) {
                 Iterator.single(binVec)
               } else {
                 Iterator.empty
@@ -694,7 +693,7 @@ object VerticalGBM extends Logging {
           val iter2 = Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
             .flatMap { case (weight, label, rawSeq) =>
               rowId += 1
-              if (rowSelector.exists[Long](rowId)) {
+              if (rowSelector.contains[Long](rowId)) {
                 val grad = computeGrad(weight, label, rawSeq)
                 Iterator.single(grad)
               } else {
@@ -722,7 +721,7 @@ object VerticalGBM extends Logging {
           val iter2 = subBinVecBlock.iterator
             .flatMap { subBinVec =>
               rowId += 1
-              if (rowSelector.exists[Long](rowId)) {
+              if (rowSelector.contains[Long](rowId)) {
                 Iterator.single(subBinVec)
               } else {
                 Iterator.empty

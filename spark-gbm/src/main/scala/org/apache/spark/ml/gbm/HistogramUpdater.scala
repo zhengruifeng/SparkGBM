@@ -378,7 +378,7 @@ private[gbm] object HistogramUpdater extends Logging {
           binVecActiveIter.flatMap { case (colId, bin) =>
             indices.iterator.flatMap { i =>
               val treeId = treeIds(i)
-              if (baseConf.colSelector.contains[T, C](treeId, colId)) {
+              if (baseConf.colSelector.containsById[T, C](treeId, colId)) {
                 val nodeId = nodeIds(i)
                 val indexGrad = (i % gradSize) << 1
                 val grad = gradHess(indexGrad)
@@ -399,7 +399,7 @@ private[gbm] object HistogramUpdater extends Logging {
           // make sure all available (treeId, nodeId, colId) tuples are taken into account
           // by the way, store sum of hist in zero-index bin
           Iterator.range(0, numCols)
-            .filter(colId => baseConf.colSelector.contains(treeId, colId))
+            .filter(colId => baseConf.colSelector.containsById(treeId, colId))
             .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, g0, h0)) }
         }
 

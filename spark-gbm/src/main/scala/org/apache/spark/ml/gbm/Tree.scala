@@ -170,13 +170,11 @@ private[gbm] object Tree extends Serializable with Logging {
 
       } else {
 
-        val vPartIds = boostConf.getVCols[C]().iterator
-          .zipWithIndex.filter { case (colIds, _) =>
-          colIds.exists { colId =>
-            Iterator.range(0, newBaseConfig.numTrees)
-              .exists(treeId => newBaseConfig.colSelector.contains(treeId, colId))
-          }
-        }.map(_._2).toArray
+        val vPartIds = boostConf.getVCols[C]()
+          .iterator.zipWithIndex
+          .filter { case (colIds, _) =>
+            colIds.exists(newBaseConfig.colSelector.contains[C])
+          }.map(_._2).toArray
 
         val agNodeIdBlocks = nodeIdBlocks.allgather(numVParts, vPartIds)
 
@@ -185,7 +183,10 @@ private[gbm] object Tree extends Serializable with Logging {
 
       val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](vdata,
         boostConf, newBaseConfig, (n: N) => true)
-        .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
+        .mapPartitionsWithIndex { case (vPartId, iter) =>
+          val localColIds = bcBoostConf.value.getVCols[C](vPartId).toSet
+          iter.filter { case ((_, _, colId), _) => localColIds.contains(colId) }
+        }.setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
 
       splits = findSplitsImpl[T, N, C, B, H](hists, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
 
@@ -231,21 +232,21 @@ private[gbm] object Tree extends Serializable with Logging {
                         cn: ClassTag[N], inn: Integral[N]): Unit = {
 
     if (splits.nonEmpty) {
-      val cnts = splits.keysIterator.toSeq.groupBy(_._1).mapValues(_.length)
+      val counts = splits.keysIterator.toSeq.groupBy(_._1).mapValues(_.length)
       var numFinished = 0
 
       Iterator.range(0, baseConf.numTrees)
         .filterNot(finished).foreach { treeId =>
         val rem = remainingLeaves(treeId)
-        val cnt = cnts.getOrElse(int.fromInt(treeId), 0)
-        require(cnt <= rem)
+        val count = counts.getOrElse(int.fromInt(treeId), 0)
+        require(count <= rem)
 
-        if (cnt == 0 || cnt == rem) {
+        if (count == 0 || count == rem) {
           finished(treeId) = true
           numFinished += 1
         }
 
-        remainingLeaves(treeId) -= cnt
+        remainingLeaves(treeId) -= count
       }
 
       updateRoots[T, N](roots, depth, splits)
@@ -478,12 +479,15 @@ private[gbm] object Tree extends Serializable with Logging {
 
       }.treeReduce(f = {
         case ((splits1, metrics1), (splits2, metrics2)) =>
+          require(metrics1.length == metrics2.length)
+
           val splits = (splits1 ++ splits2)
             .groupBy(_._1).mapValues(_.map(_._2).maxBy(_.gain)).toArray
-            .groupBy(_._1._1).iterator.flatMap { case (treeId, array) =>
-            val rem = bcRemainingLeaves.value(int.toInt(treeId))
-            array.sortBy(_._2.gain).takeRight(rem)
-          }.toArray
+            .groupBy(_._1._1).iterator
+            .flatMap { case (treeId, array) =>
+              val rem = bcRemainingLeaves.value(int.toInt(treeId))
+              array.sortBy(_._2.gain).takeRight(rem)
+            }.toArray
 
           var i = 0
           while (i < metrics1.length) {

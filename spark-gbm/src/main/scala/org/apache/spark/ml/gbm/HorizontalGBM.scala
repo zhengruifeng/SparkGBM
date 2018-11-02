@@ -466,7 +466,7 @@ object HorizontalGBM extends Logging {
           rowId += numParts
 
           if (norm >= threshold ||
-            otherSelector.exists[Long](rowId % numRows)) {
+            otherSelector.contains[Long](rowId % numRows)) {
             Iterator.single(binVec)
           } else {
             Iterator.empty
@@ -531,7 +531,7 @@ object HorizontalGBM extends Logging {
           if (norm >= threshold) {
             Iterator.single(grad)
 
-          } else if (otherSelector.exists[Long](rowId % numRows)) {
+          } else if (otherSelector.contains[Long](rowId % numRows)) {
             var i = 0
             while (i < grad.length) {
               grad(i) *= weightScale
@@ -631,7 +631,7 @@ object HorizontalGBM extends Logging {
 
     val sampledBinVecBlocks = binVecBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
-        if (partSelector.exists[Int](partId)) {
+        if (partSelector.contains[Int](partId)) {
           iter
         } else {
           Iterator.empty
@@ -670,7 +670,7 @@ object HorizontalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val partSelector = bcPartSelector.value
 
-        if (partSelector.exists[Int](partId)) {
+        if (partSelector.contains[Int](partId)) {
           iter.map { case (weightBlock, labelBlock, rawBlock) =>
             computeGradBlock(weightBlock, labelBlock, rawBlock)
           }
@@ -724,7 +724,7 @@ object HorizontalGBM extends Logging {
 
         iter.flatMap { binVecBlock =>
           blockId += numParts
-          if (blockSelector.exists[Long](blockId % numBlocks)) {
+          if (blockSelector.contains[Long](blockId % numBlocks)) {
             Iterator.single(binVecBlock)
           } else {
             Iterator.empty
@@ -769,7 +769,7 @@ object HorizontalGBM extends Logging {
 
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           blockId += numParts
-          if (blockSelector.exists[Long](blockId % numBlocks)) {
+          if (blockSelector.contains[Long](blockId % numBlocks)) {
             val gradBlock = computeGradBlock(weightBlock, labelBlock, rawBlock)
             Iterator.single(gradBlock)
           } else {
@@ -825,7 +825,7 @@ object HorizontalGBM extends Logging {
         iter.flatMap(_.iterator)
           .flatMap { binVec =>
             rowId += numParts
-            if (rowSelector.exists[Long](rowId % numRows)) {
+            if (rowSelector.contains[Long](rowId % numRows)) {
               Iterator.single(binVec)
             } else {
               Iterator.empty
@@ -880,7 +880,7 @@ object HorizontalGBM extends Logging {
 
         }.flatMap { case (weight, label, rawSeq) =>
           rowId += numParts
-          if (rowSelector.exists[Long](rowId % numRows)) {
+          if (rowSelector.contains[Long](rowId % numRows)) {
             val grad = computeGrad(weight, label, rawSeq)
             Iterator.single(grad)
           } else {

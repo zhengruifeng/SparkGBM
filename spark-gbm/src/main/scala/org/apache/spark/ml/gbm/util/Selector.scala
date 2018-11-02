@@ -18,23 +18,23 @@ private[gbm] trait Selector extends Serializable {
 
   def size: Int
 
-  def contains[K, V](setId: K, value: V)
-                    (implicit ink: Integral[K], inv: Integral[V]): Boolean
+  def containsById[K, V](setId: K, value: V)
+                        (implicit ink: Integral[K], inv: Integral[V]): Boolean
 
-  def exists[K, V](setIds: Array[K], value: V)
-                  (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
-    setIds.exists { setId => contains[K, V](setId, value) }
+  def contains[K, V](setIds: Array[K], value: V)
+                    (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    setIds.exists { setId => containsById[K, V](setId, value) }
   }
 
-  def exists[V](value: V)
-               (implicit inv: Integral[V]): Boolean = {
-    exists[Int, V](Array.range(0, size), value)
+  def contains[V](value: V)
+                 (implicit inv: Integral[V]): Boolean = {
+    contains[Int, V](Array.range(0, size), value)
   }
 
   def index[K, V](setIds: Array[K], value: V)
                  (implicit ck: ClassTag[K], ink: Integral[K],
                   inv: Integral[V]): Array[K] = {
-    setIds.filter { setId => contains[K, V](setId, value) }
+    setIds.filter { setId => containsById[K, V](setId, value) }
   }
 
   def index[K, V](value: V)
@@ -118,8 +118,8 @@ private[gbm] object Selector extends Serializable {
 
 private[gbm] case class TrueSelector(size: Int) extends Selector {
 
-  override def contains[K, V](setId: K, value: V)
-                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+  override def containsById[K, V](setId: K, value: V)
+                                 (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
     val t = ink.toInt(setId)
     require(t >= 0 && t < size)
     true
@@ -137,13 +137,13 @@ private[gbm] case class HashSelector(maximum: Int,
 
   override def size: Int = seeds.length
 
-  override def contains[K, V](setId: K, value: V)
-                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+  override def containsById[K, V](setId: K, value: V)
+                                 (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
     Murmur3_x86_32.hashLong(inv.toLong(value), seeds(ink.toInt(setId))).abs < maximum
   }
 
-  override def exists[K, V](setIds: Array[K], value: V)
-                           (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+  override def contains[K, V](setIds: Array[K], value: V)
+                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
     if (setIds.nonEmpty) {
       val value_ = inv.toLong(value)
 
@@ -210,8 +210,8 @@ private[gbm] case class SetSelector(sets: Array[Array[Long]]) extends Selector {
 
   override def size: Int = sets.length
 
-  override def contains[K, V](setId: K, value: V)
-                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+  override def containsById[K, V](setId: K, value: V)
+                                 (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
     ju.Arrays.binarySearch(sets(ink.toInt(setId)), inv.toLong(value)) >= 0
   }
 
@@ -226,9 +226,9 @@ private[gbm] case class UnionSelector(selectors: Seq[Selector]) extends Selector
 
   override def size: Int = selectors.head.size
 
-  override def contains[K, V](setId: K, value: V)
-                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
-    selectors.forall(_.contains[K, V](setId, value))
+  override def containsById[K, V](setId: K, value: V)
+                                 (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    selectors.forall(_.containsById[K, V](setId, value))
   }
 
   override def toString: String = {

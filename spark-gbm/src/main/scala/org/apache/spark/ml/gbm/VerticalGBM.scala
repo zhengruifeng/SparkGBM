@@ -35,16 +35,15 @@ object VerticalGBM extends Logging {
                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
 
     val sc = trainBlocks._1.sparkContext
-    boostConf.updateVPartsInfo()
+    boostConf.updateVPartInfo()
 
     // train blocks
     val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
-    GBM.touchWeightBlocksAndUpdateSizeInfo[H](trainWeightBlocks, boostConf, true)
-    GBM.touchWeightBlocksAndUpdateSizeInfo[H](trainWeightBlocks, boostConf)
+    GBM.touchBlocksAndUpdatePartInfo[H](trainWeightBlocks, boostConf, true)
 
     // test blocks
     testBlocks.foreach { case (testWeightBlocks, _, _) =>
-      GBM.touchWeightBlocksAndUpdateSizeInfo(testWeightBlocks, boostConf, false)
+      GBM.touchBlocksAndUpdatePartInfo(testWeightBlocks, boostConf, false)
     }
 
 

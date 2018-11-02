@@ -745,28 +745,7 @@ class BoostConfig extends Logging with Serializable {
 
   private[gbm] def getNumBlocksPerPart: Array[Long] = numBlocksPerPart
 
-
-  private[gbm] var numBlocks: Long = -1
-
-  private[gbm] def setNumBlocks(value: Long): this.type = {
-    require(value > 0)
-    numBlocks = value
-    this
-  }
-
-  private[gbm] def getNumBlocks: Long = numBlocks
-
-
-  private[gbm] var numRows: Long = -1
-
-  private[gbm] def setNumRows(value: Long): this.type = {
-    require(value > 0)
-    numRows = value
-    this
-  }
-
-  private[gbm] def getNumRows: Long = numRows
-
+  private[gbm] def getNumBlocks: Long = numBlocksPerPart.sum
 
   private[gbm] def getBlockOffsetPerPart: Array[Long] = {
     if (numBlocksPerPart.nonEmpty) {
@@ -775,6 +754,7 @@ class BoostConfig extends Logging with Serializable {
       Array.emptyLongArray
     }
   }
+
 
   private var numRowsPerPart: Array[Long] = Array.emptyLongArray
 
@@ -786,6 +766,7 @@ class BoostConfig extends Logging with Serializable {
 
   private[gbm] def getNumRowsPerPart: Array[Long] = numRowsPerPart
 
+  private[gbm] def getNumRows: Long = numRowsPerPart.sum
 
   private[gbm] def getRowOffsetPerPart: Array[Long] = {
     if (numRowsPerPart.nonEmpty) {
@@ -795,7 +776,7 @@ class BoostConfig extends Logging with Serializable {
     }
   }
 
-  private[gbm] def updateVPartsInfo(): Unit = {
+  private[gbm] def updateVPartInfo(): Unit = {
     require(numCols > 0)
     require(realParallelism > 0)
 

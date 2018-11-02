@@ -705,52 +705,34 @@ private[gbm] object GBM extends Logging {
   }
 
 
-  def touchWeightBlocksAndUpdateSizeInfo[H](weightBlocks: RDD[CompactArray[H]],
-                                            boostConf: BoostConfig): Unit = {
+  def touchBlocksAndUpdatePartInfo[H](weightBlocks: RDD[CompactArray[H]],
+                                      boostConf: BoostConfig,
+                                      update: Boolean): Unit = {
     val array = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
         var numBlocks = 0L
-        var numInstances = 0L
+        var numRows = 0L
 
         while (iter.hasNext) {
           val weightBlock = iter.next()
           numBlocks += 1
-          numInstances += weightBlock.size
+          numRows += weightBlock.size
         }
 
-        Iterator.single((partId, numBlocks, numInstances))
+        Iterator.single((partId, numBlocks, numRows))
       }.collect().sorted
 
     require(array.length == weightBlocks.getNumPartitions)
 
-    boostConf.setNumBlocks(array.map(_._2).sum)
-    boostConf.setNumRows(array.map(_._3).sum)
-
-    boostConf.setNumBlocksPerPart(array.map(_._2))
-    boostConf.setNumRowsPerPart(array.map(_._3))
-    logInfo(s"${weightBlocks.name}: ${boostConf.getNumRows} instances, ${boostConf.getNumBlocks} blocks, " +
-      s"numInstancesPerPartition ${boostConf.getNumRowsPerPart.mkString("[", ",", "]")}, " +
-      s"numBlocksPerPartition ${boostConf.getNumBlocksPerPart.mkString("[", ",", "]")}")
-  }
-
-
-  def touchWeightBlocksAndUpdateSizeInfo[H](weightBlocks: RDD[CompactArray[H]],
-                                            boostConf: BoostConfig,
-                                            update: Boolean): Unit = {
-    val (numRows, numBlocks) =
-      weightBlocks.map { weightBlock =>
-        (weightBlock.size.toLong, 1L)
-      }.treeReduce(f = {
-        case (t1, t2) => (t1._1 + t2._1, t1._2 + t2._2)
-      }, depth = boostConf.getAggregationDepth)
-
     if (update) {
-      boostConf.setNumBlocks(numBlocks)
-      boostConf.setNumRows(numRows)
+      boostConf.setNumBlocksPerPart(array.map(_._2))
+      boostConf.setNumRowsPerPart(array.map(_._3))
     }
 
-    logInfo(s"${weightBlocks.name}: $numRows rows, $numBlocks blocks, " +
-      s"${weightBlocks.getNumPartitions} partitions")
+    logInfo(s"${weightBlocks.name}: ${array.length} parts, " +
+      s"${array.map(_._2).sum} blocks, ${array.map(_._3).sum} rows, " +
+      s"numBlocksPerPart ${array.map(_._2).mkString("[", ",", "]")}, " +
+      s"numRowsPerPart ${array.map(_._3).mkString("[", ",", "]")}")
   }
 
 

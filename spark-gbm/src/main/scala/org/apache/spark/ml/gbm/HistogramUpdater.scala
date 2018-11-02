@@ -347,122 +347,61 @@ private[gbm] object HistogramUpdater extends Logging {
     }
 
     data.mapPartitions { iter =>
-      val histSums = mutable.OpenHashMap.empty[(T, N), (H, H)]
-
-      //      val sum0 = mutable.OpenHashMap.empty[(T, N), (H, H)]
-      //
-      //      val sum1 = mutable.OpenHashMap.empty[(T, N, C, B), (H, H)]
-      //
-      //      val sum2 = mutable.OpenHashMap.empty[(T, N, C), KVVector[B, H]]
-      //
-      //      iter.flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
-      //        sum0.clear()
-      //        sum1.clear()
-      //
-      //        val iter2 = Utils.zip4(binVecBlock.activeIterator, treeIdBlock.iterator,
-      //          nodeIdBlock.iterator, gradBlock.iterator)
-      //
-      //        while (iter2.hasNext) {
-      //          val (binVecActiveIter, treeIds, nodeIds, gradHess) = iter2.next()
-      //          require(treeIds.length == nodeIds.length)
-      //
-      //          val selected = Iterator.range(0, nodeIds.length)
-      //            .filter(i => f(nodeIds(i))).toArray
-      //
-      //          if (selected.nonEmpty) {
-      //            val gradSize = gradHess.length >> 1
-      //
-      //            // update sum0
-      //            var j = 0
-      //            while (j < selected.length) {
-      //              val i = selected(j)
-      //              val treeId = treeIds(i)
-      //              val nodeId = nodeIds(i)
-      //              val indexGrad = (i % gradSize) << 1
-      //              val grad = gradHess(indexGrad)
-      //              val hess = gradHess(indexGrad + 1)
-      //              val (g0, h0) = sum0.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
-      //              sum0.update((treeId, nodeId), (nuh.plus(g0, grad), nuh.plus(h0, hess)))
-      //              j += 1
-      //            }
-      //
-      //
-      //            // update sum1
-      //            while (binVecActiveIter.hasNext) {
-      //              val (colId, bin) = binVecActiveIter.next()
-      //
-      //              var j = 0
-      //              while (j < selected.length) {
-      //                val i = selected(j)
-      //                val treeId = treeIds(i)
-      //
-      //                if (baseConf.colSelector.contains[T, C](treeId, colId)) {
-      //                  val nodeId = nodeIds(i)
-      //                  val indexGrad = (i % gradSize) << 1
-      //                  val grad = gradHess(indexGrad)
-      //                  val hess = gradHess(indexGrad + 1)
-      //
-      //                  val hist = sum2.getOrElse((treeId, nodeId, colId), KVVector.empty[B, H])
-      //                  val indGrad = inb.plus(bin, bin)
-      //                  val indHess = inb.plus(indGrad, inb.one)
-      //                  sum2.update((treeId, nodeId, colId), hist.plus(indHess, hess).plus(indGrad, grad))
-      //
-      //                  val (g1, h1) = sum1.getOrElse((treeId, nodeId, colId, bin), (nuh.zero, nuh.zero))
-      //                  sum1.update((treeId, nodeId, colId, bin), (nuh.plus(g1, grad), nuh.plus(h1, hess)))
-      //                }
-      //
-      //                j += 1
-      //              }
-      //            }
-      //          }
-      //        }
-      //
-      //        sum1.iterator.map { case ((treeId, nodeId, colId, bin), (g1, h1)) =>
-      //          ((treeId, nodeId, colId), (bin, g1, h1))
-      //
-      //        } ++ sum0.iterator.flatMap { case ((treeId, nodeId), (gradSum, hessSum)) =>
-      //          // make sure all available (treeId, nodeId, colId) tuples are taken into account
-      //          // by the way, store sum of hist in zero-index bin
-      //          Iterator.range(0, numCols)
-      //            .filter(colId => baseConf.colSelector.contains[T, Int](treeId, colId))
-      //            .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, gradSum, hessSum)) }
-      //        }
-      //      }
-
+      val sum0 = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
       iter.flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
-        Utils.zip4(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator, gradBlock.iterator)
+        Utils.zip4(binVecBlock.activeIterator, treeIdBlock.iterator,
+          nodeIdBlock.iterator, gradBlock.iterator)
 
-      }.flatMap { case (binVec, treeIds, nodeIds, gradHess) =>
+      }.flatMap { case (binVecActiveIter, treeIds, nodeIds, gradHess) =>
         require(treeIds.length == nodeIds.length)
 
-        val gradSize = gradHess.length >> 1
+        val indices = Iterator.range(0, nodeIds.length)
+          .filter(i => f(nodeIds(i))).toArray
 
-        Iterator.range(0, nodeIds.length)
-          .filter(i => f(nodeIds(i)))
-          .flatMap { i =>
+        if (indices.nonEmpty) {
+          val gradSize = gradHess.length >> 1
+
+          // update sum0
+          var j = 0
+          while (j < indices.length) {
+            val i = indices(j)
             val treeId = treeIds(i)
             val nodeId = nodeIds(i)
             val indexGrad = (i % gradSize) << 1
             val grad = gradHess(indexGrad)
             val hess = gradHess(indexGrad + 1)
-
-            val (g, h) = histSums.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
-            histSums.update((treeId, nodeId), (nuh.plus(g, grad), nuh.plus(h, hess)))
-
-            // ignore zero-index bins
-            binVec.activeIterator
-              .filter { case (colId, _) => baseConf.colSelector.contains[T, C](treeId, colId) }
-              .map { case (colId, bin) => ((treeId, nodeId, colId), (bin, grad, hess)) }
+            val (g0, h0) = sum0.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
+            sum0.update((treeId, nodeId), (nuh.plus(g0, grad), nuh.plus(h0, hess)))
+            j += 1
           }
 
-      } ++ histSums.iterator
-        .flatMap { case ((treeId, nodeId), (gradSum, hessSum)) =>
+          binVecActiveIter.flatMap { case (colId, bin) =>
+            indices.iterator.flatMap { i =>
+              val treeId = treeIds(i)
+              if (baseConf.colSelector.contains[T, C](treeId, colId)) {
+                val nodeId = nodeIds(i)
+                val indexGrad = (i % gradSize) << 1
+                val grad = gradHess(indexGrad)
+                val hess = gradHess(indexGrad + 1)
+                Iterator.single((treeId, nodeId, colId), (bin, grad, hess))
+              } else {
+                Iterator.empty
+              }
+            }
+          }
+
+        } else {
+          Iterator.empty
+        }
+
+      } ++ sum0.iterator
+        .flatMap { case ((treeId, nodeId), (g0, h0)) =>
           // make sure all available (treeId, nodeId, colId) tuples are taken into account
           // by the way, store sum of hist in zero-index bin
           Iterator.range(0, numCols)
             .filter(colId => baseConf.colSelector.contains(treeId, colId))
-            .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, gradSum, hessSum)) }
+            .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, g0, h0)) }
         }
 
     }.aggregatePartitionsByKey(KVVector.empty[B, H], ordering)(
@@ -472,15 +411,20 @@ private[gbm] object HistogramUpdater extends Logging {
           val indexHess = inb.plus(indexGrad, inb.one)
           hist.plus(indexHess, hess)
             .plus(indexGrad, grad)
-      }, combOp = _.plus(_).compress
+
+      }, combOp = _.plus(_)
 
     ).mapValues { hist =>
+      val two = inb.fromInt(2)
+
       var nzGradSum = nuh.zero
       var nzHessSum = nuh.zero
 
-      hist.activeIterator.foreach { case (bin, v) =>
+      val iter = hist.activeIterator
+      while (iter.hasNext) {
+        val (bin, v) = iter.next()
         if (inb.gt(bin, inb.one)) {
-          if (inb.equiv(inb.rem(bin, inb.fromInt(2)), inb.zero)) {
+          if (inb.equiv(inb.rem(bin, two), inb.zero)) {
             nzGradSum = nuh.plus(nzGradSum, v)
           } else {
             nzHessSum = nuh.plus(nzHessSum, v)

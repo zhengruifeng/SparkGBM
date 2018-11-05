@@ -150,6 +150,8 @@ class GBMRegressor(override val uid: String) extends
 
   def setBlockSize(value: Int): this.type = set(blockSize, value)
 
+  def setImportanceType(value: String): this.type = set(importanceType, value)
+
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)
   }
@@ -341,14 +343,7 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
   }
 
   def featureImportances: Vector = {
-    val n = $(firstTrees)
-    if (n == -1 || n == model.numTrees) {
-      // precomputed feature importance
-      model.importance
-    } else {
-      logInfo(s"Compute feature importances with first $n trees")
-      model.computeImportance(n)
-    }
+    model.computeImportance($(importanceType), $(firstTrees))
   }
 
   def leaf(features: Vector): Vector = {

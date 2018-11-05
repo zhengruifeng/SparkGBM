@@ -68,6 +68,8 @@ trait Node extends Serializable {
 
   def nodeIterator: Iterator[Node]
 
+  def internalNodeIterator: Iterator[InternalNode]
+
   def numDescendants: Int =
     nodeIterator.size
 
@@ -141,6 +143,12 @@ class InternalNode(val colId: Int,
       leftNode.nodeIterator ++
       rightNode.nodeIterator
   }
+
+  override def internalNodeIterator: Iterator[InternalNode] = {
+    Iterator(this) ++
+      leftNode.internalNodeIterator ++
+      rightNode.internalNodeIterator
+  }
 }
 
 class LeafNode(val weight: Float,
@@ -149,6 +157,8 @@ class LeafNode(val weight: Float,
   override def subtreeDepth: Int = 0
 
   override def nodeIterator: Iterator[Node] = Iterator(this)
+
+  override def internalNodeIterator: Iterator[InternalNode] = Iterator.empty
 
   private[gbm] override def index[@spec(Byte, Short, Int) B](bins: Int => B)
                                                             (implicit inb: Integral[B]): Int = leafId

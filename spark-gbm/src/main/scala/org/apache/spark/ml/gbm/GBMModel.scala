@@ -1,6 +1,7 @@
 package org.apache.spark.ml.gbm
 
 import java.io._
+import java.{util => ju}
 
 import scala.collection.mutable
 
@@ -27,8 +28,6 @@ class GBMModel(val obj: ObjFunc,
   require(trees.length == weights.length)
   require(weights.forall(w => !w.isNaN && !w.isInfinity))
 
-  /** feature importance of whole trees */
-  @transient lazy val importance: Vector = computeImportance(numTrees)
 
   @transient lazy val baseScore: Array[Double] = obj.transform(rawBase)
 
@@ -42,8 +41,9 @@ class GBMModel(val obj: ObjFunc,
 
   def depths: Array[Int] = trees.map(_.depth)
 
+
   /** feature importance of the first trees */
-  def computeImportance(firstTrees: Int): Vector = {
+  def computeImportance(mode: String, firstTrees: Int): Vector = {
     require(firstTrees >= -1 && firstTrees <= numTrees)
 
     var n = firstTrees
@@ -55,22 +55,49 @@ class GBMModel(val obj: ObjFunc,
       n = numTrees
     }
 
-    val gains = mutable.OpenHashMap.empty[Int, Double]
 
-    var i = 0
-    while (i < n) {
-      trees(i).computeImportance
-        .foreach { case (colId, gain) =>
-          val g = gains.getOrElse(colId, 0.0)
-          gains.update(colId, g + gain)
+    val iter = Iterator.range(0, n)
+      .flatMap { i => trees(i).root.internalNodeIterator }
+
+    val gains = mode.toLowerCase(ju.Locale.ROOT) match {
+      case GBM.AvgGain =>
+        val gains = mutable.OpenHashMap.empty[Int, (Double, Int)]
+        while (iter.hasNext) {
+          val n = iter.next()
+          val (g, c) = gains.getOrElse(n.colId, (0.0, 0))
+          gains.update(n.colId, (g + n.gain, c + 1))
         }
-      i += 1
+
+        gains.map { case (colId, (gain, count)) =>
+          (colId, gain / count)
+        }.toArray
+
+
+      case GBM.SumGain =>
+        val gains = mutable.OpenHashMap.empty[Int, Double]
+        while (iter.hasNext) {
+          val n = iter.next()
+          val g = gains.getOrElse(n.colId, 0.0)
+          gains.update(n.colId, g + n.gain)
+        }
+
+        gains.toArray
+
+
+      case GBM.NumSplits =>
+        val counts = mutable.OpenHashMap.empty[Int, Int]
+        while (iter.hasNext) {
+          val n = iter.next()
+          val c = counts.getOrElse(n.colId, 0)
+          counts.update(n.colId, c + 1)
+        }
+
+        counts.mapValues(_.toDouble).toArray
     }
 
-    val (indices, values) = gains.toArray.sortBy(_._1).unzip
-    val sum = values.sum
+    val (indices, values) = gains.sortBy(_._1).unzip
 
-    Vectors.sparse(numCols, indices, values.map(_ / sum))
+    Vectors.sparse(numCols, indices, values)
       .compressed
   }
 

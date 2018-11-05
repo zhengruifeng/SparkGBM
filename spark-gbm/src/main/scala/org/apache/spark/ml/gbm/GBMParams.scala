@@ -643,5 +643,20 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getBlockSize: Int = $(blockSize)
 
   setDefault(blockSize -> 4096)
+
+
+  /**
+    * Method to compute feature importance.
+    * (default = "numsplits")
+    *
+    * @group param
+    */
+  final val importanceType: Param[String] =
+    new Param[String](this, "importanceType", "Method to compute feature importance.",
+      ParamValidators.inArray[String](Array("avggain", "sumgain", "numsplits")))
+
+  def getImportanceType: String = $(importanceType)
+
+  setDefault(importanceType -> "numsplits")
 }
 

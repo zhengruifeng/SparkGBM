@@ -154,6 +154,8 @@ class GBMClassifier(override val uid: String)
 
   def setBlockSize(value: Int): this.type = set(blockSize, value)
 
+  def setImportanceType(value: String): this.type = set(importanceType, value)
+
   override def fit(dataset: Dataset[_]): GBMClassificationModel = {
     fit(dataset, None)
   }
@@ -417,14 +419,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel, val 
   }
 
   def featureImportances: Vector = {
-    val n = $(firstTrees)
-    if (n == -1 || n == model.numTrees) {
-      // precomputed feature importance
-      model.importance
-    } else {
-      logInfo(s"Compute feature importances with first $n trees")
-      model.computeImportance(n)
-    }
+    model.computeImportance($(importanceType), $(firstTrees))
   }
 
   def leaf(features: Vector): Vector = {

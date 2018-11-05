@@ -27,18 +27,42 @@ class TreeModel(val root: Node) extends Serializable {
   private[gbm] def index[@spec(Byte, Short, Int) B](bins: Int => B)
                                                    (implicit inb: Integral[B]): Int = root.index[B](bins)
 
-  def computeImportance: Map[Int, Double] = {
-    val gains = mutable.OpenHashMap.empty[Int, Double]
+  def computeImportance(mode: String): Map[Int, Double] = {
+    val iter = root.internalNodeIterator
 
-    root.nodeIterator.foreach {
-      case n: InternalNode =>
-        val g = gains.getOrElse(n.colId, 0.0)
-        gains.update(n.colId, g + n.gain)
+    mode.toLowerCase(ju.Locale.ROOT) match {
+      case GBM.AvgGain =>
+        val gains = mutable.OpenHashMap.empty[Int, (Double, Int)]
+        while (iter.hasNext) {
+          val n = iter.next()
+          val (g, c) = gains.getOrElse(n.colId, (0.0, 0))
+          gains.update(n.colId, (g + n.gain, c + 1))
+        }
 
-      case _ =>
+        gains.map { case (colId, (gain, count)) =>
+          (colId, gain / count)
+        }.toMap
+
+      case GBM.SumGain =>
+        val gains = mutable.OpenHashMap.empty[Int, Double]
+        while (iter.hasNext) {
+          val n = iter.next()
+          val g = gains.getOrElse(n.colId, 0.0)
+          gains.update(n.colId, g + n.gain)
+        }
+
+        gains.toMap
+
+      case GBM.NumSplits =>
+        val counts = mutable.OpenHashMap.empty[Int, Int]
+        while (iter.hasNext) {
+          val n = iter.next()
+          val c = counts.getOrElse(n.colId, 0)
+          counts.update(n.colId, c + 1)
+        }
+
+        counts.mapValues(_.toDouble).toMap
     }
-
-    gains.toMap
   }
 }
 

@@ -524,6 +524,10 @@ private[gbm] object GBM extends Logging {
   val SinglePrecision = "float"
   val DoublePrecision = "double"
 
+  val AvgGain = "avggain"
+  val SumGain = "sumgain"
+  val NumSplits = "numsplits"
+
 
   /**
     * train a GBM model, dataset contains (weight, label, vec)

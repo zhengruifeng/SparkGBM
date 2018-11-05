@@ -27,10 +27,11 @@ class TreeModel(val root: Node) extends Serializable {
   private[gbm] def index[@spec(Byte, Short, Int) B](bins: Int => B)
                                                    (implicit inb: Integral[B]): Int = root.index[B](bins)
 
-  def computeImportance(mode: String): Map[Int, Double] = {
+  def computeImportances(importanceType: String): Map[Int, Double] = {
     val iter = root.internalNodeIterator
 
-    mode.toLowerCase(ju.Locale.ROOT) match {
+    importanceType.toLowerCase(ju.Locale.ROOT) match {
+
       case GBM.AvgGain =>
         val gains = mutable.OpenHashMap.empty[Int, (Double, Int)]
         while (iter.hasNext) {
@@ -43,6 +44,7 @@ class TreeModel(val root: Node) extends Serializable {
           (colId, gain / count)
         }.toMap
 
+
       case GBM.SumGain =>
         val gains = mutable.OpenHashMap.empty[Int, Double]
         while (iter.hasNext) {
@@ -52,6 +54,7 @@ class TreeModel(val root: Node) extends Serializable {
         }
 
         gains.toMap
+
 
       case GBM.NumSplits =>
         val counts = mutable.OpenHashMap.empty[Int, Int]

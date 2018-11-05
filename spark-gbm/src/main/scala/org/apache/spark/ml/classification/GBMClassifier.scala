@@ -419,7 +419,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel, val 
   }
 
   def featureImportances: Vector = {
-    model.computeImportance($(importanceType), $(firstTrees))
+    model.computeImportances($(importanceType), $(firstTrees))
   }
 
   def leaf(features: Vector): Vector = {

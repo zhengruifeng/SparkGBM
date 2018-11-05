@@ -343,7 +343,7 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
   }
 
   def featureImportances: Vector = {
-    model.computeImportance($(importanceType), $(firstTrees))
+    model.computeImportances($(importanceType), $(firstTrees))
   }
 
   def leaf(features: Vector): Vector = {

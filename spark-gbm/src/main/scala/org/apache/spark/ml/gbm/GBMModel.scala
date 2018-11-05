@@ -43,7 +43,8 @@ class GBMModel(val obj: ObjFunc,
 
 
   /** feature importance of the first trees */
-  def computeImportance(mode: String, firstTrees: Int): Vector = {
+  def computeImportances(importanceType: String,
+                         firstTrees: Int): Vector = {
     require(firstTrees >= -1 && firstTrees <= numTrees)
 
     var n = firstTrees
@@ -59,7 +60,8 @@ class GBMModel(val obj: ObjFunc,
     val iter = Iterator.range(0, n)
       .flatMap { i => trees(i).root.internalNodeIterator }
 
-    val gains = mode.toLowerCase(ju.Locale.ROOT) match {
+    val gains = importanceType.toLowerCase(ju.Locale.ROOT) match {
+
       case GBM.AvgGain =>
         val gains = mutable.OpenHashMap.empty[Int, (Double, Int)]
         while (iter.hasNext) {

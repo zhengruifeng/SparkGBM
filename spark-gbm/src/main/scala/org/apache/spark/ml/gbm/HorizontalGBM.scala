@@ -10,7 +10,6 @@ import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.rdd._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.util.QuantileSummaries
 
 
@@ -381,7 +380,7 @@ object HorizontalGBM extends Logging {
                                             cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                             cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                             cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                            ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): (RDD[KVMatrix[C, B]], RDD[ArrayBlock[T]], RDD[ArrayBlock[H]]) = {
+                                            ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]) = {
     import RDDFunctions._
     import nuh._
 
@@ -558,7 +557,7 @@ object HorizontalGBM extends Logging {
                                                    cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                    cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                    cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): (RDD[KVMatrix[C, B]], RDD[ArrayBlock[T]], RDD[ArrayBlock[H]]) = {
+                                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]) = {
     import RDDFunctions._
 
     val treeIdBlocks = weightBlocks
@@ -606,7 +605,7 @@ object HorizontalGBM extends Logging {
                                                          cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                          cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                          cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): (RDD[KVMatrix[C, B]], RDD[ArrayBlock[T]], RDD[ArrayBlock[H]]) = {
+                                                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]) = {
     import RDDFunctions._
 
     val sc = weightBlocks.sparkContext
@@ -690,7 +689,7 @@ object HorizontalGBM extends Logging {
                                                      cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                      cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): (RDD[KVMatrix[C, B]], RDD[ArrayBlock[T]], RDD[ArrayBlock[H]]) = {
+                                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]) = {
     import RDDFunctions._
 
     val sc = weightBlocks.sparkContext
@@ -781,7 +780,7 @@ object HorizontalGBM extends Logging {
                                                    cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                    cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                    cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): (RDD[KVMatrix[C, B]], RDD[ArrayBlock[T]], RDD[ArrayBlock[H]]) = {
+                                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]) = {
     import RDDFunctions._
 
     val sc = weightBlocks.sparkContext

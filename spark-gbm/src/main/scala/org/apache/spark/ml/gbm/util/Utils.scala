@@ -61,7 +61,7 @@ private[gbm] object Utils extends Logging {
     */
   def zip2[V1, V2](iter1: Iterator[V1],
                    iter2: Iterator[V2],
-                   validate: Boolean = true): Iterator[(V1, V2)] = {
+                   validate: Boolean = true) = {
 
     if (validate) {
       new Iterator[(V1, V2)] {
@@ -93,7 +93,7 @@ private[gbm] object Utils extends Logging {
   def zip3[V1, V2, V3](iter1: Iterator[V1],
                        iter2: Iterator[V2],
                        iter3: Iterator[V3],
-                       validate: Boolean = true): Iterator[(V1, V2, V3)] = {
+                       validate: Boolean = true) = {
 
     if (validate) {
       new Iterator[(V1, V2, V3)] {
@@ -126,7 +126,7 @@ private[gbm] object Utils extends Logging {
                            iter2: Iterator[V2],
                            iter3: Iterator[V3],
                            iter4: Iterator[V4],
-                           validate: Boolean = true): Iterator[(V1, V2, V3, V4)] = {
+                           validate: Boolean = true) = {
 
     if (validate) {
       new Iterator[(V1, V2, V3, V4)] {
@@ -158,7 +158,7 @@ private[gbm] object Utils extends Logging {
   def validateOrdering[K](iterator: Iterator[K],
                           ascending: Boolean = true,
                           strictly: Boolean = true)
-                         (implicit ork: Ordering[K]): Iterator[K] = new Iterator[K]() {
+                         (implicit ork: Ordering[K]) = new Iterator[K]() {
     private var k = Option.empty[K]
 
     private val check = (ascending, strictly) match {
@@ -210,7 +210,7 @@ private[gbm] object Utils extends Logging {
   def validateKeyOrdering[K, V](iterator: Iterator[(K, V)],
                                 ascending: Boolean = true,
                                 strictly: Boolean = true)
-                               (implicit ork: Ordering[K]): Iterator[(K, V)] = new Iterator[(K, V)]() {
+                               (implicit ork: Ordering[K]) = new Iterator[(K, V)]() {
     private var kv = Option.empty[(K, V)]
 
     private val check = (ascending, strictly) match {
@@ -262,7 +262,7 @@ private[gbm] object Utils extends Logging {
   def outerJoinSortedIters[K, V1, V2](iterator1: Iterator[(K, V1)],
                                       iterator2: Iterator[(K, V2)],
                                       validate: Boolean = true)
-                                     (implicit ork: Ordering[K]): Iterator[(K, Option[V1], Option[V2])] = new Iterator[(K, Option[V1], Option[V2])]() {
+                                     (implicit ork: Ordering[K]) = new Iterator[(K, Option[V1], Option[V2])]() {
 
     private val iterator1_ = if (validate) {
       validateKeyOrdering(iterator1)(ork)
@@ -344,7 +344,7 @@ private[gbm] object Utils extends Logging {
   def innerJoinSortedIters[K, V1, V2](iterator1: Iterator[(K, V1)],
                                       iterator2: Iterator[(K, V2)],
                                       validate: Boolean = true)
-                                     (implicit ork: Ordering[K]): Iterator[(K, V1, V2)] = new Iterator[(K, V1, V2)]() {
+                                     (implicit ork: Ordering[K]) = new Iterator[(K, V1, V2)]() {
 
     private val iterator1_ = if (validate) {
       validateKeyOrdering(iterator1)(ork)
@@ -433,7 +433,7 @@ private[gbm] object Utils extends Logging {
     */
   def reduceByKey[K, V](iterator: Iterator[(K, V)],
                         func: (V, V) => V)
-                       (implicit ork: Ordering[K]): Iterator[(K, V)] = new Iterator[(K, V)]() {
+                       (implicit ork: Ordering[K]) = new Iterator[(K, V)]() {
 
     private var kv1 = Option.empty[(K, V)]
     private var kv2 = Option.empty[(K, V)]
@@ -490,7 +490,7 @@ private[gbm] object Utils extends Logging {
   def aggregateByKey[K, V, C](iterator: Iterator[(K, V)],
                               createCombiner: () => C,
                               func: (C, V) => C)
-                             (implicit ork: Ordering[K]): Iterator[(K, C)] = new Iterator[(K, C)]() {
+                             (implicit ork: Ordering[K]) = new Iterator[(K, C)]() {
 
     private var kc = Option.empty[(K, C)]
     private var kv = Option.empty[(K, V)]

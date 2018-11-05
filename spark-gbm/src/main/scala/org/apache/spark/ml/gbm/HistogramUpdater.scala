@@ -403,7 +403,7 @@ private[gbm] object HistogramUpdater extends Logging {
             .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, g0, h0)) }
         }
 
-    }.aggregatePartitionsByKey(KVVector.empty[B, H], ordering)(
+    }.aggregateByKeyWithinPartitions(KVVector.empty[B, H], ordering)(
       seqOp = {
         case (hist, (bin, grad, hess)) =>
           val indexGrad = inb.plus(bin, bin)

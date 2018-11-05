@@ -18,10 +18,10 @@ private[gbm] class PairRDDFunctions[K, V](self: RDD[(K, V)])
     * Perform `aggregateByKey` within partitions.
     * If ordering is provided, sorted the result partitions.
     */
-  def aggregatePartitionsByKey[C: ClassTag](zeroValue: C,
-                                            ordering: Option[Ordering[K]])
-                                           (seqOp: (C, V) => C,
-                                            combOp: (C, C) => C): RDD[(K, C)] = self.withScope {
+  def aggregateByKeyWithinPartitions[C: ClassTag](zeroValue: C,
+                                                  ordering: Option[Ordering[K]])
+                                                 (seqOp: (C, V) => C,
+                                                  combOp: (C, C) => C): RDD[(K, C)] = self.withScope {
     val zeroBuffer = SparkEnv.get.serializer.newInstance().serialize(zeroValue)
     val zeroArray = new Array[Byte](zeroBuffer.limit)
     zeroBuffer.get(zeroArray)
@@ -62,10 +62,10 @@ private[gbm] class PairRDDFunctions[K, V](self: RDD[(K, V)])
   /**
     * Perform `aggregateByKey` within partitions, and ignore output ordering.
     */
-  def aggregatePartitionsByKey[C: ClassTag](zeroValue: C)
-                                           (seqOp: (C, V) => C,
-                                            combOp: (C, C) => C): RDD[(K, C)] = {
-    aggregatePartitionsByKey[C](zeroValue, None)(seqOp, combOp)
+  def aggregateByKeyWithinPartitions[C: ClassTag](zeroValue: C)
+                                                 (seqOp: (C, V) => C,
+                                                  combOp: (C, C) => C): RDD[(K, C)] = {
+    aggregateByKeyWithinPartitions[C](zeroValue, None)(seqOp, combOp)
   }
 }
 

@@ -28,9 +28,9 @@ class GBMModel(val obj: ObjFunc,
   require(weights.forall(w => !w.isNaN && !w.isInfinity))
 
   /** feature importance of whole trees */
-  lazy val importance: Vector = computeImportance(numTrees)
+  @transient lazy val importance: Vector = computeImportance(numTrees)
 
-  lazy val baseScore: Array[Double] = obj.transform(rawBase)
+  @transient lazy val baseScore: Array[Double] = obj.transform(rawBase)
 
   def numCols: Int = discretizer.colDiscretizers.length
 

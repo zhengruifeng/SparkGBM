@@ -196,7 +196,7 @@ class GBMModel(val obj: ObjFunc,
   }
 
   def save(path: String): Unit = {
-    val spark = SparkSession.builder.getOrCreate
+    val spark = SparkSession.builder.getOrCreate()
     GBMModel.save(spark, this, path)
   }
 }

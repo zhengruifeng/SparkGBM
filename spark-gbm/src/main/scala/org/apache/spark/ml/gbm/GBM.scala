@@ -445,7 +445,8 @@ class GBM extends Logging with Serializable {
   private[ml] def fit(data: RDD[(Double, Array[Double], Vector)],
                       test: Option[RDD[(Double, Array[Double], Vector)]]): GBMModel = {
     if (boostConf.getSparkSession == null) {
-      boostConf.setSparkSession(SparkSession.builder().getOrCreate())
+      boostConf.setSparkSession(
+        SparkSession.builder().sparkContext(data.sparkContext).getOrCreate())
     }
     boostConf.updateParallelismInfo()
 

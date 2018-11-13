@@ -755,6 +755,16 @@ class BoostConfig extends Logging with Serializable {
     }
   }
 
+  private[gbm] def getBlockOffset(partId: Int): Long = {
+    var offset = 0L
+    var i = 0
+    while (i < partId) {
+      offset += numBlocksPerPart(i)
+      i += 1
+    }
+    offset
+  }
+
 
   private var numRowsPerPart: Array[Long] = Array.emptyLongArray
 
@@ -774,6 +784,16 @@ class BoostConfig extends Logging with Serializable {
     } else {
       Array.emptyLongArray
     }
+  }
+
+  private[gbm] def getRowOffset(partId: Int): Long = {
+    var offset = 0L
+    var i = 0
+    while (i < partId) {
+      offset += numRowsPerPart(i)
+      i += 1
+    }
+    offset
   }
 
   private[gbm] def updateVPartInfo(): Unit = {

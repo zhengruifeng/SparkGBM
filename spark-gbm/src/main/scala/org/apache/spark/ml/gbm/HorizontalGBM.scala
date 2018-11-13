@@ -451,7 +451,7 @@ object HorizontalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSize = bcBoostConf.value.getBlockSize
         val otherSelector = bcOtherSelector.value
-        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
 
         iter.flatMap { case (binVecBlock, (_, normBlock)) =>
           require(binVecBlock.size == normBlock.length)
@@ -480,7 +480,7 @@ object HorizontalGBM extends Logging {
         val topTreeIds = Array.tabulate(numTrees)(int.fromInt)
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
         val otherSelector = bcOtherSelector.value
-        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
 
         iter.flatMap(_._2.iterator)
           .flatMap { norm =>
@@ -509,7 +509,7 @@ object HorizontalGBM extends Logging {
         val blockSize = bcBoostConf.value.getBlockSize
         val weightScale = neh.fromDouble(bcBoostConf.value.getOtherReweight)
         val otherSelector = bcOtherSelector.value
-        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
 
         iter.flatMap { case (gradBlock, normBlock) =>
           require(gradBlock.size == normBlock.length)
@@ -707,7 +707,7 @@ object HorizontalGBM extends Logging {
     val sampledBinVecBlocks = binVecBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSelector = bcBlockSelector.value
-        var blockId = bcBoostConf.value.getBlockOffsetPerPart(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { binVecBlock =>
           blockId += 1
@@ -727,7 +727,7 @@ object HorizontalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
         val blockSelector = bcBlockSelector.value
-        var blockId = bcBoostConf.value.getBlockOffsetPerPart(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { weightBlock =>
           blockId += 1
@@ -748,7 +748,7 @@ object HorizontalGBM extends Logging {
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSelector = bcBlockSelector.value
-        var blockId = bcBoostConf.value.getBlockOffsetPerPart(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           blockId += 1
@@ -799,7 +799,7 @@ object HorizontalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSize = bcBoostConf.value.getBlockSize
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
 
         iter.flatMap(_.iterator)
           .flatMap { binVec =>
@@ -822,7 +822,7 @@ object HorizontalGBM extends Logging {
         val blockSize = bcBoostConf.value.getBlockSize
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
 
         iter.flatMap(_.iterator)
           .flatMap { _ =>
@@ -846,7 +846,7 @@ object HorizontalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSize = bcBoostConf.value.getBlockSize
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getRowOffsetPerPart(partId) - 1
+        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
 
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           require(weightBlock.size == rawBlock.size)

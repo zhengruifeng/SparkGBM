@@ -620,6 +620,8 @@ object HorizontalGBM extends Logging {
 
     val sampledBinVecBlocks = binVecBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
+        val partSelector = bcPartSelector.value
+
         if (partSelector.contains[Int](partId)) {
           iter
         } else {
@@ -631,14 +633,14 @@ object HorizontalGBM extends Logging {
     val treeIdBlocks = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSize = bcBoostConf.value.getBlockSize
-        val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
         val partSelector = bcPartSelector.value
-
         val baseIds = partSelector.index[T, Int](partId)
 
         if (baseIds.nonEmpty) {
+          val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
           val treeIds = computeTreeIds(baseIds)
           val defaultTreeIdBlock = ArrayBlock.fill(blockSize, treeIds)
+
           iter.map { weightBlock =>
             if (weightBlock.size == blockSize) {
               defaultTreeIdBlock

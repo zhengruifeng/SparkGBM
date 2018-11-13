@@ -713,6 +713,7 @@ object VerticalGBM extends Logging {
 
     val sampledSubBinVecBlocks = subBinVecBlocks
       .mapPartitionsWithIndex { case (vPartId, iter) =>
+        val rowSelector = bcRowSelector.value
         val localColIds = bcBoostConf.value.getVCols[C](vPartId)
         var rowId = -1L
 

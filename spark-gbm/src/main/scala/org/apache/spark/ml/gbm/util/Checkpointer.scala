@@ -73,7 +73,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     data.persist(storageLevel)
     persistedQueue.enqueue(data)
     while (persistedQueue.length > maxPersisted) {
-      persistedQueue.dequeue.unpersist(true)
+      persistedQueue.dequeue.unpersist(false)
     }
     updateCount += 1
 
@@ -118,11 +118,11 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     // Since the old checkpoint is not deleted by Spark, we manually delete it
     data.getCheckpointFile.foreach { file =>
       Future {
-        val start = System.nanoTime
+        val tic = System.nanoTime()
         val path = new Path(file)
         val fs = path.getFileSystem(sc.hadoopConfiguration)
         fs.delete(path, true)
-        (System.nanoTime - start) / 1e9
+        (System.nanoTime() - tic) / 1e9
 
       }.onComplete {
         case Success(v) =>

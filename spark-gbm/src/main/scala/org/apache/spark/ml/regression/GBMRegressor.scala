@@ -214,7 +214,8 @@ class GBMRegressor(override val uid: String) extends
 
 
     val gbm = new GBM
-    gbm.setMaxIter($(maxIter))
+    gbm.setSparkSession(dataset.sparkSession)
+      .setMaxIter($(maxIter))
       .setMaxDepth($(maxDepth))
       .setMaxLeaves($(maxLeaves))
       .setMaxBins($(maxBins))
@@ -378,7 +379,7 @@ object GBMRegressionModel extends MLReadable[GBMRegressionModel] {
 
       val otherDF = sparkSession.createDataFrame(Seq(
         ("type", "regression"),
-        ("time", System.nanoTime.toString))).toDF("key", "value")
+        ("time", System.nanoTime().toString))).toDF("key", "value")
       val otherPath = new Path(path, "other").toString
       otherDF.write.parquet(otherPath)
     }

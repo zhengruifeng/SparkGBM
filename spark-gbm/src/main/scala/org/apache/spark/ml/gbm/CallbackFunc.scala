@@ -122,12 +122,12 @@ class ModelCheckpoint(val interval: Int,
 
     if (iteration % interval == 0) {
       Future {
-        val start = System.nanoTime()
+        val tic = System.nanoTime()
         val spark = boostConf.getSparkSession
 
         val currentPath = new Path(path, s"model-${model.numTrees}").toString
         GBMModel.save(spark, model, currentPath)
-        (System.nanoTime - start) / 1e9
+        (System.nanoTime() - tic) / 1e9
 
       }.onComplete {
         case Success(v) =>
@@ -164,7 +164,7 @@ class ClassificationModelCheckpoint(val interval: Int,
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (iteration % interval == 0) {
       Future {
-        val start = System.nanoTime()
+        val tic = System.nanoTime()
         val spark = boostConf.getSparkSession
 
         val currentPath = new Path(path, s"model-$iteration").toString
@@ -179,7 +179,7 @@ class ClassificationModelCheckpoint(val interval: Int,
         val otherPath = new Path(currentPath, "other").toString
         otherDF.write.parquet(otherPath)
 
-        (System.nanoTime - start) / 1e9
+        (System.nanoTime() - tic) / 1e9
 
       }.onComplete {
         case Success(v) =>
@@ -216,7 +216,7 @@ class RegressionModelCheckpoint(val interval: Int,
                        testMetrics: Array[Map[String, Double]]): Boolean = {
     if (iteration % interval == 0) {
       Future {
-        val start = System.nanoTime()
+        val tic = System.nanoTime()
         val spark = boostConf.getSparkSession
 
         val currentPath = new Path(path, s"model-$iteration").toString
@@ -231,7 +231,7 @@ class RegressionModelCheckpoint(val interval: Int,
         val otherPath = new Path(currentPath, "other").toString
         otherDF.write.parquet(otherPath)
 
-        (System.nanoTime - start) / 1e9
+        (System.nanoTime() - tic) / 1e9
 
       }.onComplete {
         case Success(v) =>

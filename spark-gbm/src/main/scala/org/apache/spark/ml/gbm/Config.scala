@@ -800,28 +800,62 @@ class BoostConfig extends Logging with Serializable {
     require(numCols > 0)
     require(realParallelism > 0)
 
-    colIdsPerVPart = if (realParallelism >= numCols) {
+    numVLayers = (realParallelism.toDouble / numCols).ceil.toInt
+    require(numVLayers >= 1)
+
+    val n = realParallelism / numVLayers
+
+    colIdsPerBaseVPart = if (n == numCols) {
       Array.tabulate(numCols)(Array(_))
     } else {
-      Array.tabulate(realParallelism)(i => Iterator.range(0, numCols).filter(_ % realParallelism == i).toArray)
+      Array.tabulate(n)(i => Iterator.range(0, numCols).filter(_ % n == i).toArray)
     }
   }
 
 
-  private[gbm] var colIdsPerVPart: Array[Array[Int]] = Array.empty
+  private[gbm] var numVLayers: Int = -1
 
+  private[gbm] def getNumVLayers: Int = numVLayers
 
-  private[gbm] def getNumVParts: Int = colIdsPerVPart.length
+  private[gbm] var colIdsPerBaseVPart: Array[Array[Int]] = Array.empty
 
+  private[gbm] def getColIdsPerBaseVPart: Array[Array[Int]] = colIdsPerBaseVPart
+
+  private[gbm] def getColIdsPerVPart: Array[Array[Int]] = {
+    require(numVLayers >= 1)
+    if (numVLayers == 1) {
+      colIdsPerBaseVPart
+    } else {
+      Array.range(0, numVLayers).flatMap(_ => colIdsPerBaseVPart)
+    }
+  }
+
+  private[gbm] def getNumBaseVParts: Int = colIdsPerBaseVPart.length
+
+  private[gbm] def getNumVParts: Int = numVLayers * colIdsPerBaseVPart.length
+
+  private[gbm] def getVBlockOffset(vPartId: Int): Long = {
+    require(numVLayers >= 1)
+    if (numVLayers == 1) {
+      0L
+    } else {
+      (vPartId / colIdsPerBaseVPart.length).toLong
+    }
+  }
+
+  private[gbm] def getBaseVCols[C]()
+                                  (implicit cc: ClassTag[C], inc: Integral[C]): Array[Array[C]] = {
+    colIdsPerBaseVPart.map(_.map(inc.fromInt))
+  }
 
   private[gbm] def getVCols[C]()
                               (implicit cc: ClassTag[C], inc: Integral[C]): Array[Array[C]] = {
-    colIdsPerVPart.map(_.map(inc.fromInt))
+    getColIdsPerVPart.map(_.map(inc.fromInt))
   }
 
   private[gbm] def getVCols[C](vPartId: Int)
                               (implicit cc: ClassTag[C], inc: Integral[C]): Array[C] = {
-    colIdsPerVPart(vPartId).map(inc.fromInt)
+    colIdsPerBaseVPart(vPartId % colIdsPerBaseVPart.length).map(inc.fromInt)
   }
 }
 

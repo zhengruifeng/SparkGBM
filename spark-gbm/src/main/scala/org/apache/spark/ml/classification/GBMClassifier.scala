@@ -181,9 +181,10 @@ class GBMClassifier(override val uid: String)
       lit(1.0)
     }
 
-    val labelWeights = dataset.groupBy(col($(labelCol)).cast(IntegerType)).agg(sum(w)).rdd
-      .map { row => (row.getInt(0), row.getDouble(1)) }
-      .collectAsMap.toMap
+    val labelWeights = dataset
+      .groupBy(col($(labelCol)).cast(IntegerType)).agg(sum(w))
+      .collect().map { row => (row.getInt(0), row.getDouble(1)) }
+      .toMap
 
     val numClasses = labelWeights.size
     require(labelWeights.keys.forall(i => i >= 0 && i < numClasses))
@@ -367,7 +368,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel, val 
     copyValues(new GBMClassificationModel(uid, model, numClasses), extra).setParent(parent)
   }
 
-  private lazy val computeRaw = $(objectiveFunc) match {
+  @transient private lazy val computeRaw = $(objectiveFunc) match {
     case "logistic" =>
       features: Vector =>
         val raw = model.predictRaw(features, $(firstTrees))(0)
@@ -379,7 +380,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel, val 
         Vectors.dense(raw)
   }
 
-  private lazy val computeScore = $(objectiveFunc) match {
+  @transient private lazy val computeScore = $(objectiveFunc) match {
     case "logistic" =>
       raw: Vector =>
         require(raw.size == 2)
@@ -455,7 +456,7 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
       val otherDF = sparkSession.createDataFrame(Seq(
         ("type", "classification"),
         ("numClasses", instance.numClasses.toString),
-        ("time", System.nanoTime.toString))).toDF("key", "value")
+        ("time", System.nanoTime().toString))).toDF("key", "value")
       val otherPath = new Path(path, "other").toString
       otherDF.write.parquet(otherPath)
     }

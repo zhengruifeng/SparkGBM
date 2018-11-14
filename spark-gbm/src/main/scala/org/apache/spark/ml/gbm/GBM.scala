@@ -444,6 +444,8 @@ class GBM extends Logging with Serializable {
   /** training with validation if any, dataset contains (weight, label, vec) */
   private[ml] def fit(data: RDD[(Double, Array[Double], Vector)],
                       test: Option[RDD[(Double, Array[Double], Vector)]]): GBMModel = {
+    val tic = System.nanoTime()
+
     if (boostConf.getSparkSession == null) {
       boostConf.setSparkSession(
         SparkSession.builder().sparkContext(data.sparkContext).getOrCreate())
@@ -457,7 +459,7 @@ class GBM extends Logging with Serializable {
     val row = data.first()
     val numCols = row._3.size
     require(numCols > 0)
-    logInfo(s"numCols: $numCols")
+    logInfo(s"numFeatures(numCols): $numCols")
 
     var discretizer: Discretizer = null
 
@@ -498,7 +500,9 @@ class GBM extends Logging with Serializable {
 
     boostConf.setNumCols(numCols)
 
-    GBM.boost(data, test, boostConf, discretizer, initialModel)
+    val model = GBM.boost(data, test, boostConf, discretizer, initialModel)
+    logInfo(s"GBM training finished, duration ${(System.nanoTime()  - tic) / 1e9} seconds")
+    model
   }
 }
 
@@ -673,7 +677,7 @@ private[gbm] object GBM extends Logging {
         VerticalGBM.boost[C, B, H](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
     }
 
-    recoder.clear(true)
+    recoder.clear(false)
 
     model
   }
@@ -1043,7 +1047,7 @@ private[gbm] object GBM extends Logging {
     if (boostConf.getBatchEvalFunc.nonEmpty) {
       boostConf.getBatchEvalFunc
         .foreach { eval => result.update(eval.name, eval.compute(scores)) }
-      scores.unpersist(true)
+      scores.unpersist(false)
     }
 
     result.toMap

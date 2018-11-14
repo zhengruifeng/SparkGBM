@@ -111,10 +111,10 @@ object HorizontalGBM extends Logging {
 
       // build trees
       logInfo(s"$logPrefix start")
-      val start = System.nanoTime
+      val tic = System.nanoTime()
       val trees = buildTrees[C, B, H](trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks, trainRawBlocks,
         weightsBuff.toArray, boostConf, iteration, dropped.toSet)
-      logInfo(s"$logPrefix finished, duration: ${(System.nanoTime - start) / 1e9} sec")
+      logInfo(s"$logPrefix finished, duration: ${(System.nanoTime() - tic) / 1e9} sec")
 
       if (trees.forall(_.isEmpty)) {
         // fail to build a new tree
@@ -190,9 +190,9 @@ object HorizontalGBM extends Logging {
       logInfo(s"maxIter=${boostConf.getMaxIter} reached, GBM training finished")
     }
 
-    trainRawBlocksCheckpointer.clear(true)
+    trainRawBlocksCheckpointer.clear(false)
     if (testRawBlocksCheckpointer != null) {
-      testRawBlocksCheckpointer.clear(true)
+      testRawBlocksCheckpointer.clear(false)
     }
 
     new GBMModel(boostConf.getObjFunc, discretizer, boostConf.getRawBaseScore,
@@ -361,7 +361,7 @@ object HorizontalGBM extends Logging {
 
     val trees = Tree.trainHorizontal[T, N, C, B, H](sampledBinVecBlocks, treeIdBlocks, gradBlocks, boostConf, bcBoostConf, baseConfig)
 
-    recoder.clear(true)
+    recoder.clear(false)
 
     trees
   }
@@ -419,7 +419,7 @@ object HorizontalGBM extends Logging {
     recoder.append(gradNormBlocks)
 
 
-    val start = System.nanoTime
+    val tic = System.nanoTime()
     logInfo(s"Iteration $iteration: start to compute the threshold of top gradients")
 
     val summary = gradNormBlocks
@@ -444,7 +444,7 @@ object HorizontalGBM extends Logging {
 
     val threshold = neh.fromDouble(summary.query(1 - boostConf.getTopRate).get)
     logInfo(s"Iteration $iteration: threshold for top gradients: ${neh.sqrt(threshold)}, " +
-      s"duration ${(System.nanoTime - start) / 1e9} seconds")
+      s"duration ${(System.nanoTime() - tic) / 1e9} seconds")
 
 
     val sampledBinVecBlocks = binVecBlocks.zip(gradNormBlocks)

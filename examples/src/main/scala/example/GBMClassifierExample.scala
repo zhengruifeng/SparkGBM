@@ -51,7 +51,7 @@ object GBMClassifierExample {
       .setModelCheckpointInterval(4)
       .setModelCheckpointPath(modelCheckpointPath)
       .setZeroAsMissing(true)
-      .setReduceParallelism(8)
+      .setReduceParallelism(300)
       .setSeed(123L)
 
     /** train with validation */

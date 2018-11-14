@@ -37,6 +37,7 @@ private[gbm] object Tree extends Serializable with Logging {
                                      cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+    val tic0 = System.nanoTime()
     val sc = binVecBlocks.sparkContext
 
     logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
@@ -59,7 +60,7 @@ private[gbm] object Tree extends Serializable with Logging {
     var splits = Map.empty[(T, N), Split]
 
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
-      val start = System.nanoTime()
+      val tic1 = System.nanoTime()
 
       logInfo(s"Iteration ${baseConf.iteration}, Depth $depth: splitting start")
 
@@ -81,18 +82,20 @@ private[gbm] object Tree extends Serializable with Logging {
       // update trees
       updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
       logInfo(s"Iteration ${baseConf.iteration}, Depth $depth: growth finished," +
-        s" duration ${(System.nanoTime - start) / 1e9} seconds")
+        s" duration ${(System.nanoTime() - tic1) / 1e9} seconds")
 
       depth += 1
     }
 
     if (depth >= boostConf.getMaxDepth) {
-      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, trees growth finished")
+      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
+        s"trees growth finished, duration ${(System.nanoTime()  - tic0) / 1e9} seconds")
     } else {
-      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
+      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished, " +
+        s"duration ${(System.nanoTime()  - tic0) / 1e9} seconds")
     }
 
-    nodeIdBlocksCheckpointer.clear(true)
+    nodeIdBlocksCheckpointer.clear(false)
     updater.destroy()
 
     roots.map(TreeModel.createModel)
@@ -108,6 +111,7 @@ private[gbm] object Tree extends Serializable with Logging {
   def trainVertical[T, N, C, B, H](binVecBlocks: RDD[KVMatrix[C, B]],
                                    treeIdBlocks: RDD[ArrayBlock[T]],
                                    subBinVecBlocks: RDD[KVMatrix[C, B]],
+                                   blockIds: RDD[Long],
                                    agTreeIdBlocks: RDD[ArrayBlock[T]],
                                    agGradBlocks: RDD[ArrayBlock[H]],
                                    boostConf: BoostConfig,
@@ -120,6 +124,7 @@ private[gbm] object Tree extends Serializable with Logging {
                                    ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     import RDDFunctions._
 
+    val tic0 = System.nanoTime()
     val sc = binVecBlocks.sparkContext
 
     logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
@@ -135,10 +140,8 @@ private[gbm] object Tree extends Serializable with Logging {
     var depth = 0
     var splits = Map.empty[(T, N), Split]
 
-    val numVParts = subBinVecBlocks.getNumPartitions
-
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
-      val start = System.nanoTime
+      val tic1 = System.nanoTime()
 
       logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting start")
 
@@ -156,7 +159,6 @@ private[gbm] object Tree extends Serializable with Logging {
 
 
       val vdata = if (depth == 0) {
-
         subBinVecBlocks.zip2(agTreeIdBlocks, agGradBlocks)
           .map { case (subBinVecBlock, treeIdBlock, gradBlock) =>
             require(subBinVecBlock.size == treeIdBlock.size)
@@ -169,42 +171,48 @@ private[gbm] object Tree extends Serializable with Logging {
           }
 
       } else {
-
-        val vPartIds = boostConf.getVCols[C]()
+        val baseVPartIds = boostConf.getBaseVCols[C]()
           .iterator.zipWithIndex
           .filter { case (colIds, _) =>
             colIds.exists(newBaseConfig.colSelector.contains[C])
           }.map(_._2).toArray
 
-        val agNodeIdBlocks = nodeIdBlocks.allgather(numVParts, vPartIds)
+        val agNodeIdBlocks = VerticalGBM.gatherByLayer(nodeIdBlocks.zip(blockIds),
+          baseVPartIds, boostConf, bcBoostConf)
 
         subBinVecBlocks.zip3(agTreeIdBlocks, agNodeIdBlocks, agGradBlocks, false)
       }
 
+
+      // `computeLocalHistograms` will treat an unavailable column on one partititon as
+      // all a zero-value column, so we should filter it manually.
       val hists = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](vdata,
         boostConf, newBaseConfig, (n: N) => true)
         .mapPartitionsWithIndex { case (vPartId, iter) =>
           val localColIds = bcBoostConf.value.getVCols[C](vPartId).toSet
           iter.filter { case ((_, _, colId), _) => localColIds.contains(colId) }
-        }.setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
+        }.reduceByKey(_.plus(_).compress)
+        .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
 
       splits = findSplitsImpl[T, N, C, B, H](hists, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
 
       // update trees
       updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
       logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished," +
-        s" duration ${(System.nanoTime - start) / 1e9} seconds")
+        s" duration ${(System.nanoTime() - tic1) / 1e9} seconds")
 
       depth += 1
     }
 
     if (depth >= boostConf.getMaxDepth) {
-      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, trees growth finished")
+      logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
+        s"trees growth finished, duration ${(System.nanoTime()  - tic0) / 1e9} seconds")
     } else {
-      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished")
+      logInfo(s"Iteration ${baseConf.iteration}: trees growth finished, " +
+        s"duration ${(System.nanoTime()  - tic0) / 1e9} seconds")
     }
 
-    nodeIdBlocksCheckpointer.clear(true)
+    nodeIdBlocksCheckpointer.clear(false)
 
     roots.map(TreeModel.createModel)
   }
@@ -500,8 +508,8 @@ private[gbm] object Tree extends Serializable with Logging {
 
 
     logInfo(s"Depth $depth: $numTrials trials -> $numSplits splits -> ${splits.length} best splits, " +
-      s"fraction of sparse histograms: ${1 - numDenses.toDouble / numTrials}, " +
-      s"sparsity of histogram: ${1 - nnz.toDouble / sumSize}")
+      s"fraction of sparse vectors: ${1 - numDenses.toDouble / numTrials}, " +
+      s"sparsity of histogram elements: ${1 - nnz.toDouble / sumSize}")
 
     bcRemainingLeaves.destroy(true)
 

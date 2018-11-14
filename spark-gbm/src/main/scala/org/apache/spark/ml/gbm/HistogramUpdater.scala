@@ -159,7 +159,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
   override def destroy(): Unit = {
     if (checkpointer != null) {
-      checkpointer.clear(true)
+      checkpointer.clear(false)
       checkpointer = null
     }
     prevHistograms = null
@@ -302,13 +302,13 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
   override def clear(): Unit = {
     if (recoder != null) {
-      recoder.clear(true)
+      recoder.clear(false)
     }
   }
 
   override def destroy(): Unit = {
     if (recoder != null) {
-      recoder.clear(true)
+      recoder.clear(false)
       recoder = null
     }
     delta = 1.0
@@ -349,50 +349,31 @@ private[gbm] object HistogramUpdater extends Logging {
       val sum0 = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
       iter.flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
-        Utils.zip4(binVecBlock.activeIterator, treeIdBlock.iterator,
+        Utils.zip4(binVecBlock.iterator, treeIdBlock.iterator,
           nodeIdBlock.iterator, gradBlock.iterator)
 
-      }.flatMap { case (binVecActiveIter, treeIds, nodeIds, gradHess) =>
+      }.flatMap { case (binVec, treeIds, nodeIds, gradHess) =>
         require(treeIds.length == nodeIds.length)
 
-        val indices = Iterator.range(0, nodeIds.length)
-          .filter(i => f(nodeIds(i))).toArray
+        val gradSize = gradHess.length >> 1
 
-        if (indices.nonEmpty) {
-          val gradSize = gradHess.length >> 1
-
-          // update sum0
-          var j = 0
-          while (j < indices.length) {
-            val i = indices(j)
+        Iterator.range(0, nodeIds.length)
+          .filter(i => f(nodeIds(i)))
+          .flatMap { i =>
             val treeId = treeIds(i)
             val nodeId = nodeIds(i)
             val indexGrad = (i % gradSize) << 1
             val grad = gradHess(indexGrad)
             val hess = gradHess(indexGrad + 1)
-            val (g0, h0) = sum0.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
-            sum0.update((treeId, nodeId), (nuh.plus(g0, grad), nuh.plus(h0, hess)))
-            j += 1
-          }
 
-          binVecActiveIter.flatMap { case (colId, bin) =>
-            indices.iterator.flatMap { i =>
-              val treeId = treeIds(i)
-              if (baseConf.colSelector.containsById[T, C](treeId, colId)) {
-                val nodeId = nodeIds(i)
-                val indexGrad = (i % gradSize) << 1
-                val grad = gradHess(indexGrad)
-                val hess = gradHess(indexGrad + 1)
-                Iterator.single((treeId, nodeId, colId), (bin, grad, hess))
-              } else {
-                Iterator.empty
-              }
-            }
-          }
+            val (g, h) = sum0.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
+            sum0.update((treeId, nodeId), (nuh.plus(g, grad), nuh.plus(h, hess)))
 
-        } else {
-          Iterator.empty
-        }
+            // ignore zero-index bins
+            binVec.activeIterator
+              .filter { case (colId, _) => baseConf.colSelector.containsById(treeId, colId) }
+              .map { case (colId, bin) => ((treeId, nodeId, colId), (bin, grad, hess)) }
+          }
 
       } ++ sum0.iterator
         .flatMap { case ((treeId, nodeId), (g0, h0)) =>

@@ -386,7 +386,7 @@ object HorizontalGBM extends Logging {
 
     val sc = weightBlocks.sparkContext
 
-    val otherSelector = Selector.create(boostConf.getOtherSampleRate, boostConf.getNumRows,
+    val otherSelector = Selector.create(boostConf.getOtherSampleRate, boostConf.getNumBlocks * boostConf.getBlockSize,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + iteration)
     logInfo(s"Iter $iteration: OtherSelector $otherSelector")
 
@@ -451,20 +451,23 @@ object HorizontalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSize = bcBoostConf.value.getBlockSize
         val otherSelector = bcOtherSelector.value
-        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { case (binVecBlock, (_, normBlock)) =>
           require(binVecBlock.size == normBlock.length)
-          Utils.zip2(binVecBlock.iterator, normBlock.iterator)
+          blockId += 1
+          var rowId = blockId * blockSize - 1
 
-        }.flatMap { case (binVec, norm) =>
-          rowId += 1
-          if (norm >= threshold ||
-            otherSelector.contains[Long](rowId)) {
-            Iterator.single(binVec)
-          } else {
-            Iterator.empty
-          }
+          Utils.zip2(binVecBlock.iterator, normBlock.iterator)
+            .flatMap { case (binVec, norm) =>
+              rowId += 1
+              if (norm >= threshold ||
+                otherSelector.contains[Long](rowId)) {
+                Iterator.single(binVec)
+              } else {
+                Iterator.empty
+              }
+            }
         }.grouped(blockSize)
           .map(KVMatrix.build[C, B])
       }.setName(s"Iter $iteration: BinVecs (GOSS)")
@@ -480,23 +483,28 @@ object HorizontalGBM extends Logging {
         val topTreeIds = Array.tabulate(numTrees)(int.fromInt)
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
         val otherSelector = bcOtherSelector.value
-        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
-        iter.flatMap(_._2.iterator)
-          .flatMap { norm =>
-            rowId += 1
-            if (norm >= threshold) {
-              Iterator.single(topTreeIds)
-            } else {
-              val baseIds = otherSelector.index[T, Long](rowId)
-              if (baseIds.nonEmpty) {
-                val treeIds = computeTreeIds(baseIds)
-                Iterator.single(treeIds)
+        iter.flatMap { case (_, normBlock) =>
+          blockId += 1
+          var rowId = blockId * blockSize - 1
+
+          normBlock.iterator
+            .flatMap { norm =>
+              rowId += 1
+              if (norm >= threshold) {
+                Iterator.single(topTreeIds)
               } else {
-                Iterator.empty
+                val baseIds = otherSelector.index[T, Long](rowId)
+                if (baseIds.nonEmpty) {
+                  val treeIds = computeTreeIds(baseIds)
+                  Iterator.single(treeIds)
+                } else {
+                  Iterator.empty
+                }
               }
             }
-          }.grouped(blockSize)
+        }.grouped(blockSize)
           .map(ArrayBlock.build[T])
       }.setName(s"Iter $iteration: TreeIds (GOSS)")
 
@@ -509,28 +517,31 @@ object HorizontalGBM extends Logging {
         val blockSize = bcBoostConf.value.getBlockSize
         val weightScale = neh.fromDouble(bcBoostConf.value.getOtherReweight)
         val otherSelector = bcOtherSelector.value
-        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { case (gradBlock, normBlock) =>
           require(gradBlock.size == normBlock.length)
+          blockId += 1
+          var rowId = blockId * blockSize - 1
+
           Utils.zip2(gradBlock.iterator, normBlock.iterator)
+            .flatMap { case (grad, norm) =>
+              rowId += 1
+              if (norm >= threshold) {
+                Iterator.single(grad)
 
-        }.flatMap { case (grad, norm) =>
-          rowId += 1
-          if (norm >= threshold) {
-            Iterator.single(grad)
+              } else if (otherSelector.contains[Long](rowId)) {
+                var i = 0
+                while (i < grad.length) {
+                  grad(i) *= weightScale
+                  i += 1
+                }
+                Iterator.single(grad)
 
-          } else if (otherSelector.contains[Long](rowId)) {
-            var i = 0
-            while (i < grad.length) {
-              grad(i) *= weightScale
-              i += 1
+              } else {
+                Iterator.empty
+              }
             }
-            Iterator.single(grad)
-
-          } else {
-            Iterator.empty
-          }
         }.grouped(blockSize)
           .map(ArrayBlock.build[H])
       }.setName(s"Iter $iteration: Grads (GOSS)")
@@ -787,7 +798,7 @@ object HorizontalGBM extends Logging {
 
     val sc = weightBlocks.sparkContext
 
-    val rowSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumRows,
+    val rowSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks * boostConf.getBlockSize,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + iteration)
     logInfo(s"Iter $iteration: RowSelector $rowSelector")
 
@@ -799,17 +810,22 @@ object HorizontalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSize = bcBoostConf.value.getBlockSize
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
-        iter.flatMap(_.iterator)
-          .flatMap { binVec =>
-            rowId += 1
-            if (rowSelector.contains[Long](rowId)) {
-              Iterator.single(binVec)
-            } else {
-              Iterator.empty
+        iter.flatMap { binVecBlock =>
+          blockId += 1
+          var rowId = blockId * blockSize - 1
+
+          binVecBlock.iterator
+            .flatMap { binVec =>
+              rowId += 1
+              if (rowSelector.contains[Long](rowId)) {
+                Iterator.single(binVec)
+              } else {
+                Iterator.empty
+              }
             }
-          }.grouped(blockSize)
+        }.grouped(blockSize)
           .map(KVMatrix.build[C, B])
       }.setName(s"Iter $iteration: BinVecs (Row-Sampled)")
 
@@ -822,19 +838,24 @@ object HorizontalGBM extends Logging {
         val blockSize = bcBoostConf.value.getBlockSize
         val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
-        iter.flatMap(_.iterator)
-          .flatMap { _ =>
-            rowId += 1
-            val baseIds = rowSelector.index[T, Long](rowId)
-            if (baseIds.nonEmpty) {
-              val treeIds = computeTreeIds(baseIds)
-              Iterator.single(treeIds)
-            } else {
-              Iterator.empty
+        iter.flatMap { weightBlock =>
+          blockId += 1
+          var rowId = blockId * blockSize - 1
+
+          Iterator.range(0, weightBlock.size)
+            .flatMap { _ =>
+              rowId += 1
+              val baseIds = rowSelector.index[T, Long](rowId)
+              if (baseIds.nonEmpty) {
+                val treeIds = computeTreeIds(baseIds)
+                Iterator.single(treeIds)
+              } else {
+                Iterator.empty
+              }
             }
-          }.grouped(blockSize)
+        }.grouped(blockSize)
           .map(ArrayBlock.build[T])
       }.setName(s"Iter $iteration: TreeIds (Row-Sampled)")
 
@@ -846,21 +867,24 @@ object HorizontalGBM extends Logging {
       .mapPartitionsWithIndex { case (partId, iter) =>
         val blockSize = bcBoostConf.value.getBlockSize
         val rowSelector = bcRowSelector.value
-        var rowId = bcBoostConf.value.getRowOffset(partId) - 1
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { case (weightBlock, labelBlock, rawBlock) =>
           require(weightBlock.size == rawBlock.size)
           require(labelBlock.size == rawBlock.size)
-          Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
+          blockId += 1
+          var rowId = blockId * blockSize - 1
 
-        }.flatMap { case (weight, label, rawSeq) =>
-          rowId += 1
-          if (rowSelector.contains[Long](rowId)) {
-            val grad = computeGrad(weight, label, rawSeq)
-            Iterator.single(grad)
-          } else {
-            Iterator.empty
-          }
+          Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
+            .flatMap { case (weight, label, rawSeq) =>
+              rowId += 1
+              if (rowSelector.contains[Long](rowId)) {
+                val grad = computeGrad(weight, label, rawSeq)
+                Iterator.single(grad)
+              } else {
+                Iterator.empty
+              }
+            }
         }.grouped(blockSize)
           .map(ArrayBlock.build[H])
       }.setName(s"Iter $iteration: Grads (Row-Sampled)")

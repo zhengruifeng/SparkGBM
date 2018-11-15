@@ -766,36 +766,6 @@ class BoostConfig extends Logging with Serializable {
   }
 
 
-  private var numRowsPerPart: Array[Long] = Array.emptyLongArray
-
-  private[gbm] def setNumRowsPerPart(value: Array[Long]): this.type = {
-    require(value.nonEmpty)
-    numRowsPerPart = value
-    this
-  }
-
-  private[gbm] def getNumRowsPerPart: Array[Long] = numRowsPerPart
-
-  private[gbm] def getNumRows: Long = numRowsPerPart.sum
-
-  private[gbm] def getRowOffsetPerPart: Array[Long] = {
-    if (numRowsPerPart.nonEmpty) {
-      numRowsPerPart.take(numRowsPerPart.length - 1).scanLeft(0L)(_ + _)
-    } else {
-      Array.emptyLongArray
-    }
-  }
-
-  private[gbm] def getRowOffset(partId: Int): Long = {
-    var offset = 0L
-    var i = 0
-    while (i < partId) {
-      offset += numRowsPerPart(i)
-      i += 1
-    }
-    offset
-  }
-
   private[gbm] def updateVPartInfo(): Unit = {
     require(numCols > 0)
     require(realParallelism > 0)

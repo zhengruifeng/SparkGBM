@@ -733,15 +733,14 @@ private[gbm] object GBM extends Logging {
 
     require(array.length == weightBlocks.getNumPartitions)
 
-    if (update) {
-      boostConf.setNumBlocksPerPart(array.map(_._2))
-      boostConf.setNumRowsPerPart(array.map(_._3))
-    }
-
     logInfo(s"${weightBlocks.name}: ${array.length} parts, " +
       s"${array.map(_._2).sum} blocks, ${array.map(_._3).sum} rows, " +
       s"numBlocksPerPart ${array.map(_._2).mkString("[", ",", "]")}, " +
       s"numRowsPerPart ${array.map(_._3).mkString("[", ",", "]")}")
+
+    if (update) {
+      boostConf.setNumBlocksPerPart(array.map(_._2))
+    }
   }
 
 

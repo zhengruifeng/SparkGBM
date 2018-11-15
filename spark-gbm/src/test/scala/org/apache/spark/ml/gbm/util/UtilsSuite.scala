@@ -9,15 +9,6 @@ class UtilsSuite extends FunSuite {
 
   import Utils._
 
-  test("arrayEquiv") {
-    assert(arrayEquiv[Int](null, null) === true)
-    assert(arrayEquiv(Array(1), null) === false)
-    assert(arrayEquiv(Array(1, 2), Array(1, 2)) === true)
-    assert(arrayEquiv(Array(1, 2), Array(1)) === false)
-    assert(arrayEquiv(Array(1, 2), Array(1, 1)) === false)
-  }
-
-
   test("validateOrdering") {
     assert(validateOrdering(Seq.empty[Int].iterator).isEmpty)
     assert(validateOrdering(Iterator(1)).size === 1)

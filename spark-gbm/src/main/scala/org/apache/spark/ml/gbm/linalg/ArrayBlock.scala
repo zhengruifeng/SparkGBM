@@ -4,8 +4,6 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
-import org.apache.spark.ml.gbm.util.Utils
-
 /**
   * Compress a block of arrays in a compact fashion.
   *
@@ -39,7 +37,7 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
 
 
   def iterator()
-              (implicit cv: ClassTag[V]): Iterator[Array[V]] = {
+              (implicit cv: ClassTag[V], nev: NumericExt[V]): Iterator[Array[V]] = {
 
     if (flag == 0) {
       new Iterator[Array[V]]() {
@@ -51,7 +49,7 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
         override def next(): Array[V] = {
           val step = steps(i)
 
-          val ret = values.slice(offset, offset + step)
+          val ret = nev.slice(values, offset, offset + step)
 
           offset += step
           i += 1
@@ -81,7 +79,7 @@ object ArrayBlock extends Serializable {
   }
 
   def build[@spec(Byte, Short, Int, Long, Float, Double) V](iterator: Iterator[Array[V]])
-                                                           (implicit cv: ClassTag[V], nev: NumericExt[V], orv: Ordering[V]): ArrayBlock[V] = {
+                                                           (implicit cv: ClassTag[V], nev: NumericExt[V]): ArrayBlock[V] = {
     val valueBuilder = mutable.ArrayBuilder.make[V]
     val stepBuilder = mutable.ArrayBuilder.make[Int]
 
@@ -95,7 +93,7 @@ object ArrayBlock extends Serializable {
       if (prevArray == null) {
         prevArray = array
       } else if (identical) {
-        identical = Utils.arrayEquiv(array, prevArray)
+        identical = nev.equalsArray(prevArray, array)
         prevArray = array
       }
 
@@ -123,7 +121,7 @@ object ArrayBlock extends Serializable {
 
 
   def build[@spec(Byte, Short, Int, Long, Float, Double) V](seq: Iterable[Array[V]])
-                                                           (implicit cv: ClassTag[V], nev: NumericExt[V], orv: Ordering[V]): ArrayBlock[V] = {
+                                                           (implicit cv: ClassTag[V], nev: NumericExt[V]): ArrayBlock[V] = {
     build[V](seq.iterator)
   }
 

@@ -56,9 +56,6 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
-    //    val sc = data.sparkContext
-    //    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
-
     val treeNodeIds = if (depth == 0) {
       Array.tabulate(baseConf.numTrees)(t => (int.fromInt(t), inn.one))
 
@@ -186,7 +183,6 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     val sc = data.sparkContext
-    //    val parallelism = boostConf.getRealParallelism(boostConf.getReduceParallelism, sc.defaultParallelism)
 
     val treeNodeIds = if (depth == 0) {
       recoder = new ResourceRecoder
@@ -330,8 +326,8 @@ private[gbm] object HistogramUpdater extends Logging {
                                             baseConf: BaseConfig,
                                             f: N => Boolean,
                                             sorted: Boolean = false)
-                                           (implicit ct: ClassTag[T], int: Integral[T],
-                                            cn: ClassTag[N], inn: Integral[N],
+                                           (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                            cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                             cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                             cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                             ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
@@ -431,8 +427,8 @@ private[gbm] object HistogramUpdater extends Logging {
                                        baseConf: BaseConfig,
                                        f: N => Boolean,
                                        partitioner: Partitioner)
-                                      (implicit ct: ClassTag[T], int: Integral[T],
-                                       cn: ClassTag[N], inn: Integral[N],
+                                      (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                       cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                        cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {

@@ -6,6 +6,8 @@ private[gbm] trait NumericExt[K] extends Serializable {
 
   def emptyArray: Array[K]
 
+  def equalsArray(array1: Array[K], array2: Array[K]): Boolean
+
   def fromFloat(value: Float): K
 
   def fromDouble(value: Double): K
@@ -18,9 +20,13 @@ private[gbm] trait NumericExt[K] extends Serializable {
 
   def toInt(array: Array[K]): Array[Int]
 
-  def sqrt(value: K): K
+  def slice(array: Array[K], from: Int, to: Int): Array[K]
+
+  def take(array: Array[K], n: Int): Array[K] = slice(array, 0, n)
 
   def search(array: Array[K], value: K): Int
+
+  def sqrt(value: K): K
 
   def size: Int
 }
@@ -28,6 +34,8 @@ private[gbm] trait NumericExt[K] extends Serializable {
 private object ByteNumericExt extends NumericExt[Byte] {
 
   override def emptyArray: Array[Byte] = Array.emptyByteArray
+
+  override def equalsArray(array1: Array[Byte], array2: Array[Byte]): Boolean = ju.Arrays.equals(array1, array2)
 
   override def fromFloat(value: Float): Byte = value.toByte
 
@@ -41,9 +49,11 @@ private object ByteNumericExt extends NumericExt[Byte] {
 
   override def toInt(array: Array[Byte]): Array[Int] = array.map(_.toInt)
 
-  override def sqrt(value: Byte): Byte = math.sqrt(value).toByte
+  override def slice(array: Array[Byte], from: Int, to: Int): Array[Byte] = ju.Arrays.copyOfRange(array, from, to)
 
   override def search(array: Array[Byte], value: Byte): Int = ju.Arrays.binarySearch(array, value)
+
+  override def sqrt(value: Byte): Byte = math.sqrt(value).toByte
 
   override def size: Int = 1
 }
@@ -51,6 +61,8 @@ private object ByteNumericExt extends NumericExt[Byte] {
 private object ShortNumericExt extends NumericExt[Short] {
 
   override def emptyArray: Array[Short] = Array.emptyShortArray
+
+  override def equalsArray(array1: Array[Short], array2: Array[Short]): Boolean = ju.Arrays.equals(array1, array2)
 
   override def fromFloat(value: Float): Short = value.toShort
 
@@ -64,9 +76,11 @@ private object ShortNumericExt extends NumericExt[Short] {
 
   override def toInt(array: Array[Short]): Array[Int] = array.map(_.toInt)
 
-  override def sqrt(value: Short): Short = math.sqrt(value).toByte
+  override def slice(array: Array[Short], from: Int, to: Int): Array[Short] = ju.Arrays.copyOfRange(array, from, to)
 
   override def search(array: Array[Short], value: Short): Int = ju.Arrays.binarySearch(array, value)
+
+  override def sqrt(value: Short): Short = math.sqrt(value).toByte
 
   override def size: Int = 2
 }
@@ -74,6 +88,8 @@ private object ShortNumericExt extends NumericExt[Short] {
 private object IntNumericExt extends NumericExt[Int] {
 
   override def emptyArray: Array[Int] = Array.emptyIntArray
+
+  override def equalsArray(array1: Array[Int], array2: Array[Int]): Boolean = ju.Arrays.equals(array1, array2)
 
   override def fromFloat(value: Float): Int = value.toInt
 
@@ -87,9 +103,11 @@ private object IntNumericExt extends NumericExt[Int] {
 
   override def toInt(array: Array[Int]): Array[Int] = array
 
-  override def sqrt(value: Int): Int = math.sqrt(value).toInt
+  override def slice(array: Array[Int], from: Int, to: Int): Array[Int] = ju.Arrays.copyOfRange(array, from, to)
 
   override def search(array: Array[Int], value: Int): Int = ju.Arrays.binarySearch(array, value)
+
+  override def sqrt(value: Int): Int = math.sqrt(value).toInt
 
   override def size: Int = 4
 }
@@ -97,6 +115,8 @@ private object IntNumericExt extends NumericExt[Int] {
 private object LongNumericExt extends NumericExt[Long] {
 
   override def emptyArray: Array[Long] = Array.emptyLongArray
+
+  override def equalsArray(array1: Array[Long], array2: Array[Long]): Boolean = ju.Arrays.equals(array1, array2)
 
   override def fromFloat(value: Float): Long = value.toLong
 
@@ -110,9 +130,11 @@ private object LongNumericExt extends NumericExt[Long] {
 
   override def toInt(array: Array[Long]): Array[Int] = array.map(_.toInt)
 
-  override def sqrt(value: Long): Long = math.sqrt(value).toLong
+  override def slice(array: Array[Long], from: Int, to: Int): Array[Long] = ju.Arrays.copyOfRange(array, from, to)
 
   override def search(array: Array[Long], value: Long): Int = ju.Arrays.binarySearch(array, value)
+
+  override def sqrt(value: Long): Long = math.sqrt(value).toLong
 
   override def size: Int = 8
 }
@@ -120,6 +142,8 @@ private object LongNumericExt extends NumericExt[Long] {
 private object FloatNumericExt extends NumericExt[Float] {
 
   override def emptyArray: Array[Float] = Array.emptyFloatArray
+
+  override def equalsArray(array1: Array[Float], array2: Array[Float]): Boolean = ju.Arrays.equals(array1, array2)
 
   override def fromFloat(value: Float): Float = value
 
@@ -133,9 +157,11 @@ private object FloatNumericExt extends NumericExt[Float] {
 
   override def toInt(array: Array[Float]): Array[Int] = array.map(_.toInt)
 
-  override def sqrt(value: Float): Float = math.sqrt(value).toFloat
+  override def slice(array: Array[Float], from: Int, to: Int): Array[Float] = ju.Arrays.copyOfRange(array, from, to)
 
   override def search(array: Array[Float], value: Float): Int = ju.Arrays.binarySearch(array, value)
+
+  override def sqrt(value: Float): Float = math.sqrt(value).toFloat
 
   override def size: Int = 4
 }
@@ -143,6 +169,8 @@ private object FloatNumericExt extends NumericExt[Float] {
 private object DoubleNumericExt extends NumericExt[Double] {
 
   override def emptyArray: Array[Double] = Array.emptyDoubleArray
+
+  override def equalsArray(array1: Array[Double], array2: Array[Double]): Boolean = ju.Arrays.equals(array1, array2)
 
   override def fromFloat(value: Float): Double = value.toDouble
 
@@ -156,9 +184,11 @@ private object DoubleNumericExt extends NumericExt[Double] {
 
   override def toInt(array: Array[Double]): Array[Int] = array.map(_.toInt)
 
-  override def sqrt(value: Double): Double = math.sqrt(value)
+  override def slice(array: Array[Double], from: Int, to: Int): Array[Double] = ju.Arrays.copyOfRange(array, from, to)
 
   override def search(array: Array[Double], value: Double): Int = ju.Arrays.binarySearch(array, value)
+
+  override def sqrt(value: Double): Double = math.sqrt(value)
 
   override def size: Int = 8
 }

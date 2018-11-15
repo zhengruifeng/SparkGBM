@@ -385,11 +385,24 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
         this
 
       } else {
-        val indexSplit = -j - 1
-        val (leftIndices, rightIndices) = indices.splitAt(indexSplit)
-        val (leftValues, rightValues) = values.splitAt(indexSplit)
-        val newIndices = leftIndices ++ Array(index) ++ rightIndices
-        val newValues = leftValues ++ Array(value) ++ rightValues
+        val k = -j - 1
+
+        val newIndices = Array.ofDim[K](indices.length + 1)
+        val newValues = Array.ofDim[V](values.length + 1)
+
+        if (k != 0) {
+          System.arraycopy(indices, 0, newIndices, 0, k)
+          System.arraycopy(values, 0, newValues, 0, k)
+        }
+
+        if (k != indices.length) {
+          System.arraycopy(indices, k, newIndices, k + 1, indices.length - k)
+          System.arraycopy(values, k, newValues, k + 1, values.length - k)
+        }
+
+        newIndices(k) = index
+        newValues(k) = value
+
         KVVector.sparse[K, V](newSize, newIndices, newValues)
       }
     }

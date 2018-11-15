@@ -501,7 +501,7 @@ class GBM extends Logging with Serializable {
     boostConf.setNumCols(numCols)
 
     val model = GBM.boost(data, test, boostConf, discretizer, initialModel)
-    logInfo(s"GBM training finished, duration ${(System.nanoTime()  - tic) / 1e9} seconds")
+    logInfo(s"GBM training finished, duration ${(System.nanoTime() - tic) / 1e9} seconds")
     model
   }
 }
@@ -1023,7 +1023,7 @@ private[gbm] object GBM extends Logging {
 
         Utils.zip3(weightBlock.iterator, labelBlock.iterator, rawBlock.iterator)
           .map { case (weight, label, rawSeq) =>
-            val raw = neh.toDouble(rawSeq.take(rawSize))
+            val raw = neh.toDouble(neh.take(rawSeq, rawSize))
             val score = boostConf.getObjFunc.transform(raw)
             (nuh.toDouble(weight), neh.toDouble(label), raw, score)
           }

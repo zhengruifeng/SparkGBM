@@ -1,5 +1,7 @@
 package org.apache.spark.ml.gbm.linalg
 
+import java.{util => ju}
+
 import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
@@ -80,7 +82,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
             val step = status(i + 3)
 
             if (step > 0) {
-              val vector = KVVector.dense[K, V](values.slice(valueIdx, valueIdx + step))
+              val vector = KVVector.dense[K, V](nev.slice(values, valueIdx, valueIdx + step))
 
               valueIdx += step
               i += 1
@@ -89,8 +91,8 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
 
             } else if (step < 0) {
               val vector = KVVector.sparse[K, V](vectorSize,
-                indices.slice(indexIdx, indexIdx - step),
-                values.slice(valueIdx, valueIdx - step))
+                nek.slice(indices, indexIdx, indexIdx - step),
+                nev.slice(values, valueIdx, valueIdx - step))
 
               indexIdx -= step
               valueIdx -= step
@@ -126,7 +128,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
         // the values of all vectors are stored as a sparse vector,
         // whose indices are in array `status` (after 3 elements), and values in array `values`.
         val valueVec = KVVector.sparse[Int, V](indices.length * size,
-          status.slice(3, status.length), values)
+          ju.Arrays.copyOfRange(status, 3, status.length), values)
 
         valueVec.iterator.map(_._2)
           .grouped(indices.length)
@@ -271,7 +273,7 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
         // the values of all vectors are stored as a sparse vector,
         // whose indices are in array `status` (after 3 elements), and values in array `values`.
         val valueVec = KVVector.sparse[Int, V](indices.length * size,
-          status.slice(3, status.length), values)
+          ju.Arrays.copyOfRange(status, 3, status.length), values)
 
         valueVec.iterator.map(_._2)
           .grouped(indices.length)

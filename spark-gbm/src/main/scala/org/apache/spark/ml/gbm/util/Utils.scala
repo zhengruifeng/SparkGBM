@@ -38,25 +38,6 @@ private[gbm] object Utils extends Logging {
 
 
   /**
-    * return true if two arrays are of the same length and contain the same values.
-    */
-  def arrayEquiv[V](array1: Array[V], array2: Array[V])
-                   (implicit orv: Ordering[V]): Boolean = {
-    (array1 != null, array2 != null) match {
-      case (true, true) =>
-        (array1.length == array2.length) &&
-          array1.iterator.zip(array2.iterator).forall { case (v1, v2) => orv.equiv(v1, v2) }
-
-      case (true, false) => false
-
-      case (false, true) => false
-
-      case (false, false) => true
-    }
-  }
-
-
-  /**
     * zip two iterators
     */
   def zip2[V1, V2](iter1: Iterator[V1],

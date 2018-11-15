@@ -293,7 +293,7 @@ object HorizontalGBM extends Logging {
         rawSeq: Array[H] => rawSeq
 
       case GBM.Dart if dropped.isEmpty =>
-        rawSeq: Array[H] => rawSeq.take(rawSize)
+        rawSeq: Array[H] => neh.take(rawSeq, rawSize)
 
       case GBM.Dart if dropped.nonEmpty =>
         val rawBase = neh.fromDouble(boostConf.getRawBaseScore)

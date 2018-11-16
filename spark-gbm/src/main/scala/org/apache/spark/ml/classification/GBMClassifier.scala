@@ -44,7 +44,7 @@ trait GBMClassificationParams extends GBMParams with HasThreshold {
 
   def getEvaluateFunc: Array[String] = $(evaluateFunc)
 
-  setDefault(evaluateFunc -> Array(GBMClassifier.LogLossEval, GBMClassifier.AUCEval, GBMClassifier.ErrorEval))
+  setDefault(evaluateFunc -> Array(GBMClassifier.LogLossEval, GBMClassifier.AUROCEval, GBMClassifier.ErrorEval))
 }
 
 
@@ -203,8 +203,10 @@ class GBMClassifier(override val uid: String)
       $(evaluateFunc).map {
         case GBMClassifier.LogLossEval =>
           new LogLossEval
-        case GBMClassifier.AUCEval =>
-          new AUCEval
+        case GBMClassifier.AUROCEval =>
+          new AUROCEval
+        case GBMClassifier.AUPRCEval =>
+          new AUPRCEval
         case GBMClassifier.ErrorEval =>
           new ErrorEval($(threshold))
       }
@@ -322,14 +324,17 @@ object GBMClassifier extends DefaultParamsReadable[GBMClassifier] {
   /** String name for LogLossEval */
   private[classification] val LogLossEval: String = "logloss"
 
-  /** String name for AUCEval */
-  private[classification] val AUCEval: String = "auc"
+  /** String name for AUROCEval */
+  private[classification] val AUROCEval: String = "auroc"
+
+  /** String name for AUPRCEval */
+  private[classification] val AUPRCEval: String = "auprc"
 
   /** String name for classification error */
   private[classification] val ErrorEval: String = "error"
 
   /** Set of evaluate functions that GBMClassifier supports */
-  private[classification] val supportedEvals = Set(LogLossEval, AUCEval, ErrorEval)
+  private[classification] val supportedEvals = Set(LogLossEval, AUROCEval, AUPRCEval, ErrorEval)
 }
 
 

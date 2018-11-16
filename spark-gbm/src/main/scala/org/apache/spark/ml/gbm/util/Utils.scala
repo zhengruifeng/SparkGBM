@@ -685,7 +685,8 @@ private[gbm] object Utils extends Logging {
           classOf[R2Eval],
           classOf[LogLossEval],
           classOf[ErrorEval],
-          classOf[AUCEval],
+          classOf[AUROCEval],
+          classOf[AUPRCEval],
 
           classOf[CallbackFunc],
           classOf[EarlyStop],

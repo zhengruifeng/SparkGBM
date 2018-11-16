@@ -70,6 +70,7 @@ trait ScalarIncEvalFunc extends IncEvalFunc {
 
 
 private[gbm] object IncEvalFunc {
+
   def compute(data: RDD[(Double, Array[Double], Array[Double], Array[Double])],
               evals: Array[IncEvalFunc],
               depth: Int): Map[String, Double] = {
@@ -249,20 +250,18 @@ class LogLossEval extends SimpleEvalFunc {
 
   override def compute(label: Double, score: Double): Double = {
     require(label >= 0 && label <= 1)
+    require(score >= 0 && score <= 1)
 
-    // probability of positive class
-    val ppos = 1.0 / (1.0 + math.exp(-score))
-
-    val pneg = 1.0 - ppos
+    val pneg = 1.0 - score
 
     val eps = 1e-16
 
-    if (ppos < eps) {
+    if (score < eps) {
       -label * math.log(eps) - (1.0 - label) * math.log(1.0 - eps)
     } else if (pneg < eps) {
       -label * math.log(1.0 - eps) - (1.0 - label) * math.log(eps)
     } else {
-      -label * math.log(ppos) - (1.0 - label) * math.log(pneg)
+      -label * math.log(score) - (1.0 - label) * math.log(pneg)
     }
   }
 
@@ -303,31 +302,30 @@ class ErrorEval(val threshold: Double) extends SimpleEvalFunc {
   *
   * @param numBins number of bins for approximate computation
   */
-class AUCEval(val numBins: Int) extends ScalarIncEvalFunc {
+class AUROCEval(val numBins: Int) extends ScalarIncEvalFunc {
   require(numBins >= 16)
 
   def this() = this(1 << 16)
 
-  private val histPos = Array.ofDim[Double](numBins)
-  private val histNeg = Array.ofDim[Double](numBins)
+  private val histPos = Array.ofDim[Float](numBins)
+  private val histNeg = Array.ofDim[Float](numBins)
 
   override def update(weight: Double, label: Double, rawScore: Double, score: Double): Unit = {
     require(label == 0 || label == 1)
+    require(score >= 0 && score <= 1)
+    require(weight >= 0)
 
-    // probability of positive class
-    val ppos = 1.0 / (1.0 + math.exp(-score))
-
-    val index = math.min((ppos * numBins).floor.toInt, numBins - 1)
+    val index = math.min((score * numBins).floor.toInt, numBins - 1)
 
     if (label == 1) {
-      histPos(index) += weight
+      histPos(index) += weight.toFloat
     } else {
-      histNeg(index) += weight
+      histNeg(index) += weight.toFloat
     }
   }
 
   override def merge(other: IncEvalFunc): Unit = {
-    val o = other.asInstanceOf[AUCEval]
+    val o = other.asInstanceOf[AUROCEval]
     require(numBins == o.numBins)
     var i = 0
     while (i < numBins) {
@@ -340,6 +338,7 @@ class AUCEval(val numBins: Int) extends ScalarIncEvalFunc {
   override def getValue: Double = {
     val numPos = histPos.sum
     val numNeg = histNeg.sum
+    require(numPos > 0 & numNeg > 0)
 
     var i = 0
     while (i < numBins) {
@@ -351,31 +350,139 @@ class AUCEval(val numBins: Int) extends ScalarIncEvalFunc {
     var truePos = 0.0
     var falsePos = 0.0
 
-    var auc = 0.0
+
+    // start with high threshold, which mean low fp-rate and tp-rate
+    // skip zero values
     i = numBins - 1
-    while (i >= 0) {
-      // trapezoidal area between point (falsePos, truePos)
-      // <-> point (falsePos + histPos(i), truePos + histPos(i)) on ROC
-      auc += histNeg(i) * (truePos + histPos(i) / 2)
+    while (i >= 0 && truePos + falsePos == 0) {
       truePos += histPos(i)
       falsePos += histNeg(i)
       i -= 1
     }
-    auc += (1.0 - falsePos) * (1.0 + truePos) / 2
-    auc
+
+
+    // (0.0, 0.0) prepended to the curve
+    // area between (0.0, 0.0) <-> (first_fp, first_tp)
+    var auroc = truePos * falsePos / 2
+
+    while (i >= 0) {
+      // trapezoidal area between point (falsePos, truePos)
+      // <-> point (falsePos + histPos(i), truePos + histPos(i)) on ROC
+      auroc += histNeg(i) * (truePos + histPos(i) / 2)
+      truePos += histPos(i)
+      falsePos += histNeg(i)
+      i -= 1
+    }
+
+    // (1.0, 1.0) appended to the curve
+    // area between (last_fp, last_tp) <-> (1.0, 1.0)
+    auroc += (1.0 - falsePos) * (1.0 + truePos) / 2
+
+    auroc
   }
 
   override def init: Unit = {
     var i = 0
     while (i < numBins) {
-      histPos(i) = 0.0
-      histNeg(i) = 0.0
+      histPos(i) = 0.0F
+      histNeg(i) = 0.0F
       i += 1
     }
   }
 
   override def isLargerBetter: Boolean = true
 
-  override def name: String = "AUC"
+  override def name: String = "AUROC"
+}
+
+
+/**
+  * Area under Precision-Recall curve
+  *
+  * @param numBins number of bins for approximate computation
+  */
+class AUPRCEval(val numBins: Int) extends ScalarIncEvalFunc {
+  require(numBins >= 16)
+
+  def this() = this(1 << 16)
+
+  private val histPos = Array.ofDim[Float](numBins)
+  private val histNeg = Array.ofDim[Float](numBins)
+
+  override def update(weight: Double, label: Double, rawScore: Double, score: Double): Unit = {
+    require(label == 0 || label == 1)
+    require(score >= 0 && score <= 1)
+    require(weight >= 0)
+
+    val index = math.min((score * numBins).floor.toInt, numBins - 1)
+
+    if (label == 1) {
+      histPos(index) += weight.toFloat
+    } else {
+      histNeg(index) += weight.toFloat
+    }
+  }
+
+  override def merge(other: IncEvalFunc): Unit = {
+    val o = other.asInstanceOf[AUPRCEval]
+    require(numBins == o.numBins)
+    var i = 0
+    while (i < numBins) {
+      histPos(i) += o.histPos(i)
+      histNeg(i) += o.histNeg(i)
+      i += 1
+    }
+  }
+
+  override def getValue: Double = {
+    val numPos = histPos.sum
+    val numNeg = histNeg.sum
+    require(numPos > 0 & numNeg > 0)
+
+    var truePos = 0.0
+    var falsePos = 0.0
+
+    // start with high threshold, which mean relative high precision and low recall
+    // skip zero values
+    var i = numBins - 1
+    while (i >= 0 && truePos + falsePos == 0) {
+      truePos += histPos(i)
+      falsePos += histNeg(i)
+      i -= 1
+    }
+
+    var precision = truePos / (truePos + falsePos)
+
+    // (0.0, first_precision) prepended to the curve
+    // area between (0.0, first_precision)
+    // <-> (first_recall = truePos / numPos, first_precision)
+    var auprc = precision * truePos / numPos
+
+    while (i >= 0) {
+      // trapezoidal area between (recall, precision)
+      // <-> (newRecall = recall + histPos(i) / numPos, newPrecision)
+      truePos += histPos(i)
+      falsePos += histNeg(i)
+      val newPrecision = truePos / (truePos + falsePos)
+      auprc += (histPos(i) / numPos) * (precision + newPrecision) / 2
+      precision = newPrecision
+      i -= 1
+    }
+
+    auprc
+  }
+
+  override def init: Unit = {
+    var i = 0
+    while (i < numBins) {
+      histPos(i) = 0.0F
+      histNeg(i) = 0.0F
+      i += 1
+    }
+  }
+
+  override def isLargerBetter: Boolean = true
+
+  override def name: String = "AUPRC"
 }
 

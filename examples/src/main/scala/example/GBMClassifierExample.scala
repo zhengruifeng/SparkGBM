@@ -31,7 +31,7 @@ object GBMClassifierExample {
 
     val gbmc = new GBMClassifier
     gbmc.setBoostType("gbtree")
-      .setParallelismType("feature")
+//      .setParallelismType("feature")
       .setHistogramComputationType("vote")
       .setStepSize(0.2)
       .setMaxIter(10)
@@ -45,7 +45,7 @@ object GBMClassifierExample {
       .setRegAlpha(0.1)
       .setRegLambda(1.0)
       .setObjectiveFunc("logistic")
-      .setEvaluateFunc(Array("logloss", "auc", "error"))
+      .setEvaluateFunc(Array("logloss", "auroc", "auprc", "error"))
       .setCheckpointInterval(3)
       .setEarlyStopIters(5)
       .setModelCheckpointInterval(4)
@@ -110,9 +110,16 @@ object GBMClassifierExample {
       .setRawPredictionCol("rawPrediction")
       .setMetricName("areaUnderROC")
 
-    /** auc of model with all trees */
-    val auc = evaluator.evaluate(model3.transform(test))
-    println(s"AUC on test data $auc")
+    /** auroc of model with all trees */
+    val auroc = evaluator.evaluate(model3.transform(test))
+    println(s"AUROC on test data $auroc")
+
+
+    evaluator.setMetricName("areaUnderPR")
+
+    /** auprc of model with all trees */
+    val auprc = evaluator.evaluate(model3.transform(test))
+    println(s"AUPRC on test data $auprc")
 
     spark.stop()
   }

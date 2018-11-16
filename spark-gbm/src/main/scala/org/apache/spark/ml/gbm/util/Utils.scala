@@ -37,6 +37,26 @@ private[gbm] object Utils extends Logging {
   }
 
 
+  def range(start: Long, end: Long, step: Long): Iterator[Long] = {
+    require(step != 0)
+
+    new Iterator[Long] {
+      private var i = start
+
+      def hasNext: Boolean = (step <= 0 || i < end) && (step >= 0 || i > end)
+
+      def next(): Long =
+        if (hasNext) {
+          val result = i
+          i += step
+          result
+        } else {
+          Iterator.empty.next()
+        }
+    }
+  }
+
+
   /**
     * zip two iterators
     */

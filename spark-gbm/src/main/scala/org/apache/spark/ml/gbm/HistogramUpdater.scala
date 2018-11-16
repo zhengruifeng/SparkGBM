@@ -345,31 +345,50 @@ private[gbm] object HistogramUpdater extends Logging {
       val sum0 = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
       iter.flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
-        Utils.zip4(binVecBlock.iterator, treeIdBlock.iterator,
+        Utils.zip4(binVecBlock.activeIterator, treeIdBlock.iterator,
           nodeIdBlock.iterator, gradBlock.iterator)
 
-      }.flatMap { case (binVec, treeIds, nodeIds, gradHess) =>
+      }.flatMap { case (binVecActiveIter, treeIds, nodeIds, gradHess) =>
         require(treeIds.length == nodeIds.length)
 
-        val gradSize = gradHess.length >> 1
+        val indices = Iterator.range(0, nodeIds.length)
+          .filter(i => f(nodeIds(i))).toArray
 
-        Iterator.range(0, nodeIds.length)
-          .filter(i => f(nodeIds(i)))
-          .flatMap { i =>
+        if (indices.nonEmpty) {
+          val gradSize = gradHess.length >> 1
+
+          // update sum0
+          var j = 0
+          while (j < indices.length) {
+            val i = indices(j)
             val treeId = treeIds(i)
             val nodeId = nodeIds(i)
             val indexGrad = (i % gradSize) << 1
             val grad = gradHess(indexGrad)
             val hess = gradHess(indexGrad + 1)
-
-            val (g, h) = sum0.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
-            sum0.update((treeId, nodeId), (nuh.plus(g, grad), nuh.plus(h, hess)))
-
-            // ignore zero-index bins
-            binVec.activeIterator
-              .filter { case (colId, _) => baseConf.colSelector.containsById(treeId, colId) }
-              .map { case (colId, bin) => ((treeId, nodeId, colId), (bin, grad, hess)) }
+            val (g0, h0) = sum0.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
+            sum0.update((treeId, nodeId), (nuh.plus(g0, grad), nuh.plus(h0, hess)))
+            j += 1
           }
+
+
+          binVecActiveIter.flatMap { case (colId, bin) =>
+            indices.iterator.flatMap { i =>
+              val treeId = treeIds(i)
+              if (baseConf.colSelector.containsById[T, C](treeId, colId)) {
+                val nodeId = nodeIds(i)
+                val indexGrad = (i % gradSize) << 1
+                val grad = gradHess(indexGrad)
+                val hess = gradHess(indexGrad + 1)
+                Iterator.single((treeId, nodeId, colId), (bin, grad, hess))
+              } else {
+                Iterator.empty
+              }
+            }
+          }
+        } else {
+          Iterator.empty
+        }
 
       } ++ sum0.iterator
         .flatMap { case ((treeId, nodeId), (g0, h0)) =>
@@ -731,3 +750,5 @@ private[gbm] class RangePratitioner[T, N, C](val numPartitions: Int,
       s"treeNodeIds=${treeNodeIds.mkString("[", ",", "]")})"
   }
 }
+
+

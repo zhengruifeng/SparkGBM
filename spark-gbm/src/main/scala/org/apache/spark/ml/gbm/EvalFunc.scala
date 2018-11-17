@@ -63,7 +63,7 @@ trait ScalarIncEvalFunc extends IncEvalFunc {
   def update(weight: Double, label: Double, raw: Double, score: Double): Unit
 
   final override def update(weight: Double, label: Array[Double], raw: Array[Double], score: Array[Double]): Unit = {
-    require(label.length == 1 && raw.length == 1 && score.length == 1)
+    require(weight >= 0 && label.length == 1 && raw.length == 1 && score.length == 1)
     update(weight, label.head, raw.head, score.head)
   }
 }
@@ -108,6 +108,7 @@ trait SimpleEvalFunc extends ScalarIncEvalFunc {
   def compute(label: Double, score: Double): Double
 
   override def update(weight: Double, label: Double, rawScore: Double, score: Double): Unit = {
+    require(weight >= 0)
     if (weight > 0) {
       count += weight
       val diff = compute(label, score) - avg
@@ -311,9 +312,9 @@ class AUROCEval(val numBins: Int) extends ScalarIncEvalFunc {
   private val histNeg = Array.ofDim[Float](numBins)
 
   override def update(weight: Double, label: Double, rawScore: Double, score: Double): Unit = {
+    require(weight >= 0)
     require(label == 0 || label == 1)
     require(score >= 0 && score <= 1)
-    require(weight >= 0)
 
     val index = math.min((score * numBins).floor.toInt, numBins - 1)
 
@@ -410,9 +411,9 @@ class AUPRCEval(val numBins: Int) extends ScalarIncEvalFunc {
   private val histNeg = Array.ofDim[Float](numBins)
 
   override def update(weight: Double, label: Double, rawScore: Double, score: Double): Unit = {
+    require(weight >= 0)
     require(label == 0 || label == 1)
     require(score >= 0 && score <= 1)
-    require(weight >= 0)
 
     val index = math.min((score * numBins).floor.toInt, numBins - 1)
 

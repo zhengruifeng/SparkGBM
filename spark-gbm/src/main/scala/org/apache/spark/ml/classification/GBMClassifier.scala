@@ -407,7 +407,7 @@ class GBMClassificationModel(override val uid: String, val model: GBMModel, val 
         raw match {
           case dv: DenseVector =>
             val score = model.obj.transform(dv.values)
-            Array.copy(score, 0, dv.values, 0, numClasses)
+            System.arraycopy(score, 0, dv.values, 0, numClasses)
             dv
 
           case sv: SparseVector =>

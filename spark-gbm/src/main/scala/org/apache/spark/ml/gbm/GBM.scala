@@ -852,36 +852,41 @@ private[gbm] object GBM extends Logging {
     require(rawSize == rawBase.length)
 
     if (trees.nonEmpty) {
+
       boostConf.getBoostType match {
+
         case Dart =>
           binVecBlocks.map { binVecBlock =>
-            val iter = binVecBlock.iterator.map { binVec =>
-              val raw = rawBase.clone ++ trees.map(tree => neh.fromDouble(tree.predict(binVec.apply)))
-
-              var j = 0
-              while (j < trees.length) {
-                val p = raw(rawSize + j)
-                raw(j % rawSize) += p * weights(j)
-                j += 1
+            val iter = binVecBlock.iterator
+              .map { binVec =>
+                val raw = Array.ofDim[H](rawBase.length + trees.length)
+                System.arraycopy(rawBase, 0, raw, 0, rawSize)
+                var i = 0
+                while (i < trees.length) {
+                  val p = neh.fromDouble(trees(i).predict(binVec.apply))
+                  raw(rawSize + i) = p
+                  raw(i % rawSize) += p * weights(i)
+                  i += 1
+                }
+                raw
               }
-              raw
-            }
 
             ArrayBlock.build[H](iter)
           }
 
         case _ =>
           binVecBlocks.map { binVecBlock =>
-            val iter = binVecBlock.iterator.map { binVec =>
-              val raw = rawBase.clone
-              var j = 0
-              while (j < trees.length) {
-                val p = neh.fromDouble(trees(j).predict(binVec.apply))
-                raw(j % rawSize) += p * weights(j)
-                j += 1
+            val iter = binVecBlock.iterator
+              .map { binVec =>
+                val raw = rawBase.clone()
+                var i = 0
+                while (i < trees.length) {
+                  val p = neh.fromDouble(trees(i).predict(binVec.apply))
+                  raw(i % rawSize) += p * weights(i)
+                  i += 1
+                }
+                raw
               }
-              raw
-            }
 
             ArrayBlock.build[H](iter)
           }
@@ -929,7 +934,7 @@ private[gbm] object GBM extends Logging {
     require(weights.length % boostConf.getRawSize == 0)
 
     val rawSize = boostConf.getRawSize
-    val treeOffset = weights.length - newTrees.length
+    val numOldTrees = weights.length - newTrees.length
 
     boostConf.getBoostType match {
       case Dart =>
@@ -943,24 +948,33 @@ private[gbm] object GBM extends Logging {
             val iter = binVecBlock.iterator
               .zip(rawBlock.iterator)
               .map { case (binVec, raw) =>
-                require(raw.length == rawSize + treeOffset)
-                val newRaw = raw ++ newTrees.map(tree => neh.fromDouble(tree.predict(binVec.apply)))
+                require(raw.length == rawSize + numOldTrees)
+
+                val newRaw = Array.ofDim[H](raw.length + newTrees.length)
 
                 if (keepWeights) {
-                  var j = 0
-                  while (j < newTrees.length) {
-                    val p = newRaw(rawSize + treeOffset + j)
-                    newRaw(j % rawSize) += p * weights(treeOffset + j)
-                    j += 1
-                  }
-
+                  System.arraycopy(raw, 0, newRaw, 0, raw.length)
                 } else {
-                  Array.copy(rawBase, 0, newRaw, 0, rawSize)
-                  var j = 0
-                  while (j < weights.length) {
-                    val p = newRaw(rawSize + j)
-                    newRaw(j % rawSize) += p * weights(j)
-                    j += 1
+                  System.arraycopy(rawBase, 0, newRaw, 0, rawSize)
+                  if (numOldTrees > 0) {
+                    System.arraycopy(raw, rawSize, newRaw, rawSize, numOldTrees)
+                  }
+                }
+
+                var i = 0
+                while (i < newTrees.length) {
+                  val p = neh.fromDouble(newTrees(i).predict(binVec.apply))
+                  newRaw(raw.length + i) = p
+                  newRaw(i % rawSize) += p * weights(numOldTrees + i)
+                  i += 1
+                }
+
+                if (!keepWeights) {
+                  i = 0
+                  while (i < numOldTrees) {
+                    val p = newRaw(rawSize + i)
+                    newRaw(i % rawSize) += p * weights(i)
+                    i += 1
                   }
                 }
 
@@ -969,6 +983,7 @@ private[gbm] object GBM extends Logging {
 
             ArrayBlock.build[H](iter)
           }
+
 
       case _ =>
         binVecBlocks.zip(rawBlocks)
@@ -979,11 +994,11 @@ private[gbm] object GBM extends Logging {
               .zip(rawBlock.iterator)
               .map { case (binVec, raw) =>
                 require(raw.length == rawSize)
-                var j = 0
-                while (j < newTrees.length) {
-                  val p = neh.fromDouble(newTrees(j).predict(binVec.apply))
-                  raw(j % rawSize) += p * weights(treeOffset + j)
-                  j += 1
+                var i = 0
+                while (i < newTrees.length) {
+                  val p = neh.fromDouble(newTrees(i).predict(binVec.apply))
+                  raw(i % rawSize) += p * weights(numOldTrees + i)
+                  i += 1
                 }
                 raw
               }

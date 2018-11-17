@@ -200,17 +200,20 @@ class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Flo
       if (size == newSize) {
         this
       } else {
-        KVVector.dense[K, V](values ++ Array.fill(newSize - size)(zero))
+        val newValues = Array.ofDim[V](newSize)
+        System.arraycopy(values, 0, newValues, 0, values.length)
+        KVVector.dense[K, V](newValues)
       }
 
     } else {
       val i = ink.toInt(index)
-      if (i < size) {
+      if (size == newSize) {
         values(i) += value
         this
 
       } else {
-        val newValues = values ++ Array.fill(i - size + 1)(zero)
+        val newValues = Array.ofDim[V](newSize)
+        System.arraycopy(values, 0, newValues, 0, values.length)
         newValues(i) = value
         KVVector.dense[K, V](newValues)
       }
@@ -261,7 +264,8 @@ class DenseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Flo
           this
 
         } else {
-          val newValues = values ++ Array.fill(sv.size - size)(zero)
+          val newValues = Array.ofDim[V](sv.size)
+          System.arraycopy(values, 0, newValues, 0, values.length)
           val iter = sv.activeIterator
           while (iter.hasNext) {
             val (k, v) = iter.next()
@@ -433,7 +437,8 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
           dv
 
         } else {
-          val newValues = dv.values ++ Array.fill(size - dv.size)(zero)
+          val newValues = Array.ofDim[V](size)
+          System.arraycopy(dv.values, 0, newValues, 0, dv.values.length)
           val iter = activeIterator
           while (iter.hasNext) {
             val (k, v) = iter.next()

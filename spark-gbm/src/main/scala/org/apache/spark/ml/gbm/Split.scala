@@ -2,6 +2,7 @@ package org.apache.spark.ml.gbm
 
 import java.{util => ju}
 
+import scala.annotation.varargs
 import scala.collection.mutable
 import scala.{specialized => spec}
 
@@ -194,7 +195,8 @@ private[gbm] object Split extends Logging {
     }
 
     if (split.isEmpty ||
-      !validate(split.get.stats :+ split.get.gain)) {
+      !validate(split.get.stats: _*) ||
+      !validate(split.get.gain)) {
       return None
     }
 
@@ -215,7 +217,7 @@ private[gbm] object Split extends Logging {
     * @param values numbers
     * @return true is all numbers are ok
     */
-  def validate(values: Array[Float]): Boolean = {
+  @varargs def validate(values: Float*): Boolean = {
     values.forall(v => !v.isNaN && !v.isInfinity)
   }
 
@@ -324,7 +326,7 @@ private[gbm] object Split extends Logging {
     val hessSum = hessSeq.sum
 
     val (_, baseScore) = computeScore(gradSum, hessSum, boostConf)
-    if (!validate(Array(baseScore))) {
+    if (!validate(baseScore)) {
       return None
     }
 
@@ -384,7 +386,7 @@ private[gbm] object Split extends Logging {
         val (weight1, score1) = computeScore(grad1, hess1, boostConf)
         val (weight2, score2) = computeScore(grad2, hess2, boostConf)
 
-        if (validate(Array(weight1, score1, weight2, score2))) {
+        if (validate(weight1, score1, weight2, score2)) {
           val score = score1 + score2
           if (score > bestScore) {
             bestSet1.clear()
@@ -393,7 +395,7 @@ private[gbm] object Split extends Logging {
             while (iter.hasNext) {
               bestSet1.add(iter.next())
             }
-            
+
             bestScore = score
 
             stats(0) = weight1
@@ -410,7 +412,7 @@ private[gbm] object Split extends Logging {
       num += 1
     }
 
-    if (!validate(stats :+ bestScore)) {
+    if (!validate(stats: _*) || !validate(bestScore)) {
       return None
     }
 
@@ -440,7 +442,7 @@ private[gbm] object Split extends Logging {
     val hessSum = hessSeq.sum
 
     val (_, baseScore) = computeScore(gradSum, hessSum, boostConf)
-    if (!validate(Array(baseScore))) {
+    if (!validate(baseScore)) {
       return None
     }
 
@@ -469,7 +471,7 @@ private[gbm] object Split extends Logging {
           val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, boostConf)
           val (weightRight, scoreRight) = computeScore(gradRight, hessRight, boostConf)
 
-          if (validate(Array(weightLeft, scoreLeft, weightRight, scoreRight))) {
+          if (validate(weightLeft, scoreLeft, weightRight, scoreRight)) {
             val score = scoreLeft + scoreRight
             if (score > bestScore) {
               bestCut = i
@@ -491,7 +493,7 @@ private[gbm] object Split extends Logging {
       i += 1
     }
 
-    if (!validate(stats :+ bestScore)) {
+    if (!validate(stats: _*) || !validate(bestScore)) {
       return None
     }
 

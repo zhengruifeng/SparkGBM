@@ -108,18 +108,15 @@ object GBMClassifierExample {
     val evaluator = new BinaryClassificationEvaluator()
     evaluator.setLabelCol("label")
       .setRawPredictionCol("rawPrediction")
-      .setMetricName("areaUnderROC")
 
-    /** auroc of model with all trees */
+    /** auroc and auprc of model with all trees */
+    evaluator.setMetricName("areaUnderROC")
     val auroc = evaluator.evaluate(model3.transform(test))
-    println(s"AUROC on test data $auroc")
-
 
     evaluator.setMetricName("areaUnderPR")
-
-    /** auprc of model with all trees */
     val auprc = evaluator.evaluate(model3.transform(test))
-    println(s"AUPRC on test data $auprc")
+
+    println(s"test data: AUROC=$auroc, AUPRC=$auprc")
 
     spark.stop()
   }

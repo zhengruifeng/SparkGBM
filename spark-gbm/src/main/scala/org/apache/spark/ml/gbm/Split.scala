@@ -134,6 +134,7 @@ private[gbm] object Split extends Logging {
     * @param boostConf boosting config info
     * @param baseConf  tree config info
     * @return best split if any
+    *         Note: input histogram arrays maybe updated in-place!
     */
   def split[@spec(Float, Double) H](colId: Int,
                                     hist: Array[H],
@@ -230,6 +231,7 @@ private[gbm] object Split extends Logging {
     * @param hessSeq   hess array
     * @param boostConf boosting config info
     * @return best split if any
+    *         Note: input histogram arrays maybe updated in-place!
     */
   def splitSeq(colId: Int,
                gradSeq: Array[Float],
@@ -247,7 +249,16 @@ private[gbm] object Split extends Logging {
 
       // missing go right
       // find best split on indices of [i1, i2, i3, i4, i0]
-      seqSearch(gradSeq.tail :+ gradSeq.head, hessSeq.tail :+ hessSeq.head, boostConf)
+      // Note: the histogram array here is updated in-place!
+      val g0 = gradSeq.head
+      System.arraycopy(gradSeq, 1, gradSeq, 0, gradSeq.length - 1)
+      gradSeq(gradSeq.length - 1) = g0
+
+      val h0 = hessSeq.head
+      System.arraycopy(hessSeq, 1, hessSeq, 0, hessSeq.length - 1)
+      hessSeq(hessSeq.length - 1) = h0
+
+      seqSearch(gradSeq, hessSeq, boostConf)
     }
 
     (search1, search2) match {

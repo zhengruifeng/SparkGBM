@@ -31,7 +31,7 @@ class GBMModel(val obj: ObjFunc,
 
   @transient lazy val baseScore: Array[Double] = obj.transform(rawBase)
 
-  def numCols: Int = discretizer.colDiscretizers.length
+  def numFeatures: Int = discretizer.colDiscretizers.length
 
   def numTrees: Int = trees.length
 
@@ -49,7 +49,7 @@ class GBMModel(val obj: ObjFunc,
 
     var n = firstTrees
     if (n == 0) {
-      return Vectors.sparse(numCols, Seq.empty)
+      return Vectors.sparse(numFeatures, Seq.empty)
     }
 
     if (n == -1) {
@@ -99,7 +99,7 @@ class GBMModel(val obj: ObjFunc,
 
     val (indices, values) = gains.sortBy(_._1).unzip
 
-    Vectors.sparse(numCols, indices, values)
+    Vectors.sparse(numFeatures, indices, values)
       .compressed
   }
 
@@ -121,7 +121,7 @@ class GBMModel(val obj: ObjFunc,
 
   def predictRaw(features: Vector,
                  firstTrees: Int): Array[Double] = {
-    require(features.size == numCols)
+    require(features.size == numFeatures)
     require(firstTrees >= -1 && firstTrees <= numTrees)
 
     val bins = discretizer.transform[Int](features)
@@ -158,7 +158,7 @@ class GBMModel(val obj: ObjFunc,
   def leaf(features: Vector,
            oneHot: Boolean,
            firstTrees: Int): Vector = {
-    require(features.size == numCols)
+    require(features.size == numFeatures)
     require(firstTrees >= -1 && firstTrees <= numTrees)
 
     val bins = discretizer.transform[Int](features)

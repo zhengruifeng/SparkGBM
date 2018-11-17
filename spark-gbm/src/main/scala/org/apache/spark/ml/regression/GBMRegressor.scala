@@ -319,7 +319,7 @@ class GBMRegressionModel(override val uid: String, val model: GBMModel)
     set(firstTrees, value)
   }
 
-  override def numFeatures: Int = model.numCols
+  override def numFeatures: Int = model.numFeatures
 
   def numTrees: Int = model.numTrees
 

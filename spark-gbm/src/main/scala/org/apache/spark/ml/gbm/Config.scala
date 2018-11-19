@@ -320,7 +320,7 @@ class BoostConfig extends Logging with Serializable {
   private var maxBruteBins: Int = 10
 
   private[gbm] def setMaxBruteBins(value: Int): this.type = {
-    require(value >= 0)
+    require(value >= 0 && value <= 64)
     maxBruteBins = value
     this
   }

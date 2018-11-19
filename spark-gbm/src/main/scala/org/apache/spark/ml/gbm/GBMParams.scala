@@ -452,7 +452,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     */
   final val maxBruteBins: IntParam = new IntParam(this, "maxBruteBins", "The maximum number " +
     "of non-zero histogram bins to search split for categorical columns by brute force.",
-    ParamValidators.gtEq(0))
+    ParamValidators.inRange(0, 64))
 
   def getMaxBruteBins: Int = $(maxBruteBins)
 

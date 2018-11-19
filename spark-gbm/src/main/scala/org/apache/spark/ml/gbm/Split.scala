@@ -135,7 +135,6 @@ private[gbm] object Split extends Logging {
     * @param boostConf boosting config info
     * @param baseConf  tree config info
     * @return best split if any
-    *         Note: input histogram arrays maybe updated in-place!
     */
   def split[@spec(Float, Double) H](colId: Int,
                                     hist: Array[H],
@@ -565,7 +564,7 @@ private[gbm] object Split extends Logging {
 
 
   /**
-    * Given a valid set split, choose the form of SetSplit by the size of set.
+    * Given a valid set split, choose the form of SetSplit to minimize the size of set.
     *
     * @param featureId feature index
     * @param gradSeq   grad array

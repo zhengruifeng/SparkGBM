@@ -1,5 +1,6 @@
 package org.apache.spark.ml.gbm
 
+import java.{lang => jl}
 import java.{util => ju}
 
 import scala.annotation.varargs
@@ -345,14 +346,22 @@ private[gbm] object Split extends Logging {
     // [g0, g1, g2, g3, g4, g5, g6], [h0, h1, h2, h3, h4, h5, h6], [i0, i1, i2, i3, i4, i5, i6] ->
     // [g1, g2, g4, g6], [h1, h2, h4, h6], [i1, i2, i4, i6]
     val nzIndices = gradSeq.zip(hessSeq).zipWithIndex
-      .filter { case ((grad, hess), i) =>
+      .filter { case ((grad, hess), _) =>
         grad != 0 || hess != 0
       }.map(_._2)
 
-    val len = nzIndices.length
+    val nnz = nzIndices.length
+    require(nnz <= 64)
 
-    val bestSet1 = mutable.Set.empty[Int]
-    val set1 = mutable.Set.empty[Int]
+
+    // Here, we use a trick to efficiently traverse all candidates.
+    // We not traverse the candidate sets, instead we use Gray codes of sets.
+    // the initial `num` is zero, and its gray code is also zero,
+    // which means no indices is selected, so the initial values of
+    // `grad1` and `hess1` are zero.
+    var bestGray = 0L
+    var prevGray = 0L
+
     var bestScore = Float.MinValue
 
     var grad1 = 0.0F
@@ -361,32 +370,27 @@ private[gbm] object Split extends Logging {
     var hess1 = 0.0F
     var hess2 = 0.0F
 
-    val stats: Array[Float] = Array.fill(6)(Float.NaN)
+    val stats = Array.fill(6)(Float.NaN)
 
-    // the first element in nnz hist is always unselected in set1
-    val k = 1L << (len - 1)
+    // the first element in non-zero hist is always unselected in set1
+    val k = 1L << (nnz - 1)
     var num = 1L
 
-    val char1 = "1".head
     while (num < k) {
-      // len = 4, num = 3, binStr = "11" -> "0011" & [i1, i2, i4, i6] = [i4, i6]
-      val binStr = num.toBinaryString
+      // gray code of `num`
+      val gray = (num >> 1) ^ num
 
-      set1.clear()
-      grad1 = 0.0F
-      hess1 = 0.0F
+      // changed bit between current gray code and the previous one
+      val i = jl.Long.numberOfTrailingZeros(gray ^ prevGray)
 
-      val pad = len - binStr.length
-      var i = 0
-      while (i < binStr.length) {
-        // len = 4, num = 3, binStr = "11", pad = 2, i = [0, 1] -> nzIndices[2, 3] -> [i4, i6]
-        if (binStr(i) == char1) {
-          val index = nzIndices(pad + i)
-          grad1 += gradSeq(index)
-          hess1 += hessSeq(index)
-          set1.add(index)
-        }
-        i += 1
+      val nzIndex = nzIndices(i)
+
+      if (gray > prevGray) {
+        grad1 += gradSeq(nzIndex)
+        hess1 += hessSeq(nzIndex)
+      } else {
+        grad1 -= gradSeq(nzIndex)
+        hess1 -= hessSeq(nzIndex)
       }
 
       grad2 = gradSum - grad1
@@ -400,13 +404,7 @@ private[gbm] object Split extends Logging {
         if (validate(weight1, score1, weight2, score2)) {
           val score = score1 + score2
           if (score > bestScore) {
-            bestSet1.clear()
-
-            val iter = set1.iterator
-            while (iter.hasNext) {
-              bestSet1.add(iter.next())
-            }
-
+            bestGray = gray
             bestScore = score
 
             stats(0) = weight1
@@ -420,7 +418,13 @@ private[gbm] object Split extends Logging {
         }
       }
 
+      prevGray = gray
       num += 1
+    }
+
+
+    if (bestGray == 0L) {
+      return None
     }
 
     if (!validate(stats: _*) || !validate(bestScore)) {
@@ -432,7 +436,19 @@ private[gbm] object Split extends Logging {
       return None
     }
 
-    val indices1 = bestSet1.toArray
+
+    // decode Gray code to indices set
+    val builder = mutable.ArrayBuilder.make[Int]
+    var i = 0
+    while (i < nnz - 1) {
+      val mask = 1L << i
+      if ((mask & bestGray) != 0L) {
+        builder += i
+      }
+      i += 1
+    }
+    val indices1 = builder.result()
+
     val split = createSetSplit(colId, gradSeq, hessSeq, gain, indices1, stats)
     Some(split)
   }
@@ -461,7 +477,7 @@ private[gbm] object Split extends Logging {
     var bestScore = Float.MinValue
 
     // weightLeft, weightRight, gradLeft, gradRight, hessLeft, hessRight
-    val stats: Array[Float] = Array.fill(6)(Float.NaN)
+    val stats = Array.fill(6)(Float.NaN)
 
     var gradLeft = 0.0F
     var gradRight = 0.0F

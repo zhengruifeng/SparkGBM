@@ -1,5 +1,6 @@
 package org.apache.spark.ml.gbm.linalg
 
+import java.{lang => jl}
 import java.{util => ju}
 
 private[gbm] trait NumericExt[K] extends Serializable {
@@ -55,7 +56,7 @@ private object ByteNumericExt extends NumericExt[Byte] {
 
   override def sqrt(value: Byte): Byte = math.sqrt(value).toByte
 
-  override def size: Int = 1
+  override def size: Int = jl.Byte.BYTES
 }
 
 private object ShortNumericExt extends NumericExt[Short] {
@@ -82,7 +83,7 @@ private object ShortNumericExt extends NumericExt[Short] {
 
   override def sqrt(value: Short): Short = math.sqrt(value).toByte
 
-  override def size: Int = 2
+  override def size: Int = jl.Short.BYTES
 }
 
 private object IntNumericExt extends NumericExt[Int] {
@@ -109,7 +110,7 @@ private object IntNumericExt extends NumericExt[Int] {
 
   override def sqrt(value: Int): Int = math.sqrt(value).toInt
 
-  override def size: Int = 4
+  override def size: Int = jl.Integer.BYTES
 }
 
 private object LongNumericExt extends NumericExt[Long] {
@@ -136,7 +137,7 @@ private object LongNumericExt extends NumericExt[Long] {
 
   override def sqrt(value: Long): Long = math.sqrt(value).toLong
 
-  override def size: Int = 8
+  override def size: Int = jl.Long.BYTES
 }
 
 private object FloatNumericExt extends NumericExt[Float] {
@@ -163,7 +164,7 @@ private object FloatNumericExt extends NumericExt[Float] {
 
   override def sqrt(value: Float): Float = math.sqrt(value).toFloat
 
-  override def size: Int = 4
+  override def size: Int = jl.Float.BYTES
 }
 
 private object DoubleNumericExt extends NumericExt[Double] {
@@ -190,7 +191,7 @@ private object DoubleNumericExt extends NumericExt[Double] {
 
   override def sqrt(value: Double): Double = math.sqrt(value)
 
-  override def size: Int = 8
+  override def size: Int = jl.Double.BYTES
 }
 
 

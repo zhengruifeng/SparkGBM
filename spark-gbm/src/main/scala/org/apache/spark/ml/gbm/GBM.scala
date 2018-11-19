@@ -195,15 +195,6 @@ class GBM extends Logging with Serializable {
   def getCheckpointInterval: Int = boostConf.getCheckpointInterval
 
 
-  /** strategy to cache tree inputs */
-  def setStorageStrategy(value: String): this.type = {
-    boostConf.setStorageStrategy(value)
-    this
-  }
-
-  def getStorageStrategy: String = boostConf.getStorageStrategy
-
-
   /** storage level 1 */
   def setStorageLevel1(value: StorageLevel): this.type = {
     boostConf.setStorageLevel1(value)

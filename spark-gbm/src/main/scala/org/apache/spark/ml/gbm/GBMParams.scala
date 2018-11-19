@@ -245,22 +245,6 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Strategy to cache tree inputs.
-    * (Default: "upstream")
-    *
-    * @group expertParam
-    */
-  final val storageStrategy: Param[String] =
-    new Param[String](this, "storageStrategy",
-      "Strategy to cache tree inputs.",
-      ParamValidators.inArray[String](Array("upstream", "eager")))
-
-  def getStorageStrategy: String = $(storageStrategy)
-
-  setDefault(storageStrategy -> "upstream")
-
-
-  /**
     * StorageLevel for intermediate datasets.
     * (Default: "MEMORY_AND_DISK")
     *

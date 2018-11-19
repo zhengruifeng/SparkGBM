@@ -350,18 +350,6 @@ class BoostConfig extends Logging with Serializable {
   def getCheckpointInterval: Int = checkpointInterval
 
 
-  /** strategy to cache tree inputs */
-  private var storageStrategy: String = "upstream"
-
-  private[gbm] def setStorageStrategy(value: String): this.type = {
-    require(Array("upstream", "eager").contains(value))
-    storageStrategy = value
-    this
-  }
-
-  def getStorageStrategy: String = storageStrategy
-
-
   /** storage level 1 */
   private var storageLevel1: StorageLevel = StorageLevel.MEMORY_AND_DISK
 

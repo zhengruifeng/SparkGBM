@@ -92,8 +92,6 @@ class GBMRegressor(override val uid: String) extends
 
   def setMinGain(value: Double): this.type = set(minGain, value)
 
-  def setStorageStrategy(value: String): this.type = set(storageStrategy, value)
-
   def setStorageLevel1(value: String): this.type = set(storageLevel1, value)
 
   def setStorageLevel2(value: String): this.type = set(storageLevel2, value)
@@ -234,7 +232,6 @@ class GBMRegressor(override val uid: String) extends
       .setColSampleRateByTree($(colSampleRateByTree))
       .setColSampleRateByLevel($(colSampleRateByLevel))
       .setCheckpointInterval($(checkpointInterval))
-      .setStorageStrategy($(storageStrategy))
       .setStorageLevel1(StorageLevel.fromString($(storageLevel1)))
       .setStorageLevel2(StorageLevel.fromString($(storageLevel2)))
       .setStorageLevel3(StorageLevel.fromString($(storageLevel3)))

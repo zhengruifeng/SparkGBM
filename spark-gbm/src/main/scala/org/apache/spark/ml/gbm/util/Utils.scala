@@ -37,6 +37,9 @@ private[gbm] object Utils extends Logging {
   }
 
 
+  /**
+    * An iterator producing equally spaced values in some integer interval.
+    */
   def range(start: Long, end: Long, step: Long): Iterator[Long] = {
     require(step != 0)
 

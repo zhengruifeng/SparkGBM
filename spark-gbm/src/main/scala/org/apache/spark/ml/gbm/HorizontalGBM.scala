@@ -363,6 +363,8 @@ object HorizontalGBM extends Logging {
 
     recoder.clear(false)
 
+    System.gc()
+
     trees
   }
 

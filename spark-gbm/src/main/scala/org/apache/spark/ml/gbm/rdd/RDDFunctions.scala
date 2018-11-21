@@ -13,16 +13,16 @@ import org.apache.spark.util.random.XORShiftRandom
 private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable {
 
   /**
-    * Reorganize and concatenate current partitions to form new partitions.
+    * Concatenate current partitions to form new partitions.
     */
-  def reorgPartitions(partIds: Array[Array[Int]]): RDD[T] = {
-    new PartitionReorganizedRDD[T](self, partIds)
+  def catPartitions(partIds: Array[Array[Int]]): RDD[T] = {
+    new PartitionConcatenatedRDD[T](self, partIds)
   }
 
 
-  def reorgPartitions(partIds: Array[Int]): RDD[T] = {
+  def catPartitions(partIds: Array[Int]): RDD[T] = {
     val array = partIds.map(p => Array(p))
-    reorgPartitions(array)
+    catPartitions(array)
   }
 
 
@@ -33,7 +33,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
   def samplePartitions(weights: Map[Int, Double], seed: Long): RDD[T] = {
     val (partIdArr, weightArr) = weights.toArray.unzip
 
-    reorgPartitions(partIdArr)
+    catPartitions(partIdArr)
       .mapPartitionsWithIndex { case (pid, iter) =>
         val w = weightArr(pid)
         if (w == 0) {
@@ -88,7 +88,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
       val r = numPartitions % prevNumPartitions
       val partIds = Array.tabulate(numPartitions)(_ % prevNumPartitions)
 
-      reorgPartitions(partIds)
+      catPartitions(partIds)
         .mapPartitionsWithIndex { case (partId, iter) =>
           val i = partId / prevNumPartitions
           val j = partId % prevNumPartitions

@@ -177,7 +177,7 @@ private[gbm] object Tree extends Serializable with Logging {
             colIds.exists(newBaseConfig.colSelector.contains[C])
           }.map(_._2).toArray
 
-        val agNodeIdBlocks = VerticalGBM.gatherByLayer(nodeIdBlocks.zip(blockIds),
+        val agNodeIdBlocks = VerticalGBM.gatherByLayer(nodeIdBlocks, blockIds,
           baseVPartIds, boostConf, bcBoostConf)
 
         subBinVecBlocks.zip3(agTreeIdBlocks, agNodeIdBlocks, agGradBlocks, false)

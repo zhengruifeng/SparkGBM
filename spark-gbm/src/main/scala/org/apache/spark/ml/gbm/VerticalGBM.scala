@@ -50,7 +50,6 @@ object VerticalGBM extends Logging {
     // vertical train sub-binvec blocks
     val subBinVecBlocks = divideBinVecBlocks[C, B](trainBinVecBlocks, boostConf)
       .setName("Train SubBinVecs (Vertical)")
-
     subBinVecBlocks.persist(boostConf.getStorageLevel2)
 
 
@@ -248,43 +247,97 @@ object VerticalGBM extends Logging {
   }
 
 
-  def gatherByLayer[T](blockWithIds: RDD[(T, Long)],
+  def gatherByLayer[T](blocks: RDD[T],
+                       blockIds: RDD[Long],
                        boostConf: BoostConfig,
                        bcBoostConf: Broadcast[BoostConfig])
                       (implicit ct: ClassTag[T]): RDD[T] = {
     val baseVPartIds = Array.range(0, boostConf.getNumBaseVParts)
-    gatherByLayer(blockWithIds, baseVPartIds, boostConf, bcBoostConf)
+    gatherByLayer(blocks, blockIds, baseVPartIds, boostConf, bcBoostConf)
   }
 
 
-  def gatherByLayer[T](blockWithIds: RDD[(T, Long)],
+  def gatherByLayer[T](blocks: RDD[T],
+                       blockIds: RDD[Long],
                        baseVPartIds: Array[Int],
                        boostConf: BoostConfig,
                        bcBoostConf: Broadcast[BoostConfig])
                       (implicit ct: ClassTag[T]): RDD[T] = {
-    val numVParts = boostConf.getNumVParts
+    import RDDFunctions._
 
-    blockWithIds.mapPartitions { iter =>
-      val numVLayers = bcBoostConf.value.getNumVLayers
-      val numBaseVParts = bcBoostConf.value.getNumBaseVParts
+    require(baseVPartIds.nonEmpty)
 
-      iter.flatMap { case (block, blockId) =>
-        val layerId = (blockId % numVLayers).toInt
-        baseVPartIds.map { baseVPartId =>
-          val vPartId = baseVPartId + layerId * numBaseVParts
-          ((blockId, vPartId), block)
+    val numCopies = math.log1p(baseVPartIds.length).ceil.toInt
+    val numCopiedParts = numCopies * boostConf.numVLayers
+
+
+    val copiedBlocks = if (blockIds != null) {
+      blocks.zipPartitions(blockIds) {
+        case (blockIter, blockIdIter) =>
+          val numVLayers = bcBoostConf.value.getNumVLayers
+
+          Utils.zip2(blockIter, blockIdIter)
+            .flatMap { case (block, blockId) =>
+              val layerId = (blockId % numVLayers).toInt
+              Iterator.range(0, numCopies)
+                .map { copyId =>
+                  val vPartId = copyId + layerId * numCopies
+                  ((blockId, vPartId), block)
+                }
+            }
+      }
+
+    } else {
+
+      blocks.mapPartitionsWithIndex { case (partId, iter) =>
+        val numVLayers = bcBoostConf.value.getNumVLayers
+        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
+
+        iter.flatMap { block =>
+          blockId += 1
+          val layerId = (blockId % numVLayers).toInt
+          Iterator.range(0, numCopies)
+            .map { copyId =>
+              val vPartId = copyId + layerId * numCopies
+              ((blockId, vPartId), block)
+            }
         }
       }
+    }
 
-    }.repartitionAndSortWithinPartitions(new Partitioner {
 
-      override def numPartitions: Int = numVParts
+    val sortedBlocks = copiedBlocks
+      .repartitionAndSortWithinPartitions(new Partitioner {
 
-      override def getPartition(key: Any): Int = key match {
-        case (_, vPartId: Int) => vPartId
+        override def numPartitions: Int = numCopiedParts
+
+        override def getPartition(key: Any): Int = key match {
+          case (_, vPartId: Int) => vPartId
+        }
+
+      }).map(_._2)
+
+
+    val partIds = Array.fill(boostConf.getNumVParts)(Array.emptyIntArray)
+
+    var i = 0
+    while (i < baseVPartIds.length) {
+      val baseVPartId = baseVPartIds(i)
+
+      var j = 0
+      while (j < boostConf.numVLayers) {
+        val k = baseVPartId + j * boostConf.getNumBaseVParts
+        val partId = i % numCopies + j * numCopies
+        partIds(k) = Array(partId)
+
+        j += 1
       }
 
-    }).map(_._2)
+      i += 1
+    }
+
+
+    sortedBlocks.catPartitions(partIds)
   }
 
 
@@ -444,6 +497,8 @@ object VerticalGBM extends Logging {
 
     recoder.clear(false)
 
+    System.gc()
+
     trees
   }
 
@@ -487,26 +542,12 @@ object VerticalGBM extends Logging {
     recoder.append(treeIdBlocks)
 
 
-    val blockIds = sc.parallelize(Seq(null), weightBlocks.getNumPartitions)
-      .mapPartitionsWithIndex { case (partId, _) =>
-        val blockId = bcBoostConf.value.getBlockOffset(partId)
-        val numBlocks = bcBoostConf.value.getNumBlocksPerPart(partId)
-        Utils.range(blockId, blockId + numBlocks, 1L)
-      }.setName(s"Iter $iteration: BlockIds")
-
-
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
-      .mapPartitionsWithIndex { case (partId, iter) =>
-        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
-
-        iter.map { case (weightBlock, labelBlock, rawBlock) =>
-          blockId += 1
-          val gradBlock = computeGradBlock(weightBlock, labelBlock, rawBlock)
-          (gradBlock, blockId)
-        }
+      .map { case (weightBlock, labelBlock, rawBlock) =>
+        computeGradBlock(weightBlock, labelBlock, rawBlock)
       }.setName(s"Iter $iteration: Grads")
 
-    val agGradBlocks = gatherByLayer(gradBlocks, boostConf, bcBoostConf)
+    val agGradBlocks = gatherByLayer(gradBlocks, null, boostConf, bcBoostConf)
       .setName(s"Iter $iteration: Grads (Gathered)")
 
     agGradBlocks.persist(boostConf.getStorageLevel1)
@@ -531,7 +572,7 @@ object VerticalGBM extends Logging {
     agTreeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(agTreeIdBlocks)
 
-    (binVecBlocks, treeIdBlocks, subBinVecBlocks, blockIds, agTreeIdBlocks, agGradBlocks)
+    (binVecBlocks, treeIdBlocks, subBinVecBlocks, null, agTreeIdBlocks, agGradBlocks)
   }
 
 
@@ -609,7 +650,7 @@ object VerticalGBM extends Logging {
         val blockSelector = bcBlockSelector.value
         var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
-        iter.flatMap { weightBlock =>
+        iter.flatMap { _ =>
           blockId += 1
 
           if (blockSelector.contains[Long](blockId)) {
@@ -624,7 +665,7 @@ object VerticalGBM extends Logging {
     recoder.append(sampledBlockIds)
 
 
-    val agTreeIdBlocks = gatherByLayer(treeIdBlocks.zip(sampledBlockIds), boostConf, bcBoostConf)
+    val agTreeIdBlocks = gatherByLayer(treeIdBlocks, sampledBlockIds, boostConf, bcBoostConf)
       .setName(s"Iter $iteration: TreeIds (Block-Sampled) (Gathered)")
 
     agTreeIdBlocks.persist(boostConf.getStorageLevel1)
@@ -642,14 +683,14 @@ object VerticalGBM extends Logging {
               blockId += 1
               if (blockSelector.contains[Long](blockId)) {
                 val gradBlock = computeGradBlock(weightBlock, labelBlock, rawBlock)
-                Iterator.single((gradBlock, blockId))
+                Iterator.single(gradBlock)
               } else {
                 Iterator.empty
               }
           }
       }.setName(s"Iter $iteration: Grads (Block-Sampled)")
 
-    val agGradBlocks = gatherByLayer(gradBlocks, boostConf, bcBoostConf)
+    val agGradBlocks = gatherByLayer(gradBlocks, sampledBlockIds, boostConf, bcBoostConf)
       .setName(s"Iter $iteration: Grads (Block-Sampled) (Gathered)")
 
     agGradBlocks.persist(boostConf.getStorageLevel1)
@@ -762,16 +803,7 @@ object VerticalGBM extends Logging {
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(treeIdBlocks)
 
-
-    val blockIds = sc.parallelize(Seq(null), weightBlocks.getNumPartitions)
-      .mapPartitionsWithIndex { case (partId, _) =>
-        val blockId = bcBoostConf.value.getBlockOffset(partId)
-        val numBlocks = bcBoostConf.value.getNumBlocksPerPart(partId)
-        Utils.range(blockId, blockId + numBlocks, 1L)
-      }.setName(s"Iter $iteration: BlockIds")
-
-
-    val agTreeIdBlocks = gatherByLayer(treeIdBlocks.zip(blockIds), boostConf, bcBoostConf)
+    val agTreeIdBlocks = gatherByLayer(treeIdBlocks, null, boostConf, bcBoostConf)
       .setName(s"Iter $iteration: TreeIds (Instance-Sampled) (Gathered)")
 
     agTreeIdBlocks.persist(boostConf.getStorageLevel1)
@@ -804,7 +836,7 @@ object VerticalGBM extends Logging {
         }
       }.setName(s"Iter $iteration: Grads (Row-Sampled)")
 
-    val agGradBlocks = gatherByLayer(gradBlocks.zip(blockIds), boostConf, bcBoostConf)
+    val agGradBlocks = gatherByLayer(gradBlocks, null, boostConf, bcBoostConf)
       .setName(s"Iter $iteration: Grads (Row-Sampled) (AllGathered)")
 
     agGradBlocks.persist(boostConf.getStorageLevel1)
@@ -839,7 +871,7 @@ object VerticalGBM extends Logging {
     sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
     recoder.append(sampledSubBinVecBlocks)
 
-    (sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, blockIds, agTreeIdBlocks, agGradBlocks)
+    (sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, null, agTreeIdBlocks, agGradBlocks)
   }
 }
 

@@ -263,81 +263,55 @@ object VerticalGBM extends Logging {
                        boostConf: BoostConfig,
                        bcBoostConf: Broadcast[BoostConfig])
                       (implicit ct: ClassTag[T]): RDD[T] = {
-    import RDDFunctions._
-
     require(baseVPartIds.nonEmpty)
 
-    val numCopies = math.log1p(baseVPartIds.length).ceil.toInt
-    val numCopiedParts = numCopies * boostConf.numVLayers
-
+    val numVParts = boostConf.getNumVParts
 
     val copiedBlocks = if (blockIds != null) {
-      blocks.zipPartitions(blockIds) {
+      blocks.zipPartitions(blockIds)({
         case (blockIter, blockIdIter) =>
           val numVLayers = bcBoostConf.value.getNumVLayers
+          val numBaseVParts = bcBoostConf.value.getNumBaseVParts
 
           Utils.zip2(blockIter, blockIdIter)
             .flatMap { case (block, blockId) =>
               val layerId = (blockId % numVLayers).toInt
-              Iterator.range(0, numCopies)
-                .map { copyId =>
-                  val vPartId = copyId + layerId * numCopies
-                  ((blockId, vPartId), block)
-                }
+              baseVPartIds.map { baseVPartId =>
+                val vPartId = baseVPartId + layerId * numBaseVParts
+                ((blockId, vPartId), block)
+              }
             }
-      }
+      })
 
     } else {
 
       blocks.mapPartitionsWithIndex { case (partId, iter) =>
         val numVLayers = bcBoostConf.value.getNumVLayers
+        val numBaseVParts = bcBoostConf.value.getNumBaseVParts
         var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { block =>
           blockId += 1
           val layerId = (blockId % numVLayers).toInt
-          Iterator.range(0, numCopies)
-            .map { copyId =>
-              val vPartId = copyId + layerId * numCopies
-              ((blockId, vPartId), block)
-            }
+          baseVPartIds.map { baseVPartId =>
+            val vPartId = baseVPartId + layerId * numBaseVParts
+            ((blockId, vPartId), block)
+          }
         }
       }
     }
 
 
-    val sortedBlocks = copiedBlocks
+    copiedBlocks
       .repartitionAndSortWithinPartitions(new Partitioner {
 
-        override def numPartitions: Int = numCopiedParts
+        override def numPartitions: Int = numVParts
 
         override def getPartition(key: Any): Int = key match {
           case (_, vPartId: Int) => vPartId
         }
 
       }).map(_._2)
-
-
-    val partIds = Array.fill(boostConf.getNumVParts)(Array.emptyIntArray)
-
-    var i = 0
-    while (i < baseVPartIds.length) {
-      val baseVPartId = baseVPartIds(i)
-
-      var j = 0
-      while (j < boostConf.numVLayers) {
-        val k = baseVPartId + j * boostConf.getNumBaseVParts
-        val partId = i % numCopies + j * numCopies
-        partIds(k) = Array(partId)
-
-        j += 1
-      }
-
-      i += 1
-    }
-
-
-    sortedBlocks.catPartitions(partIds)
   }
 
 

@@ -44,7 +44,7 @@ private[gbm] class PartitionConcatenatedRDD[T: ClassTag](@transient val parent: 
       .map { prev => firstParent[T].preferredLocations(prev) }
 
     if (prefs.nonEmpty) {
-      val intersect = prefs.reduce(intersect)
+      val intersect = prefs.reduce(_.intersect(_))
 
       if (intersect.nonEmpty) {
         intersect

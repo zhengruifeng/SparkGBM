@@ -89,10 +89,10 @@ private[gbm] object Tree extends Serializable with Logging {
 
     if (depth >= boostConf.getMaxDepth) {
       logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
-        s"trees growth finished, duration ${(System.nanoTime()  - tic0) / 1e9} seconds")
+        s"trees growth finished, duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     } else {
       logInfo(s"Iteration ${baseConf.iteration}: trees growth finished, " +
-        s"duration ${(System.nanoTime()  - tic0) / 1e9} seconds")
+        s"duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     }
 
     nodeIdBlocksCheckpointer.clear(false)
@@ -206,10 +206,10 @@ private[gbm] object Tree extends Serializable with Logging {
 
     if (depth >= boostConf.getMaxDepth) {
       logInfo(s"Iteration ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
-        s"trees growth finished, duration ${(System.nanoTime()  - tic0) / 1e9} seconds")
+        s"trees growth finished, duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     } else {
       logInfo(s"Iteration ${baseConf.iteration}: trees growth finished, " +
-        s"duration ${(System.nanoTime()  - tic0) / 1e9} seconds")
+        s"duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     }
 
     nodeIdBlocksCheckpointer.clear(false)

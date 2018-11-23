@@ -9,7 +9,7 @@ import org.apache.spark.sql.Dataset
 import org.apache.spark.storage.StorageLevel
 
 
-private[gbm] class ResourceRecoder extends Logging {
+private[gbm] class ResourceCleaner extends Logging {
 
   private val datasetBuff = mutable.ArrayBuffer.empty[Dataset[_]]
 

@@ -621,10 +621,10 @@ private[gbm] object GBM extends Logging {
 
     val sc = data.sparkContext
 
-    val recoder = new ResourceRecoder
+    val cleaner = new ResourceCleaner
 
     val bcDiscretizer = sc.broadcast(discretizer)
-    recoder.append(bcDiscretizer)
+    cleaner.append(bcDiscretizer)
 
     val trainBlocks = blockifyAndDiscretize[C, B, H](data, bcDiscretizer, boostConf.getBlockSize)
 
@@ -632,15 +632,15 @@ private[gbm] object GBM extends Logging {
 
     trainWeightBlocks.setName("Train Weight Blocks")
     trainWeightBlocks.persist(boostConf.getStorageLevel2)
-    recoder.append(trainWeightBlocks)
+    cleaner.append(trainWeightBlocks)
 
     trainLabelBlocks.setName("Train Label Blocks")
     trainLabelBlocks.persist(boostConf.getStorageLevel2)
-    recoder.append(trainLabelBlocks)
+    cleaner.append(trainLabelBlocks)
 
     trainBinVecBlocks.setName("Train BinVector Blocks")
     trainBinVecBlocks.persist(boostConf.getStorageLevel2)
-    recoder.append(trainBinVecBlocks)
+    cleaner.append(trainBinVecBlocks)
 
 
     val testBlocks = test.map { rdd => blockifyAndDiscretize[C, B, H](rdd, bcDiscretizer, boostConf.getBlockSize) }
@@ -648,15 +648,15 @@ private[gbm] object GBM extends Logging {
     testBlocks.foreach { case (testWeightBlocks, testLabelBlocks, testBinVecBlocks) =>
       testWeightBlocks.setName("Test Weight Blocks")
       testWeightBlocks.persist(boostConf.getStorageLevel3)
-      recoder.append(testWeightBlocks)
+      cleaner.append(testWeightBlocks)
 
       testLabelBlocks.setName("Test Label Blocks")
       testLabelBlocks.persist(boostConf.getStorageLevel3)
-      recoder.append(testLabelBlocks)
+      cleaner.append(testLabelBlocks)
 
       testBinVecBlocks.setName("Test BinVector Blocks")
       testBinVecBlocks.persist(boostConf.getStorageLevel3)
-      recoder.append(testBinVecBlocks)
+      cleaner.append(testBinVecBlocks)
     }
 
 
@@ -668,7 +668,7 @@ private[gbm] object GBM extends Logging {
         VerticalGBM.boost[C, B, H](trainBlocks, testBlocks, boostConf, discretizer, initialModel)
     }
 
-    recoder.clear(false)
+    cleaner.clear(false)
 
     model
   }

@@ -167,7 +167,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
 private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[T, N, C, B, H] {
 
-  private var recoder: ResourceRecoder = null
+  private var cleaner: ResourceCleaner = null
 
   private var delta = 1.0
 
@@ -185,7 +185,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
     val sc = data.sparkContext
 
     val treeNodeIds = if (depth == 0) {
-      recoder = new ResourceRecoder
+      cleaner = new ResourceCleaner
 
       Array.tabulate(baseConf.numTrees)(t => (int.fromInt(t), inn.one))
 
@@ -211,7 +211,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
       .setName(s"Iter ${baseConf.iteration}, depth: $depth: Local Histograms")
     localHistograms.persist(boostConf.getStorageLevel1)
-    recoder.append(localHistograms)
+    cleaner.append(localHistograms)
 
 
     val localVoted = localHistograms.mapPartitions { iter =>
@@ -259,7 +259,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       val colIds = ArrayBlock.build[C](collected.iterator.map(_._2))
 
       val bcIds = sc.broadcast((treeIds, nodeIds, colIds))
-      recoder.append(bcIds)
+      cleaner.append(bcIds)
 
       localHistograms.mapPartitions { localIter =>
         val (treeIds, nodeIds, colIds) = bcIds.value
@@ -297,15 +297,15 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
   }
 
   override def clear(): Unit = {
-    if (recoder != null) {
-      recoder.clear(false)
+    if (cleaner != null) {
+      cleaner.clear(false)
     }
   }
 
   override def destroy(): Unit = {
-    if (recoder != null) {
-      recoder.clear(false)
-      recoder = null
+    if (cleaner != null) {
+      cleaner.clear(false)
+      cleaner = null
     }
     delta = 1.0
   }

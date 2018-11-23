@@ -281,10 +281,10 @@ object HorizontalGBM extends Logging {
 
     val sc = weightBlocks.sparkContext
 
-    val recoder = new ResourceRecoder
+    val cleaner = new ResourceCleaner
 
     val bcBoostConf = sc.broadcast(boostConf)
-    recoder.append(bcBoostConf)
+    cleaner.append(bcBoostConf)
 
     val rawSize = boostConf.getRawSize
 
@@ -343,25 +343,25 @@ object HorizontalGBM extends Logging {
     // These cached datasets are holden in `recoder`, and will be freed after training.
     val (sampledBinVecBlocks, treeIdBlocks, gradBlocks) = boostConf.getSubSampleType match {
       case GBM.Goss =>
-        adaptTreeInputsForGoss[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, recoder)
+        adaptTreeInputsForGoss[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, cleaner)
 
       case _ if boostConf.getSubSampleRate == 1 =>
-        adaptTreeInputsForNonSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, recoder)
+        adaptTreeInputsForNonSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, cleaner)
 
       case GBM.Partition =>
-        adaptTreeInputsForPartitionSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, recoder)
+        adaptTreeInputsForPartitionSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, cleaner)
 
       case GBM.Block =>
-        adaptTreeInputsForBlockSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, recoder)
+        adaptTreeInputsForBlockSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, cleaner)
 
       case GBM.Row =>
-        adaptTreeInputsForRowSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGrad, recoder)
+        adaptTreeInputsForRowSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, boostConf, bcBoostConf, iteration, computeGrad, cleaner)
     }
 
 
     val trees = Tree.trainHorizontal[T, N, C, B, H](sampledBinVecBlocks, treeIdBlocks, gradBlocks, boostConf, bcBoostConf, baseConfig)
 
-    recoder.clear(false)
+    cleaner.clear(false)
 
     System.gc()
 
@@ -377,7 +377,7 @@ object HorizontalGBM extends Logging {
                                             bcBoostConf: Broadcast[BoostConfig],
                                             iteration: Int,
                                             computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
-                                            recoder: ResourceRecoder)
+                                            cleaner: ResourceCleaner)
                                            (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                             cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                             cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
@@ -393,7 +393,7 @@ object HorizontalGBM extends Logging {
     logInfo(s"Iter $iteration: OtherSelector $otherSelector")
 
     val bcOtherSelector = sc.broadcast(otherSelector)
-    recoder.append(bcOtherSelector)
+    cleaner.append(bcOtherSelector)
 
 
     // here all base models share the same gradient,
@@ -418,7 +418,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: GradWithNorms")
 
     gradNormBlocks.persist(boostConf.getStorageLevel2)
-    recoder.append(gradNormBlocks)
+    cleaner.append(gradNormBlocks)
 
 
     val tic = System.nanoTime()
@@ -475,7 +475,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: BinVecs (GOSS)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(sampledBinVecBlocks)
+    cleaner.append(sampledBinVecBlocks)
 
 
     val treeIdBlocks = gradNormBlocks
@@ -511,7 +511,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: TreeIds (GOSS)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(treeIdBlocks)
+    cleaner.append(treeIdBlocks)
 
 
     val gradBlocks = gradNormBlocks
@@ -550,7 +550,7 @@ object HorizontalGBM extends Logging {
 
 
     gradBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(gradBlocks)
+    cleaner.append(gradBlocks)
 
 
     (sampledBinVecBlocks, treeIdBlocks, gradBlocks)
@@ -565,7 +565,7 @@ object HorizontalGBM extends Logging {
                                                    bcBoostConf: Broadcast[BoostConfig],
                                                    iteration: Int,
                                                    computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
-                                                   recoder: ResourceRecoder)
+                                                   cleaner: ResourceCleaner)
                                                   (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                                    cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                    cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
@@ -590,7 +590,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: TreeIds")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(treeIdBlocks)
+    cleaner.append(treeIdBlocks)
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
@@ -599,7 +599,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: Grads")
 
     gradBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(gradBlocks)
+    cleaner.append(gradBlocks)
 
     (binVecBlocks, treeIdBlocks, gradBlocks)
   }
@@ -613,7 +613,7 @@ object HorizontalGBM extends Logging {
                                                          bcBoostConf: Broadcast[BoostConfig],
                                                          iteration: Int,
                                                          computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
-                                                         recoder: ResourceRecoder)
+                                                         cleaner: ResourceCleaner)
                                                         (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                                          cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                          cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
@@ -628,7 +628,7 @@ object HorizontalGBM extends Logging {
     logInfo(s"Iter $iteration: PartSelector $partSelector")
 
     val bcPartSelector = sc.broadcast(partSelector)
-    recoder.append(bcPartSelector)
+    cleaner.append(bcPartSelector)
 
 
     val sampledBinVecBlocks = binVecBlocks
@@ -667,7 +667,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: TreeIds (Partition-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(treeIdBlocks)
+    cleaner.append(treeIdBlocks)
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
@@ -684,7 +684,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: Grads (Partition-Sampled)")
 
     gradBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(gradBlocks)
+    cleaner.append(gradBlocks)
 
 
     (sampledBinVecBlocks, treeIdBlocks, gradBlocks)
@@ -699,7 +699,7 @@ object HorizontalGBM extends Logging {
                                                      bcBoostConf: Broadcast[BoostConfig],
                                                      iteration: Int,
                                                      computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
-                                                     recoder: ResourceRecoder)
+                                                     cleaner: ResourceCleaner)
                                                     (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                                      cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                      cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
@@ -714,7 +714,7 @@ object HorizontalGBM extends Logging {
     logInfo(s"Iter $iteration: BlockSelector $blockSelector")
 
     val bcBlockSelector = sc.broadcast(blockSelector)
-    recoder.append(bcBlockSelector)
+    cleaner.append(bcBlockSelector)
 
 
     val sampledBinVecBlocks = binVecBlocks
@@ -733,7 +733,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: BinVecs (Block-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(sampledBinVecBlocks)
+    cleaner.append(sampledBinVecBlocks)
 
 
     val treeIdBlocks = weightBlocks
@@ -755,7 +755,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: TreeIds (Block-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(treeIdBlocks)
+    cleaner.append(treeIdBlocks)
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
@@ -775,7 +775,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: Grads (Block-Sampled)")
 
     gradBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(gradBlocks)
+    cleaner.append(gradBlocks)
 
 
     (sampledBinVecBlocks, treeIdBlocks, gradBlocks)
@@ -790,7 +790,7 @@ object HorizontalGBM extends Logging {
                                                    bcBoostConf: Broadcast[BoostConfig],
                                                    iteration: Int,
                                                    computeGrad: (H, Array[H], Array[H]) => Array[H],
-                                                   recoder: ResourceRecoder)
+                                                   cleaner: ResourceCleaner)
                                                   (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                                    cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                    cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
@@ -805,7 +805,7 @@ object HorizontalGBM extends Logging {
     logInfo(s"Iter $iteration: RowSelector $rowSelector")
 
     val bcRowSelector = sc.broadcast(rowSelector)
-    recoder.append(bcRowSelector)
+    cleaner.append(bcRowSelector)
 
 
     val sampledBinVecBlocks = binVecBlocks
@@ -832,7 +832,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: BinVecs (Row-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(sampledBinVecBlocks)
+    cleaner.append(sampledBinVecBlocks)
 
 
     val treeIdBlocks = weightBlocks
@@ -862,7 +862,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: TreeIds (Row-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(treeIdBlocks)
+    cleaner.append(treeIdBlocks)
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
@@ -892,7 +892,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter $iteration: Grads (Row-Sampled)")
 
     gradBlocks.persist(boostConf.getStorageLevel1)
-    recoder.append(gradBlocks)
+    cleaner.append(gradBlocks)
 
 
     (sampledBinVecBlocks, treeIdBlocks, gradBlocks)

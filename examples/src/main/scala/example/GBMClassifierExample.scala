@@ -17,6 +17,7 @@ object GBMClassifierExample {
       .getOrCreate()
 
     spark.sparkContext.setLogLevel("DEBUG")
+    spark.sparkContext.setCheckpointDir("/tmp/sparkGBM/checkpoints")
 
     val train = spark.read.format("libsvm").load("data/a9a")
       .select(((col("label") + 1) / 2).cast("int").as("label"), col("features"))

@@ -35,6 +35,8 @@ object VerticalGBM extends Logging {
                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): GBMModel = {
 
     val sc = trainBlocks._1.sparkContext
+    require(sc.getCheckpointDir.nonEmpty, s"VerticalGBM needs checkpoints to make data sync robust.")
+
     boostConf.updateVPartInfo()
 
     // train blocks
@@ -333,63 +335,6 @@ object VerticalGBM extends Logging {
     gatherByLayer(blocks, blockIds, baseVPartIds, boostConf, bcBoostConf, cleaner)
   }
 
-
-  //  def gatherByLayer[T](blocks: RDD[T],
-  //                       blockIds: RDD[Long],
-  //                       baseVPartIds: Array[Int],
-  //                       boostConf: BoostConfig,
-  //                       bcBoostConf: Broadcast[BoostConfig])
-  //                      (implicit ct: ClassTag[T]): RDD[T] = {
-  //    require(baseVPartIds.nonEmpty)
-  //
-  //    val numVParts = boostConf.getNumVParts
-  //
-  //    val copiedBlocks = if (blockIds != null) {
-  //      blocks.zipPartitions(blockIds)({
-  //        case (blockIter, blockIdIter) =>
-  //          val numVLayers = bcBoostConf.value.getNumVLayers
-  //          val numBaseVParts = bcBoostConf.value.getNumBaseVParts
-  //
-  //          Utils.zip2(blockIter, blockIdIter)
-  //            .flatMap { case (block, blockId) =>
-  //              val layerId = (blockId % numVLayers).toInt
-  //              baseVPartIds.map { baseVPartId =>
-  //                val vPartId = baseVPartId + layerId * numBaseVParts
-  //                ((blockId, vPartId), block)
-  //              }
-  //            }
-  //      })
-  //
-  //    } else {
-  //
-  //      blocks.mapPartitionsWithIndex { case (partId, iter) =>
-  //        val numVLayers = bcBoostConf.value.getNumVLayers
-  //        val numBaseVParts = bcBoostConf.value.getNumBaseVParts
-  //        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
-  //
-  //        iter.flatMap { block =>
-  //          blockId += 1
-  //          val layerId = (blockId % numVLayers).toInt
-  //          baseVPartIds.map { baseVPartId =>
-  //            val vPartId = baseVPartId + layerId * numBaseVParts
-  //            ((blockId, vPartId), block)
-  //          }
-  //        }
-  //      }
-  //    }
-  //
-  //
-  //    copiedBlocks
-  //      .repartitionAndSortWithinPartitions(new Partitioner {
-  //
-  //        override def numPartitions: Int = numVParts
-  //
-  //        override def getPartition(key: Any): Int = key match {
-  //          case (_, vPartId: Int) => vPartId
-  //        }
-  //
-  //      }).map(_._2)
-  //  }
 
 
   def buildTrees[C, B, H](weightBlocks: RDD[CompactArray[H]],

@@ -443,6 +443,10 @@ class GBM extends Logging with Serializable {
     }
     boostConf.updateParallelismInfo()
 
+    if (getParallelismType == "feature") {
+      require(data.sparkContext.getCheckpointDir.nonEmpty)
+    }
+
     if (getBoostType == GBM.Dart) {
       require(getMaxDrop >= getMinDrop)
     }

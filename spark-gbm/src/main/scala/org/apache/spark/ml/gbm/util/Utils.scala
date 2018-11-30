@@ -1,6 +1,9 @@
 package org.apache.spark.ml.gbm.util
 
 import scala.collection._
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
+import scala.util.{Failure, Success}
 
 import org.apache.hadoop.fs.Path
 
@@ -9,6 +12,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.linalg._
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 
 
@@ -624,6 +628,48 @@ private[gbm] object Utils extends Logging {
                      path: String): Array[DataFrame] = {
     names.map { name =>
       spark.read.parquet(new Path(path, name).toString)
+    }
+  }
+
+
+  /**
+    * Remove RDD's checkpoint files.
+    * This prints a warning but does not fail if the files cannot be removed.
+    */
+  def removeCheckpointFile(data: RDD[_],
+                           blocking: Boolean = true): Unit = {
+    if (blocking) {
+      data.getCheckpointFile.foreach { file =>
+        try {
+          val tic = System.nanoTime()
+          val path = new Path(file)
+          val fs = path.getFileSystem(data.sparkContext.hadoopConfiguration)
+          fs.delete(path, true)
+          logInfo(s"Successfully remove old checkpoint file: $file, " +
+            s"duration ${(System.nanoTime() - tic) / 1e9} seconds")
+        } catch {
+          case e: Exception =>
+            logWarning(s"Fail to remove old checkpoint file: $file, ${e.toString}")
+        }
+      }
+
+    } else {
+      data.getCheckpointFile.foreach { file =>
+        Future {
+          val tic = System.nanoTime()
+          val path = new Path(file)
+          val fs = path.getFileSystem(data.sparkContext.hadoopConfiguration)
+          fs.delete(path, true)
+          (System.nanoTime() - tic) / 1e9
+
+        }.onComplete {
+          case Success(v) =>
+            logInfo(s"Successfully remove old checkpoint file: $file, duration $v seconds")
+
+          case Failure(t) =>
+            logWarning(s"Fail to remove old checkpoint file: $file, ${t.toString}")
+        }
+      }
     }
   }
 

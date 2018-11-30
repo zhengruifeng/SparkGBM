@@ -11,40 +11,51 @@ import org.apache.spark.storage.StorageLevel
 
 private[gbm] class ResourceCleaner extends Logging {
 
-  private val datasetBuff = mutable.ArrayBuffer.empty[Dataset[_]]
+  private val cachedDatasets = mutable.ArrayBuffer.empty[Dataset[_]]
 
-  private val rddBuff = mutable.ArrayBuffer.empty[RDD[_]]
+  private val cachedRDDs = mutable.ArrayBuffer.empty[RDD[_]]
 
-  private val bcBuff = mutable.ArrayBuffer.empty[Broadcast[_]]
+  private val checkpointedRDDs = mutable.ArrayBuffer.empty[RDD[_]]
 
-  def append(dataset: Dataset[_]): Unit = {
-    datasetBuff.append(dataset)
+  private val broadcastedObjects = mutable.ArrayBuffer.empty[Broadcast[_]]
+
+  def registerCachedDatasets(datasets: Dataset[_]*): Unit = {
+    cachedDatasets.appendAll(datasets)
   }
 
-  def append(rdd: RDD[_]): Unit = {
-    rddBuff.append(rdd)
+  def registerCachedRDDs(rdds: RDD[_]*): Unit = {
+    cachedRDDs.appendAll(rdds)
   }
 
-  def append(bc: Broadcast[_]): Unit = {
-    bcBuff.append(bc)
+  def registerCheckpointedRDDs(rdds: RDD[_]*): Unit = {
+    checkpointedRDDs.appendAll(rdds)
+  }
+
+  def registerBroadcastedObjects(bcs: Broadcast[_]*): Unit = {
+    broadcastedObjects.appendAll(bcs)
   }
 
   def clear(blocking: Boolean = true): Unit = {
-    datasetBuff.foreach { dataset =>
+    cachedDatasets.foreach { dataset =>
       if (dataset.storageLevel != StorageLevel.NONE) {
         dataset.unpersist(blocking)
       }
     }
-    datasetBuff.clear()
+    cachedDatasets.clear()
 
-    rddBuff.foreach { rdd =>
+    cachedRDDs.foreach { rdd =>
       if (rdd.getStorageLevel != StorageLevel.NONE) {
         rdd.unpersist(blocking)
       }
     }
-    rddBuff.clear()
+    cachedRDDs.clear()
 
-    bcBuff.foreach(_.destroy(blocking))
-    bcBuff.clear()
+    checkpointedRDDs.foreach { rdd =>
+      Utils.removeCheckpointFile(rdd, blocking)
+    }
+    checkpointedRDDs.clear()
+
+    broadcastedObjects.foreach(_.destroy(blocking))
+    broadcastedObjects.clear()
   }
 }

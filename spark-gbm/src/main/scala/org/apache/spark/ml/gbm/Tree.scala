@@ -140,6 +140,8 @@ private[gbm] object Tree extends Serializable with Logging {
     var depth = 0
     var splits = Map.empty[(T, N), Split]
 
+    val cleaner = new ResourceCleaner
+
     while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
       val tic1 = System.nanoTime()
 
@@ -156,7 +158,6 @@ private[gbm] object Tree extends Serializable with Logging {
 
       // merge `colSamplingByLevel` into the BaseConf.
       val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
-
 
       val vdata = if (depth == 0) {
         subBinVecBlocks.zip2(agTreeIdBlocks, agGradBlocks)
@@ -178,7 +179,7 @@ private[gbm] object Tree extends Serializable with Logging {
           }.map(_._2).toArray
 
         val agNodeIdBlocks = VerticalGBM.gatherByLayer(nodeIdBlocks, blockIds,
-          baseVPartIds, boostConf, bcBoostConf)
+          baseVPartIds, boostConf, bcBoostConf, cleaner)
 
         subBinVecBlocks.zip3(agTreeIdBlocks, agNodeIdBlocks, agGradBlocks, false)
       }
@@ -200,6 +201,9 @@ private[gbm] object Tree extends Serializable with Logging {
       updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth)
       logInfo(s"Iteration ${baseConf.iteration}: $depth: growth finished," +
         s" duration ${(System.nanoTime() - tic1) / 1e9} seconds")
+
+
+      cleaner.clear()
 
       depth += 1
     }

@@ -624,7 +624,7 @@ private[gbm] object GBM extends Logging {
     val cleaner = new ResourceCleaner
 
     val bcDiscretizer = sc.broadcast(discretizer)
-    cleaner.append(bcDiscretizer)
+    cleaner.registerBroadcastedObjects(bcDiscretizer)
 
     val trainBlocks = blockifyAndDiscretize[C, B, H](data, bcDiscretizer, boostConf.getBlockSize)
 
@@ -632,15 +632,15 @@ private[gbm] object GBM extends Logging {
 
     trainWeightBlocks.setName("Train Weight Blocks")
     trainWeightBlocks.persist(boostConf.getStorageLevel2)
-    cleaner.append(trainWeightBlocks)
+    cleaner.registerCachedRDDs(trainWeightBlocks)
 
     trainLabelBlocks.setName("Train Label Blocks")
     trainLabelBlocks.persist(boostConf.getStorageLevel2)
-    cleaner.append(trainLabelBlocks)
+    cleaner.registerCachedRDDs(trainLabelBlocks)
 
     trainBinVecBlocks.setName("Train BinVector Blocks")
     trainBinVecBlocks.persist(boostConf.getStorageLevel2)
-    cleaner.append(trainBinVecBlocks)
+    cleaner.registerCachedRDDs(trainBinVecBlocks)
 
 
     val testBlocks = test.map { rdd => blockifyAndDiscretize[C, B, H](rdd, bcDiscretizer, boostConf.getBlockSize) }
@@ -648,15 +648,15 @@ private[gbm] object GBM extends Logging {
     testBlocks.foreach { case (testWeightBlocks, testLabelBlocks, testBinVecBlocks) =>
       testWeightBlocks.setName("Test Weight Blocks")
       testWeightBlocks.persist(boostConf.getStorageLevel3)
-      cleaner.append(testWeightBlocks)
+      cleaner.registerCachedRDDs(testWeightBlocks)
 
       testLabelBlocks.setName("Test Label Blocks")
       testLabelBlocks.persist(boostConf.getStorageLevel3)
-      cleaner.append(testLabelBlocks)
+      cleaner.registerCachedRDDs(testLabelBlocks)
 
       testBinVecBlocks.setName("Test BinVector Blocks")
       testBinVecBlocks.persist(boostConf.getStorageLevel3)
-      cleaner.append(testBinVecBlocks)
+      cleaner.registerCachedRDDs(testBinVecBlocks)
     }
 
 

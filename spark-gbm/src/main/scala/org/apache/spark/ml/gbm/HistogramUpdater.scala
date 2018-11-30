@@ -211,7 +211,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
       .setName(s"Iter ${baseConf.iteration}, depth: $depth: Local Histograms")
     localHistograms.persist(boostConf.getStorageLevel1)
-    cleaner.append(localHistograms)
+    cleaner.registerCachedRDDs(localHistograms)
 
 
     val localVoted = localHistograms.mapPartitions { iter =>
@@ -259,7 +259,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       val colIds = ArrayBlock.build[C](collected.iterator.map(_._2))
 
       val bcIds = sc.broadcast((treeIds, nodeIds, colIds))
-      cleaner.append(bcIds)
+      cleaner.registerBroadcastedObjects(bcIds)
 
       localHistograms.mapPartitions { localIter =>
         val (treeIds, nodeIds, colIds) = bcIds.value

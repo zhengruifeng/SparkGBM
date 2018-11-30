@@ -1,11 +1,6 @@
 package org.apache.spark.ml.gbm.util
 
 import scala.collection.mutable
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
-import scala.util.{Failure, Success}
-
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
@@ -88,7 +83,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
       while (checkpointQueue.length > 1 && canDelete) {
         // Delete the oldest checkpoint only if the next checkpoint exists.
         if (checkpointQueue.head.isCheckpointed) {
-          removeCheckpointFile(checkpointQueue.dequeue)
+          Utils.removeCheckpointFile(checkpointQueue.dequeue, false)
         } else {
           canDelete = false
         }
@@ -103,34 +98,10 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
     persistedQueue.clear()
 
     while (checkpointQueue.nonEmpty) {
-      removeCheckpointFile(checkpointQueue.dequeue)
+      Utils.removeCheckpointFile(checkpointQueue.dequeue, false)
     }
     checkpointQueue.clear()
 
     updateCount = 0
-  }
-
-  /**
-    * Dequeue the oldest checkpointed Dataset, and remove its checkpoint files.
-    * This prints a warning but does not fail if the files cannot be removed.
-    */
-  private def removeCheckpointFile(data: RDD[T]): Unit = {
-    // Since the old checkpoint is not deleted by Spark, we manually delete it
-    data.getCheckpointFile.foreach { file =>
-      Future {
-        val tic = System.nanoTime()
-        val path = new Path(file)
-        val fs = path.getFileSystem(sc.hadoopConfiguration)
-        fs.delete(path, true)
-        (System.nanoTime() - tic) / 1e9
-
-      }.onComplete {
-        case Success(v) =>
-          logInfo(s"Successfully remove old checkpoint file: $file, duration $v seconds")
-
-        case Failure(t) =>
-          logWarning(s"Fail to remove old checkpoint file: $file, ${t.toString}")
-      }
-    }
   }
 }

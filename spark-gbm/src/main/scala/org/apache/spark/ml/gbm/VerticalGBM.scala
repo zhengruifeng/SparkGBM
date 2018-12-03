@@ -336,7 +336,6 @@ object VerticalGBM extends Logging {
   }
 
 
-
   def buildTrees[C, B, H](weightBlocks: RDD[CompactArray[H]],
                           labelBlocks: RDD[ArrayBlock[H]],
                           binVecBlocks: RDD[KVMatrix[C, B]],
@@ -425,6 +424,7 @@ object VerticalGBM extends Logging {
     cleaner.registerBroadcastedObjects(bcBoostConf)
 
     val rawSize = boostConf.getRawSize
+    val objFunc = Utils.deepCopy(boostConf.getObjFunc)
 
     val computeRaw = boostConf.getBoostType match {
       case GBM.GBTree =>
@@ -446,8 +446,8 @@ object VerticalGBM extends Logging {
 
     val computeGrad = (weight: H, label: Array[H], rawSeq: Array[H]) => {
       val raw = neh.toDouble(computeRaw(rawSeq))
-      val score = boostConf.getObjFunc.transform(raw)
-      val (grad, hess) = boostConf.getObjFunc.compute(neh.toDouble(label), score)
+      val score = objFunc.transform(raw)
+      val (grad, hess) = objFunc.compute(neh.toDouble(label), score)
       require(grad.length == rawSize && hess.length == rawSize)
 
       val array = Array.ofDim[H](rawSize << 1)

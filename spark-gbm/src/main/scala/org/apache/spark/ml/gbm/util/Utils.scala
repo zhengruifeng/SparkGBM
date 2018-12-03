@@ -1,5 +1,7 @@
 package org.apache.spark.ml.gbm.util
 
+import java.io._
+
 import scala.collection._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -22,6 +24,27 @@ private[gbm] object Utils extends Logging {
   val SHORT = "Short"
   val INT = "Int"
   val LONG = "Long"
+
+
+  /**
+    * deep copy an object
+    */
+  def deepCopy[T](data: T): T = {
+    val bos = new ByteArrayOutputStream
+    val oos = new ObjectOutputStream(bos)
+
+    oos.writeObject(data)
+    oos.flush()
+    oos.close()
+    bos.close()
+
+    val objBytes = bos.toByteArray
+
+    val bis = new ByteArrayInputStream(objBytes)
+    val ois = new ObjectInputStream(bis)
+    ois.readObject().asInstanceOf[T]
+  }
+
 
   /**
     * Choose the most compact Integer Type according to the range

@@ -52,9 +52,9 @@ private[gbm] object Tree extends Serializable with Logging {
       case Vote => new VoteHistogramUpdater[T, N, C, B, H]
     }
 
-    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
-    val remainingLeaves = Array.fill(baseConf.numTrees)(boostConf.getMaxLeaves - 1)
-    val finished = Array.fill(baseConf.numTrees)(false)
+    val roots = Array.fill(boostConf.getNumTrees)(LearningNode.create(1))
+    val remainingLeaves = Array.fill(boostConf.getNumTrees)(boostConf.getMaxLeaves - 1)
+    val finished = Array.fill(boostConf.getNumTrees)(false)
 
     var depth = 0
     var splits = Map.empty[(T, N), Split]
@@ -133,9 +133,9 @@ private[gbm] object Tree extends Serializable with Logging {
     val nodeIdBlocksCheckpointer = new Checkpointer[ArrayBlock[N]](sc,
       boostConf.getCheckpointInterval, boostConf.getStorageLevel1)
 
-    val roots = Array.fill(baseConf.numTrees)(LearningNode.create(1))
-    val remainingLeaves = Array.fill(baseConf.numTrees)(boostConf.getMaxLeaves - 1)
-    val finished = Array.fill(baseConf.numTrees)(false)
+    val roots = Array.fill(boostConf.getNumTrees)(LearningNode.create(1))
+    val remainingLeaves = Array.fill(boostConf.getNumTrees)(boostConf.getMaxLeaves - 1)
+    val finished = Array.fill(boostConf.getNumTrees)(false)
 
     var depth = 0
     var splits = Map.empty[(T, N), Split]
@@ -247,7 +247,7 @@ private[gbm] object Tree extends Serializable with Logging {
       val counts = splits.keysIterator.toSeq.groupBy(_._1).mapValues(_.length)
       var numFinished = 0
 
-      Iterator.range(0, baseConf.numTrees)
+      Iterator.range(0, boostConf.getNumTrees)
         .filterNot(finished).foreach { treeId =>
         val rem = remainingLeaves(treeId)
         val count = counts.getOrElse(int.fromInt(treeId), 0)

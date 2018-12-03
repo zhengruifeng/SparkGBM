@@ -57,7 +57,7 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
     val treeNodeIds = if (depth == 0) {
-      Array.tabulate(baseConf.numTrees)(t => (int.fromInt(t), inn.one))
+      Array.tabulate(boostConf.getNumTrees)(t => (int.fromInt(t), inn.one))
 
     } else {
       splits.keysIterator
@@ -105,7 +105,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
       checkpointer = new Checkpointer[((T, N, C), KVVector[B, H])](sc,
         boostConf.getCheckpointInterval, boostConf.getStorageLevel1)
 
-      (Array.tabulate(baseConf.numTrees)(int.fromInt), None)
+      (Array.tabulate(boostConf.getNumTrees)(int.fromInt), None)
 
     } else {
       (splits.keysIterator.map(_._1).toArray.distinct.sorted, prevHistograms.partitioner)
@@ -129,7 +129,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
       HistogramUpdater.subtractHistograms[T, N, C, B, H](prevHistograms, rightHistograms, boostConf, partitioner)
     }
 
-    val expectedSize = (baseConf.numTrees << depth) * boostConf.getNumCols * boostConf.getColSampleRateByTree * delta
+    val expectedSize = (boostConf.getNumTrees << depth) * boostConf.getNumCols * boostConf.getColSampleRateByTree * delta
 
     // cut off lineage if size is small
     if (expectedSize < (1 << 16)) {
@@ -187,7 +187,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
     val treeNodeIds = if (depth == 0) {
       cleaner = new ResourceCleaner
 
-      Array.tabulate(baseConf.numTrees)(t => (int.fromInt(t), inn.one))
+      Array.tabulate(boostConf.getNumTrees)(t => (int.fromInt(t), inn.one))
 
     } else {
       splits.keysIterator
@@ -205,7 +205,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
     val minNodeId = inn.fromInt(1 << depth)
     val topK = boostConf.getTopK
     val top2K = topK << 1
-    val expectedSize = (baseConf.numTrees << depth) * top2K * delta
+    val expectedSize = (boostConf.getNumTrees << depth) * top2K * delta
 
     val localHistograms = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](data,
       boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)

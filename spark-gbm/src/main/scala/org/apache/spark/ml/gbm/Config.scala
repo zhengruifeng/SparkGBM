@@ -819,7 +819,6 @@ class BoostConfig extends Logging with Serializable {
 
 
 private[gbm] class BaseConfig(val iteration: Int,
-                              val numTrees: Int,
                               val colSelector: Selector) extends Serializable
 
 
@@ -833,9 +832,8 @@ private[gbm] object BaseConfig extends Serializable {
     val colSelector = Selector.create(boostConf.getColSampleRateByTree, boostConf.getNumCols,
       boostConf.getBaseModelParallelism, boostConf.getRawSize, seed)
 
-    val numTrees = boostConf.getBaseModelParallelism * boostConf.getRawSize
 
-    new BaseConfig(iteration, numTrees, colSelector)
+    new BaseConfig(iteration, colSelector)
   }
 
 
@@ -850,11 +848,10 @@ private[gbm] object BaseConfig extends Serializable {
     if (boostConf.getColSampleRateByLevel == 1) {
       baseConf
     } else {
-      val numBaseModels = baseConf.numTrees / boostConf.getRawSize
-      val levelSelector = Selector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols, numBaseModels,
-        boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
+      val levelSelector = Selector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols,
+        boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
       val unionSelector = Selector.union(baseConf.colSelector, levelSelector)
-      new BaseConfig(baseConf.iteration, baseConf.numTrees, unionSelector)
+      new BaseConfig(baseConf.iteration,  unionSelector)
     }
   }
 }

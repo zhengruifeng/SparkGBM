@@ -1,4 +1,4 @@
-package org.apache.spark.ml.gbm
+package org.apache.spark.ml.gbm.func
 
 import org.apache.spark.rdd.RDD
 

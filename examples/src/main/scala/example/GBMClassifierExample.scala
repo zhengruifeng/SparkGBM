@@ -32,8 +32,7 @@ object GBMClassifierExample {
 
     val gbmc = new GBMClassifier
     gbmc.setBoostType("gbtree")
-      .setParallelismType("feature")
-      .setHistogramComputationType("vote")
+      .setHistogramComputationType("basic")
       .setStepSize(0.2)
       .setMaxIter(10)
       .setMaxDepth(5)
@@ -52,6 +51,7 @@ object GBMClassifierExample {
       .setModelCheckpointInterval(4)
       .setModelCheckpointPath(modelCheckpointPath)
       .setZeroAsMissing(true)
+      .setGreedierSearch(true)
       .setReduceParallelism(300)
       .setSeed(123L)
 

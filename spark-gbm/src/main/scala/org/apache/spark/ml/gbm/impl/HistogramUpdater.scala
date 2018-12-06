@@ -1,16 +1,18 @@
-package org.apache.spark.ml.gbm
+package org.apache.spark.ml.gbm.impl
 
 import java.{util => ju}
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
 
-import org.apache.spark.{HashPartitioner, Partitioner}
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.rdd._
 import org.apache.spark.ml.gbm.util._
+import org.apache.spark.ml.gbm._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.{HashPartitioner, Partitioner}
 
 
 private[gbm] trait HistogramUpdater[T, N, C, B, H] extends Logging {
@@ -20,6 +22,7 @@ private[gbm] trait HistogramUpdater[T, N, C, B, H] extends Logging {
     */
   def update(data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
              boostConf: BoostConfig,
+             bcBoostConf: Broadcast[BoostConfig],
              baseConf: BaseConfig,
              splits: Map[(T, N), Split],
              depth: Int)
@@ -47,6 +50,7 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
 
   override def update(data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
                       boostConf: BoostConfig,
+                      bcBoostConf: Broadcast[BoostConfig],
                       baseConf: BaseConfig,
                       splits: Map[(T, N), Split],
                       depth: Int)
@@ -73,7 +77,7 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
 
 
     val minNodeId = inn.fromInt(1 << depth)
-    HistogramUpdater.computeHistograms[T, N, C, B, H](data, boostConf, baseConf,
+    HistogramUpdater.computeHistograms[T, N, C, B, H](data, bcBoostConf, baseConf,
       (n: N) => inn.gteq(n, minNodeId), partitioner)
   }
 }
@@ -89,6 +93,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
   override def update(data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
                       boostConf: BoostConfig,
+                      bcBoostConf: Broadcast[BoostConfig],
                       baseConf: BaseConfig,
                       splits: Map[(T, N), Split],
                       depth: Int)
@@ -97,6 +102,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
                       cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
+    require(boostConf.getSubSampleRateByLevel == 1)
 
     val sc = data.sparkContext
     val minNodeId = inn.fromInt(1 << depth)
@@ -117,11 +123,11 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
     val histograms = if (depth == 0) {
       // direct compute the histogram of roots
-      HistogramUpdater.computeHistograms[T, N, C, B, H](data, boostConf, baseConf, (n: N) => true, partitioner)
+      HistogramUpdater.computeHistograms[T, N, C, B, H](data, bcBoostConf, baseConf, (n: N) => true, partitioner)
 
     } else {
       // compute the histogram of right leaves
-      val rightHistograms = HistogramUpdater.computeHistograms[T, N, C, B, H](data, boostConf, baseConf,
+      val rightHistograms = HistogramUpdater.computeHistograms[T, N, C, B, H](data, bcBoostConf, baseConf,
         (n: N) => inn.gteq(n, minNodeId) && inn.equiv(inn.rem(n, inn.fromInt(2)), inn.one), partitioner)
         .setName(s"Iter ${baseConf.iteration}, depth: $depth: Right Leaves Histograms")
 
@@ -173,6 +179,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
   override def update(data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
                       boostConf: BoostConfig,
+                      bcBoostConf: Broadcast[BoostConfig],
                       baseConf: BaseConfig,
                       splits: Map[(T, N), Split],
                       depth: Int)
@@ -208,7 +215,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
     val expectedSize = (boostConf.getNumTrees << depth) * top2K * delta
 
     val localHistograms = HistogramUpdater.computeLocalHistograms[T, N, C, B, H](data,
-      boostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
+      bcBoostConf, baseConf, (n: N) => inn.gteq(n, minNodeId), true)
       .setName(s"Iter ${baseConf.iteration}, depth: $depth: Local Histograms")
     localHistograms.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(localHistograms)
@@ -322,7 +329,7 @@ private[gbm] object HistogramUpdater extends Logging {
     * @return histogram data containing (treeId, nodeId, columnId, histogram)
     */
   def computeLocalHistograms[T, N, C, B, H](data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
-                                            boostConf: BoostConfig,
+                                            bcBoostConf: Broadcast[BoostConfig],
                                             baseConf: BaseConfig,
                                             f: N => Boolean,
                                             sorted: Boolean = false)
@@ -333,15 +340,25 @@ private[gbm] object HistogramUpdater extends Logging {
                                             ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
     import PairRDDFunctions._
 
-    val numCols = boostConf.getNumCols
-
     val ordering = if (sorted) {
       Some(implicitly[Ordering[(T, N, C)]])
     } else {
       None
     }
 
-    data.mapPartitions { iter =>
+    data.mapPartitionsWithIndex { case (partId, iter) =>
+      val boostConf = bcBoostConf.value
+      val numCols = boostConf.getNumCols
+
+      val localColIds = boostConf.getParallelismType match {
+        case GBM.Data =>
+          nec.fromInt(Array.range(0, numCols))
+
+        case GBM.Feature =>
+          boostConf.getVCols[C](partId)
+      }
+
+
       val sum0 = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
       iter.flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
@@ -394,9 +411,9 @@ private[gbm] object HistogramUpdater extends Logging {
         .flatMap { case ((treeId, nodeId), (g0, h0)) =>
           // make sure all available (treeId, nodeId, colId) tuples are taken into account
           // by the way, store sum of hist in zero-index bin
-          Iterator.range(0, numCols)
+          localColIds.iterator
             .filter(colId => baseConf.colSelector.containsById(treeId, colId))
-            .map { colId => ((treeId, nodeId, inc.fromInt(colId)), (inb.zero, g0, h0)) }
+            .map { colId => ((treeId, nodeId, colId), (inb.zero, g0, h0)) }
         }
 
     }.aggregateByKeyWithinPartitions(KVVector.empty[B, H], ordering)(
@@ -442,7 +459,7 @@ private[gbm] object HistogramUpdater extends Logging {
     * @return histogram data containing (treeId, nodeId, columnId, histogram)
     */
   def computeHistograms[T, N, C, B, H](data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
-                                       boostConf: BoostConfig,
+                                       bcBoostConf: Broadcast[BoostConfig],
                                        baseConf: BaseConfig,
                                        f: N => Boolean,
                                        partitioner: Partitioner)
@@ -452,8 +469,34 @@ private[gbm] object HistogramUpdater extends Logging {
                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
-    computeLocalHistograms[T, N, C, B, H](data, boostConf, baseConf, f)
+    computeLocalHistograms[T, N, C, B, H](data, bcBoostConf, baseConf, f)
       .reduceByKey(partitioner, _.plus(_).compress)
+  }
+
+
+  /**
+    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    *
+    * @param vdata instances appended with (bins, treeIds, nodeIds, grad-hess)
+    * @param f    function to filter nodeIds
+    * @return histogram data containing (treeId, nodeId, columnId, histogram)
+    */
+  def computeHistogramsVertical[T, N, C, B, H](vdata: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
+                                               boostConf: BoostConfig,
+                                               bcBoostConf: Broadcast[BoostConfig],
+                                               baseConf: BaseConfig,
+                                               f: N => Boolean)
+                                              (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                               cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                               cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                               cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                               ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
+    if (boostConf.getNumVLayers == 1) {
+      computeLocalHistograms[T, N, C, B, H](vdata, bcBoostConf, baseConf, f)
+    } else {
+      computeLocalHistograms[T, N, C, B, H](vdata, bcBoostConf, baseConf, f)
+        .reduceByKey(_.plus(_).compress)
+    }
   }
 
 

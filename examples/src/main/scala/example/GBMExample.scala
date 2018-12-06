@@ -1,6 +1,7 @@
 package example
 
 import org.apache.spark.ml.gbm._
+import org.apache.spark.ml.gbm.func._
 import org.apache.spark.ml.linalg._
 import org.apache.spark.mllib.evaluation.RegressionMetrics
 import org.apache.spark.rdd.RDD

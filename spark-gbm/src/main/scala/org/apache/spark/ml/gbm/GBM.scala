@@ -1,11 +1,14 @@
 package org.apache.spark.ml.gbm
 
-import scala.collection.{BitSet, mutable}
+import scala.collection._
+import scala.collection.immutable.Map
 import scala.reflect.ClassTag
 import scala.util.Random
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm.func._
+import org.apache.spark.ml.gbm.impl._
 import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.rdd._
 import org.apache.spark.ml.gbm.util._
@@ -168,6 +171,15 @@ class GBM extends Logging with Serializable {
   def getSubSampleRate: Double = boostConf.getSubSampleRate
 
 
+  /** subsample ratio of the training instance when constructing each level */
+  def setSubSampleRateByLevel(value: Double): this.type = {
+    boostConf.setSubSampleRateByLevel(value)
+    this
+  }
+
+  def getSubSampleRateByLevel: Double = boostConf.getSubSampleRateByLevel
+
+
   /** subsample ratio of columns when constructing each tree */
   def setColSampleRateByTree(value: Double): this.type = {
     boostConf.setColSampleRateByTree(value)
@@ -257,6 +269,15 @@ class GBM extends Logging with Serializable {
 
   def getParallelismType: String = boostConf.getParallelismType
 
+
+  /** whether to update prediction and gradient after each level */
+  def setGreedierSearch(value: Boolean): this.type = {
+    boostConf.setGreedierSearch(value)
+    this
+  }
+
+  def getGreedierSearch: Boolean = boostConf.getGreedierSearch
+  
 
   /** boosting type */
   def setBoostType(value: String): this.type = {

@@ -1,4 +1,4 @@
-package org.apache.spark.ml.gbm
+package org.apache.spark.ml.gbm.func
 
 /**
   * objective function, compute the gradient and hessian of each instance

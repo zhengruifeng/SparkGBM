@@ -6,14 +6,15 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
+import org.apache.spark.ml.gbm.func._
 import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.HasThreshold
 import org.apache.spark.ml.util._
 import org.apache.spark.ml.util.Instrumentation.instrumented
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{DoubleType, IntegerType}
-import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.types._
+import org.apache.spark.sql._
 import org.apache.spark.storage.StorageLevel
 
 
@@ -91,6 +92,8 @@ class GBMClassifier(override val uid: String)
 
   def setSubSampleRate(value: Double): this.type = set(subSampleRate, value)
 
+  def setSubSampleRateByLevel(value: Double): this.type = set(subSampleRateByLevel, value)
+
   def setColSampleRateByTree(value: Double): this.type = set(colSampleRateByTree, value)
 
   def setColSampleRateByLevel(value: Double): this.type = set(colSampleRateByLevel, value)
@@ -108,6 +111,8 @@ class GBMClassifier(override val uid: String)
   def setEvaluateFunc(value: Array[String]): this.type = set(evaluateFunc, value)
 
   def setParallelismType(value: String): this.type = set(parallelismType, value)
+
+  def setGreedierSearch(value: Boolean): this.type = set(greedierSearch, value)
 
   def setBoostType(value: String): this.type = set(boostType, value)
 
@@ -252,6 +257,7 @@ class GBMClassifier(override val uid: String)
       .setCatCols($(catCols).toSet)
       .setRankCols($(rankCols).toSet)
       .setSubSampleRate($(subSampleRate))
+      .setSubSampleRateByLevel($(subSampleRateByLevel))
       .setColSampleRateByTree($(colSampleRateByTree))
       .setColSampleRateByLevel($(colSampleRateByLevel))
       .setCheckpointInterval($(checkpointInterval))
@@ -261,6 +267,7 @@ class GBMClassifier(override val uid: String)
       .setAggregationDepth($(aggregationDepth))
       .setSeed($(seed))
       .setParallelismType($(parallelismType))
+      .setGreedierSearch($(greedierSearch))
       .setBoostType($(boostType))
       .setDropRate($(dropRate))
       .setDropSkip($(dropSkip))

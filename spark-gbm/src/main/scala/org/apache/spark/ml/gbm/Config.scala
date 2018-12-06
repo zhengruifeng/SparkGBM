@@ -3,8 +3,9 @@ package org.apache.spark.ml.gbm
 import scala.collection.BitSet
 import scala.reflect.ClassTag
 
-import org.apache.spark.ml.gbm.util.Selector
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm.func._
+import org.apache.spark.ml.gbm.util.Selector
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 
@@ -47,6 +48,17 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def getParallelismType: String = parallelismType
+
+
+  /** whether to update prediction and gradient after each level */
+  private var greedierSearch: Boolean = false
+
+  private[gbm] def setGreedierSearch(value: Boolean): this.type = {
+    greedierSearch = value
+    this
+  }
+
+  def getGreedierSearch: Boolean = greedierSearch
 
 
   /** boosting type */
@@ -226,21 +238,38 @@ class BoostConfig extends Logging with Serializable {
   def getRegLambda: Double = regLambda
 
 
-  /** subsample ratio of the training instance */
-  private var subSampleRateRate: Double = 1.0
+  /** subsample ratio of the training instance when constructing each tree */
+  private var subSampleRate: Double = 1.0
 
   private[gbm] def setSubSampleRate(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    subSampleRateRate = value
+    subSampleRate = value
     this
   }
 
   def updateSubSampleRate(value: Double): this.type = {
-    logInfo(s"subSampleRateRate was changed from $subSampleRateRate to $value")
+    logInfo(s"subSampleRate was changed from $subSampleRate to $value")
     setSubSampleRate(value)
   }
 
-  def getSubSampleRate: Double = subSampleRateRate
+  def getSubSampleRate: Double = subSampleRate
+
+
+  /** subsample ratio of the training instance when constructing each level */
+  private var subSampleRateByLevel: Double = 1.0
+
+  private[gbm] def setSubSampleRateByLevel(value: Double): this.type = {
+    require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
+    subSampleRateByLevel = value
+    this
+  }
+
+  def updateSubSampleRateByLevel(value: Double): this.type = {
+    logInfo(s"subSampleRateByLevel was changed from $subSampleRateByLevel to $value")
+    setSubSampleRateByLevel(value)
+  }
+
+  def getSubSampleRateByLevel: Double = subSampleRateByLevel
 
 
   /** retain fraction of large gradient data */
@@ -851,7 +880,7 @@ private[gbm] object BaseConfig extends Serializable {
       val levelSelector = Selector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols,
         boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
       val unionSelector = Selector.union(baseConf.colSelector, levelSelector)
-      new BaseConfig(baseConf.iteration,  unionSelector)
+      new BaseConfig(baseConf.iteration, unionSelector)
     }
   }
 }

@@ -1,14 +1,15 @@
-package org.apache.spark.ml.gbm
+package org.apache.spark.ml.gbm.impl
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
 
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.Partitioner
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.gbm.linalg._
-import org.apache.spark.ml.gbm.rdd._
+import org.apache.spark.ml.gbm.rdd.RDDFunctions._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
 
@@ -258,8 +259,6 @@ object VerticalGBM extends Logging {
                       (implicit ct: ClassTag[T]): RDD[T] = {
     require(baseVPartIds.nonEmpty)
 
-    import RDDFunctions._
-
     val numVLayers = boostConf.getNumVLayers
 
     val rdd1 = if (blockIds != null) {
@@ -361,31 +360,31 @@ object VerticalGBM extends Logging {
 
     (treeIdType, nodeIdType) match {
       case (BYTE, BYTE) =>
-        buildTreesImpl[Byte, Byte, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Byte, Byte, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
 
       case (BYTE, SHORT) =>
-        buildTreesImpl[Byte, Short, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Byte, Short, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
 
       case (BYTE, INT) =>
-        buildTreesImpl[Byte, Int, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Byte, Int, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
 
       case (SHORT, BYTE) =>
-        buildTreesImpl[Short, Byte, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Short, Byte, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
 
       case (SHORT, SHORT) =>
-        buildTreesImpl[Short, Short, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Short, Short, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
 
       case (SHORT, INT) =>
-        buildTreesImpl[Short, Int, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Short, Int, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
 
       case (INT, BYTE) =>
-        buildTreesImpl[Int, Byte, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Int, Byte, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
 
       case (INT, SHORT) =>
-        buildTreesImpl[Int, Short, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Int, Short, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
 
       case (INT, INT) =>
-        buildTreesImpl[Int, Int, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
+        buildTrees2[Int, Int, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, weights, boostConf, iteration, dropped)
     }
   }
 
@@ -400,20 +399,20 @@ object VerticalGBM extends Logging {
     * @param dropped   indices of trees which are selected to drop during building of current tree
     * @return new trees
     */
-  def buildTreesImpl[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
-                                    labelBlocks: RDD[ArrayBlock[H]],
-                                    binVecBlocks: RDD[KVMatrix[C, B]],
-                                    rawBlocks: RDD[ArrayBlock[H]],
-                                    subBinVecBlocks: RDD[KVMatrix[C, B]],
-                                    weights: Array[H],
-                                    boostConf: BoostConfig,
-                                    iteration: Int,
-                                    dropped: Set[Int])
-                                   (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                    cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                    cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                    cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                    ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
+  def buildTrees2[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
+                                 labelBlocks: RDD[ArrayBlock[H]],
+                                 binVecBlocks: RDD[KVMatrix[C, B]],
+                                 rawBlocks: RDD[ArrayBlock[H]],
+                                 subBinVecBlocks: RDD[KVMatrix[C, B]],
+                                 weights: Array[H],
+                                 boostConf: BoostConfig,
+                                 iteration: Int,
+                                 dropped: Set[Int])
+                                (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                 cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                 cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                 cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                 ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     import nuh._
 
     val sc = weightBlocks.sparkContext
@@ -445,8 +444,7 @@ object VerticalGBM extends Logging {
     }
 
     val computeGrad = (weight: H, label: Array[H], rawSeq: Array[H]) => {
-      val raw = neh.toDouble(computeRaw(rawSeq))
-      val score = objFunc.transform(raw)
+      val score = objFunc.transform(neh.toDouble(computeRaw(rawSeq)))
       val (grad, hess) = objFunc.compute(neh.toDouble(label), score)
       require(grad.length == rawSize && hess.length == rawSize)
 
@@ -478,44 +476,39 @@ object VerticalGBM extends Logging {
     // To alleviate memory footprint in caching layer, different schemas of intermediate dataset are designed.
     // Each `prepareTreeInput**` method will internally cache necessary datasets in a compact fashion.
     // These cached datasets are holden in `recoder`, and will be freed after training.
-    val (sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, sampledBlockIds, agTreeIdBlocks, agGradBlocks) = (boostConf.getSubSampleType, boostConf.getSubSampleRate == 1) match {
-      case (_, true) =>
-        adaptTreeInputsForNonSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, cleaner)
+    val trees = boostConf.getSubSampleType match {
+      case _ if boostConf.getSubSampleRate == 1 =>
+        buildTreesWithNonSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGradBlock, boostConf, bcBoostConf, baseConfig, cleaner)
 
-      case (GBM.Block, _) =>
-        adaptTreeInputsForBlockSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, boostConf, bcBoostConf, iteration, computeGradBlock, cleaner)
+      case GBM.Block =>
+        buildTreesWithBlockSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGradBlock, boostConf, bcBoostConf, baseConfig, cleaner)
 
-      case (GBM.Row, _) =>
-        adaptTreeInputsForInstanceSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, boostConf, bcBoostConf, iteration, computeGrad, cleaner)
+      case GBM.Row =>
+        buildTreesWithRowSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGrad, boostConf, bcBoostConf, baseConfig, cleaner)
     }
 
-    val trees = Tree.trainVertical[T, N, C, B, H](sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, sampledBlockIds, agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, baseConfig)
-
     cleaner.clear(false)
-
     System.gc()
 
     trees
   }
 
 
-  def adaptTreeInputsForNonSampling[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
-                                                   labelBlocks: RDD[ArrayBlock[H]],
-                                                   binVecBlocks: RDD[KVMatrix[C, B]],
-                                                   rawBlocks: RDD[ArrayBlock[H]],
-                                                   subBinVecBlocks: RDD[KVMatrix[C, B]],
-                                                   boostConf: BoostConfig,
-                                                   bcBoostConf: Broadcast[BoostConfig],
-                                                   iteration: Int,
-                                                   computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
-                                                   cleaner: ResourceCleaner)
-                                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                                   cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                                   cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]) = {
-    import RDDFunctions._
-
+  def buildTreesWithNonSampling[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
+                                               labelBlocks: RDD[ArrayBlock[H]],
+                                               binVecBlocks: RDD[KVMatrix[C, B]],
+                                               rawBlocks: RDD[ArrayBlock[H]],
+                                               subBinVecBlocks: RDD[KVMatrix[C, B]],
+                                               computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
+                                               boostConf: BoostConfig,
+                                               bcBoostConf: Broadcast[BoostConfig],
+                                               baseConf: BaseConfig,
+                                               cleaner: ResourceCleaner)
+                                              (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                               cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                               cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                               cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                               ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val treeIdBlocks = weightBlocks
       .mapPartitions { iter =>
         val blockSize = bcBoostConf.value.getBlockSize
@@ -529,7 +522,7 @@ object VerticalGBM extends Logging {
             ArrayBlock.fill(weightBlock.size, treeIds)
           }
         }
-      }.setName(s"Iter $iteration: TreeIds")
+      }.setName(s"Iter ${baseConf.iteration}: TreeIds")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
@@ -538,13 +531,10 @@ object VerticalGBM extends Logging {
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .map { case (weightBlock, labelBlock, rawBlock) =>
         computeGradBlock(weightBlock, labelBlock, rawBlock)
-      }.setName(s"Iter $iteration: Grads")
+      }.setName(s"Iter ${baseConf.iteration}: Grads")
 
     val agGradBlocks = gatherByLayer(gradBlocks, null, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter $iteration: Grads (Gathered)")
-
-    //    agGradBlocks.persist(boostConf.getStorageLevel1)
-    //    cleaner.registerCachedRDDs(agGradBlocks)
+      .setName(s"Iter ${baseConf.iteration}: Grads (Gathered)")
 
 
     val agTreeIdBlocks = agGradBlocks
@@ -560,37 +550,33 @@ object VerticalGBM extends Logging {
             ArrayBlock.fill(gradBlock.size, treeIds)
           }
         }
-      }.setName(s"Iter $iteration: TreeIds (Gathered)")
+      }.setName(s"Iter ${baseConf.iteration}: TreeIds (Gathered)")
 
-    //    agTreeIdBlocks.persist(boostConf.getStorageLevel1)
-    //    cleaner.registerCachedRDDs(agTreeIdBlocks)
-
-    (binVecBlocks, treeIdBlocks, subBinVecBlocks, null, agTreeIdBlocks, agGradBlocks)
+    VerticalTree.train[T, N, C, B, H](binVecBlocks, treeIdBlocks, subBinVecBlocks, null,
+      agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, baseConf)
   }
 
 
-  def adaptTreeInputsForBlockSampling[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
-                                                     labelBlocks: RDD[ArrayBlock[H]],
-                                                     binVecBlocks: RDD[KVMatrix[C, B]],
-                                                     rawBlocks: RDD[ArrayBlock[H]],
-                                                     subBinVecBlocks: RDD[KVMatrix[C, B]],
-                                                     boostConf: BoostConfig,
-                                                     bcBoostConf: Broadcast[BoostConfig],
-                                                     iteration: Int,
-                                                     computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
-                                                     cleaner: ResourceCleaner)
-                                                    (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                                     cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                                     cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                                     cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]) = {
-    import RDDFunctions._
-
+  def buildTreesWithBlockSampling[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
+                                                 labelBlocks: RDD[ArrayBlock[H]],
+                                                 binVecBlocks: RDD[KVMatrix[C, B]],
+                                                 rawBlocks: RDD[ArrayBlock[H]],
+                                                 subBinVecBlocks: RDD[KVMatrix[C, B]],
+                                                 computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
+                                                 boostConf: BoostConfig,
+                                                 bcBoostConf: Broadcast[BoostConfig],
+                                                 baseConf: BaseConfig,
+                                                 cleaner: ResourceCleaner)
+                                                (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                                 cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                                 cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                 cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                                 ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = weightBlocks.sparkContext
 
     val blockSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks,
-      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + iteration)
-    logInfo(s"Iter $iteration: BlockSelector $blockSelector")
+      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
+    logInfo(s"Iter ${baseConf.iteration}: BlockSelector $blockSelector")
 
     val bcBlockSelector = sc.broadcast(blockSelector)
     cleaner.registerBroadcastedObjects(bcBlockSelector)
@@ -609,7 +595,7 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"Iter $iteration: BinVecs (Block-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: BinVecs (Block-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledBinVecBlocks)
@@ -632,7 +618,7 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"Iter $iteration: TreeIds (Block-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: TreeIds (Block-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
@@ -652,17 +638,14 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"Iter $iteration: BlockIds (Block-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: BlockIds (Block-Sampled)")
 
     sampledBlockIds.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledBlockIds)
 
 
     val agTreeIdBlocks = gatherByLayer(treeIdBlocks, sampledBlockIds, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter $iteration: TreeIds (Block-Sampled) (Gathered)")
-
-    //    agTreeIdBlocks.persist(boostConf.getStorageLevel1)
-    //    cleaner.registerCachedRDDs(agTreeIdBlocks)
+      .setName(s"Iter ${baseConf.iteration}: TreeIds (Block-Sampled) (Gathered)")
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
@@ -681,13 +664,10 @@ object VerticalGBM extends Logging {
                 Iterator.empty
               }
           }
-      }.setName(s"Iter $iteration: Grads (Block-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: Grads (Block-Sampled)")
 
     val agGradBlocks = gatherByLayer(gradBlocks, sampledBlockIds, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter $iteration: Grads (Block-Sampled) (Gathered)")
-
-    //    agGradBlocks.persist(boostConf.getStorageLevel1)
-    //    cleaner.registerCachedRDDs(agGradBlocks)
+      .setName(s"Iter ${baseConf.iteration}: Grads (Block-Sampled) (Gathered)")
 
 
     val sampledSubBinVecBlocks = subBinVecBlocks
@@ -704,38 +684,37 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"Iter $iteration: SubBinVecs (Block-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: SubBinVecs (Block-Sampled)")
 
     sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledSubBinVecBlocks)
 
 
-    (sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, sampledBlockIds, agTreeIdBlocks, agGradBlocks)
+    VerticalTree.train[T, N, C, B, H](sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks,
+      sampledBlockIds, agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, baseConf)
   }
 
 
-  def adaptTreeInputsForInstanceSampling[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
-                                                        labelBlocks: RDD[ArrayBlock[H]],
-                                                        binVecBlocks: RDD[KVMatrix[C, B]],
-                                                        rawBlocks: RDD[ArrayBlock[H]],
-                                                        subBinVecBlocks: RDD[KVMatrix[C, B]],
-                                                        boostConf: BoostConfig,
-                                                        bcBoostConf: Broadcast[BoostConfig],
-                                                        iteration: Int,
-                                                        computeGrad: (H, Array[H], Array[H]) => Array[H],
-                                                        cleaner: ResourceCleaner)
-                                                       (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                                        cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                                        cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                                        cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
-                                                        ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]) = {
-    import RDDFunctions._
-
+  def buildTreesWithRowSampling[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
+                                               labelBlocks: RDD[ArrayBlock[H]],
+                                               binVecBlocks: RDD[KVMatrix[C, B]],
+                                               rawBlocks: RDD[ArrayBlock[H]],
+                                               subBinVecBlocks: RDD[KVMatrix[C, B]],
+                                               computeGrad: (H, Array[H], Array[H]) => Array[H],
+                                               boostConf: BoostConfig,
+                                               bcBoostConf: Broadcast[BoostConfig],
+                                               baseConf: BaseConfig,
+                                               cleaner: ResourceCleaner)
+                                              (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                               cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                               cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                               cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
+                                               ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = weightBlocks.sparkContext
 
     val rowSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks * boostConf.getBlockSize,
-      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + iteration)
-    logInfo(s"Iter $iteration: RowSelector $rowSelector")
+      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
+    logInfo(s"Iter ${baseConf.iteration}: RowSelector $rowSelector")
 
     val bcRowSelector = sc.broadcast(rowSelector)
     cleaner.registerBroadcastedObjects(bcRowSelector)
@@ -761,7 +740,7 @@ object VerticalGBM extends Logging {
             }
           KVMatrix.build[C, B](iter2)
         }
-      }.setName(s"Iter $iteration: BinVecs (Row-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: BinVecs (Row-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledBinVecBlocks)
@@ -791,16 +770,13 @@ object VerticalGBM extends Logging {
             }
           ArrayBlock.build[T](iter2)
         }
-      }.setName(s"Iter $iteration: TreeIds (Row-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: TreeIds (Row-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
 
     val agTreeIdBlocks = gatherByLayer(treeIdBlocks, null, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter $iteration: TreeIds (Instance-Sampled) (Gathered)")
-
-    //    agTreeIdBlocks.persist(boostConf.getStorageLevel1)
-    //    cleaner.registerCachedRDDs(agTreeIdBlocks)
+      .setName(s"Iter ${baseConf.iteration}: TreeIds (Instance-Sampled) (Gathered)")
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
@@ -827,13 +803,11 @@ object VerticalGBM extends Logging {
             }
           ArrayBlock.build[H](iter2)
         }
-      }.setName(s"Iter $iteration: Grads (Row-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: Grads (Row-Sampled)")
+
 
     val agGradBlocks = gatherByLayer(gradBlocks, null, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter $iteration: Grads (Row-Sampled) (AllGathered)")
-
-    //    agGradBlocks.persist(boostConf.getStorageLevel1)
-    //    cleaner.registerCachedRDDs(agGradBlocks)
+      .setName(s"Iter ${baseConf.iteration}: Grads (Row-Sampled) (AllGathered)")
 
 
     val sampledSubBinVecBlocks = subBinVecBlocks
@@ -859,14 +833,14 @@ object VerticalGBM extends Logging {
             }
           KVMatrix.sliceAndBuild[C, B](localColIds, iter2)
         }
-      }.setName(s"Iter $iteration: SubBinVecs (Row-Sampled)")
+      }.setName(s"Iter ${baseConf.iteration}: SubBinVecs (Row-Sampled)")
 
     sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledSubBinVecBlocks)
 
-    (sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, null, agTreeIdBlocks, agGradBlocks)
+    VerticalTree.train[T, N, C, B, H](sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, null,
+      agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, baseConf)
   }
 }
-
 
 

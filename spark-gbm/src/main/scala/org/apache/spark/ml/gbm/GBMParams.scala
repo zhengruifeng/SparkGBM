@@ -7,6 +7,7 @@ import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared._
 import org.apache.spark.storage.StorageLevel
 
+
 private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMaxIter
   with HasStepSize with HasCheckpointInterval with HasAggregationDepth with HasSeed {
 
@@ -30,6 +31,22 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getParallelismType: String = $(parallelismType)
 
   setDefault(parallelismType -> "data")
+
+
+  /**
+    * whether to update prediction and gradient after each level.
+    * (default = false)
+    *
+    * @group param
+    */
+  final val greedierSearch: BooleanParam =
+    new BooleanParam(this, "greedierSearch", "Whether to update " +
+      "prediction and gradient after each level.")
+
+  def getGreedierSearch: Boolean = $(greedierSearch)
+
+  setDefault(greedierSearch -> false)
+
 
   /**
     * Leaf index column name.
@@ -210,6 +227,22 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getSubSampleRate: Double = $(subSampleRate)
 
   setDefault(subSampleRate -> 1.0)
+
+
+  /**
+    * Subsample ratio of the training instance when constructing each level.
+    * (default = 1.0)
+    *
+    * @group param
+    */
+  final val subSampleRateByLevel: DoubleParam =
+    new DoubleParam(this, "subSampleRateByLevel", "Subsample ratio of the training" +
+      " instance when constructing each level.",
+      ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
+
+  def getSubSampleRateByLevel: Double = $(subSampleRateByLevel)
+
+  setDefault(subSampleRateByLevel -> 1.0)
 
 
   /**

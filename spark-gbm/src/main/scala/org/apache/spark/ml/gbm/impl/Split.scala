@@ -1,4 +1,4 @@
-package org.apache.spark.ml.gbm
+package org.apache.spark.ml.gbm.impl
 
 import java.{lang => jl}
 import java.{util => ju}
@@ -8,6 +8,7 @@ import scala.collection.mutable
 import scala.{specialized => spec}
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm._
 
 
 private[gbm] trait Split extends Serializable {

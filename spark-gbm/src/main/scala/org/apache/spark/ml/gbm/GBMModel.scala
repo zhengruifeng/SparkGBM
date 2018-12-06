@@ -5,8 +5,9 @@ import java.{util => ju}
 
 import scala.collection.mutable
 
-import org.apache.spark.ml.linalg._
+import org.apache.spark.ml.gbm.func.ObjFunc
 import org.apache.spark.ml.gbm.util.Utils
+import org.apache.spark.ml.linalg._
 import org.apache.spark.sql._
 
 /**

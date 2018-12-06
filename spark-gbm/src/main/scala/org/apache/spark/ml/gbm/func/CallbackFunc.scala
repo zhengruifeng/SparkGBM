@@ -1,4 +1,4 @@
-package org.apache.spark.ml.gbm
+package org.apache.spark.ml.gbm.func
 
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -8,6 +8,7 @@ import scala.util.{Failure, Success}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.param.Params
 import org.apache.spark.ml.util.DefaultParamsWriter
 

@@ -4,6 +4,7 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
+
 /**
   * Compress a block of arrays in a compact fashion.
   *
@@ -63,8 +64,8 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
 
     } else {
       // IMPORTANT!
-      // Iterator.fill(-flag)(values) will not work here!
-      // adopt `clone` to avoid in-place modification.
+      // Iterator.fill(-flag)(values) DO NOT work!
+      // adopt `clone` to avoid possible in-place modification.
       Iterator.range(0, -flag).map(_ => values.clone())
     }
   }
@@ -80,43 +81,13 @@ object ArrayBlock extends Serializable {
 
   def build[@spec(Byte, Short, Int, Long, Float, Double) V](iterator: Iterator[Array[V]])
                                                            (implicit cv: ClassTag[V], nev: NumericExt[V]): ArrayBlock[V] = {
-    val valueBuilder = mutable.ArrayBuilder.make[V]
-    val stepBuilder = mutable.ArrayBuilder.make[Int]
-
-    var identical = true
-    var prevArray: Array[V] = null
+    val builder = new ArrayBlockBuilder[V]
 
     while (iterator.hasNext) {
-      val array = iterator.next()
-      require(array != null)
-
-      if (prevArray == null) {
-        prevArray = array
-      } else if (identical) {
-        identical = nev.equalsArray(prevArray, array)
-        prevArray = array
-      }
-
-      valueBuilder ++= array
-      stepBuilder += array.length
+      builder += iterator.next()
     }
 
-    val values = valueBuilder.result()
-    val steps = stepBuilder.result()
-
-
-    if (identical && prevArray != null) {
-      // all arrays are identical
-      new ArrayBlock[V](prevArray, Array.emptyIntArray, -steps.length)
-
-    } else if (steps.distinct.length == 1 && steps.head > 0) {
-      // all arrays are of the same size
-      new ArrayBlock[V](values, Array.emptyIntArray, steps.head)
-
-    } else {
-
-      new ArrayBlock[V](values, steps, 0)
-    }
+    builder.result()
   }
 
 
@@ -136,6 +107,51 @@ object ArrayBlock extends Serializable {
       new ArrayBlock[V](array, Array.emptyIntArray, -n)
     } else {
       new ArrayBlock[V](nev.emptyArray, Array.emptyIntArray, 0)
+    }
+  }
+}
+
+
+private[gbm] class ArrayBlockBuilder[@spec(Byte, Short, Int, Long, Float, Double) V](implicit cv: ClassTag[V], nev: NumericExt[V]) extends Serializable {
+
+  private val valueBuilder = mutable.ArrayBuilder.make[V]
+  private val stepBuilder = mutable.ArrayBuilder.make[Int]
+
+  private var identical = true
+  private var prevArray: Array[V] = null
+
+  def +=(array: Array[V]): this.type = {
+    require(array != null)
+
+    if (prevArray == null) {
+      prevArray = array
+    } else if (identical) {
+      identical = nev.equalsArray(prevArray, array)
+      prevArray = array
+    }
+
+    valueBuilder ++= array
+    stepBuilder += array.length
+
+    this
+  }
+
+
+  def result(): ArrayBlock[V] = {
+    val values = valueBuilder.result()
+    val steps = stepBuilder.result()
+
+    if (identical && prevArray != null) {
+      // all arrays are identical
+      new ArrayBlock[V](prevArray, Array.emptyIntArray, -steps.length)
+
+    } else if (steps.distinct.length == 1 && steps.head > 0) {
+      // all arrays are of the same size
+      new ArrayBlock[V](values, Array.emptyIntArray, steps.head)
+
+    } else {
+
+      new ArrayBlock[V](values, steps, 0)
     }
   }
 }

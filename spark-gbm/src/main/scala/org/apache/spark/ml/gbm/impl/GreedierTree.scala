@@ -80,7 +80,7 @@ object GreedierTree extends Logging {
         .setName(s"Iter ${baseConf.iteration}, depth $depth: Grads")
 
 
-      splits = Tree.findSplits[T, N, C, B, H](binVecBlocks.zip3(treeIdBlocks, nodeIdBlocks, gradBlocks), updater,
+      splits = Tree.findSplits[T, N, C, B, H](binVecBlocks, treeIdBlocks, nodeIdBlocks, gradBlocks, updater,
         boostConf, bcBoostConf, baseConf, splits, remainingLeaves, depth)
 
 

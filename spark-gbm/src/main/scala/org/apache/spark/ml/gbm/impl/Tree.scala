@@ -2,7 +2,6 @@ package org.apache.spark.ml.gbm.impl
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
-
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
@@ -10,6 +9,7 @@ import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.rdd.RDDFunctions._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.util.random.XORShiftRandom
 
 
 private[gbm] object Tree extends Logging {
@@ -172,7 +172,10 @@ private[gbm] object Tree extends Logging {
   }
 
 
-  def findSplits[T, N, C, B, H](data: RDD[(KVMatrix[C, B], ArrayBlock[T], ArrayBlock[N], ArrayBlock[H])],
+  def findSplits[T, N, C, B, H](binVecBlocks: RDD[KVMatrix[C, B]],
+                                treeIdBlocks: RDD[ArrayBlock[T]],
+                                nodeIdBlocks: RDD[ArrayBlock[N]],
+                                gradBlocks: RDD[ArrayBlock[H]],
                                 updater: HistogramUpdater[T, N, C, B, H],
                                 boostConf: BoostConfig,
                                 bcBoostConf: Broadcast[BoostConfig],
@@ -193,7 +196,8 @@ private[gbm] object Tree extends Logging {
         // If we update histograms by subtraction, we should compute histogram on all
         // columns selected by `colSamplingByTree`, since the updated histograms will be
         // used in next level, and `colSamplingByLevel` in each level perform differently.
-        val histograms = updater.update(data, boostConf, bcBoostConf, baseConf, splits, depth)
+        val histograms = updater.update(binVecBlocks.zip3(treeIdBlocks, nodeIdBlocks, gradBlocks),
+          boostConf, bcBoostConf, baseConf, splits, depth)
           .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
 
         // perform column sampling by level
@@ -212,13 +216,38 @@ private[gbm] object Tree extends Logging {
         val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
 
         // perform instances sampling by level
-        val sampledData = if (boostConf.getSubSampleRateByLevel < 1) {
-          data.sample(false, boostConf.getSubSampleRateByLevel, baseConf.iteration + depth)
+        // disable some nodes in histogram computation by setting zero values
+        val sampledNodeIdBlocks = if (boostConf.getSubSampleRateByLevel < 1) {
+          val seed = baseConf.iteration + depth
+
+          nodeIdBlocks.mapPartitionsWithIndex { case (partId, iter) =>
+            val rate = bcBoostConf.value.getSubSampleRateByLevel
+            val rng = new XORShiftRandom(seed * partId + 1)
+
+            iter.map { nodeIdBlock =>
+              val iter2 = nodeIdBlock.iterator
+                .map { nodeIds =>
+                  var i = 0
+                  while (i < nodeIds.length) {
+                    if (rng.nextDouble() < rate) {
+                      nodeIds(i) = inn.zero
+                    }
+                    i += 1
+                  }
+
+                  nodeIds
+                }
+
+              ArrayBlock.build[N](iter2)
+            }
+          }
+
         } else {
-          data
+          nodeIdBlocks
         }
 
-        val histograms = updater.update(sampledData, boostConf, bcBoostConf, newBaseConfig, splits, depth)
+        val histograms = updater.update(binVecBlocks.zip3(treeIdBlocks, sampledNodeIdBlocks, gradBlocks),
+          boostConf, bcBoostConf, newBaseConfig, splits, depth)
           .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
 
         findSplitsImpl[T, N, C, B, H](histograms, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)

@@ -123,7 +123,8 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
     val histograms = if (depth == 0) {
       // direct compute the histogram of roots
-      HistogramUpdater.computeHistograms[T, N, C, B, H](data, bcBoostConf, baseConf, (n: N) => true, partitioner)
+      HistogramUpdater.computeHistograms[T, N, C, B, H](data, bcBoostConf, baseConf,
+        (n: N) => inn.gt(n, inn.zero), partitioner)
 
     } else {
       // compute the histogram of right leaves

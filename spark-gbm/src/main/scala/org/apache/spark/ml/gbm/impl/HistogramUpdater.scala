@@ -373,7 +373,7 @@ private[gbm] object HistogramUpdater extends Logging {
           .filter(i => f(nodeIds(i))).toArray
 
         if (indices.nonEmpty) {
-          val gradSize = gradHess.length >> 1
+          val size = gradHess.length >> 1
 
           // update sum0
           var j = 0
@@ -381,7 +381,7 @@ private[gbm] object HistogramUpdater extends Logging {
             val i = indices(j)
             val treeId = treeIds(i)
             val nodeId = nodeIds(i)
-            val indexGrad = (i % gradSize) << 1
+            val indexGrad = (i % size) << 1
             val grad = gradHess(indexGrad)
             val hess = gradHess(indexGrad + 1)
             val (g0, h0) = sum0.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
@@ -395,7 +395,7 @@ private[gbm] object HistogramUpdater extends Logging {
               val treeId = treeIds(i)
               if (baseConf.colSelector.containsById[T, C](treeId, colId)) {
                 val nodeId = nodeIds(i)
-                val indexGrad = (i % gradSize) << 1
+                val indexGrad = (i % size) << 1
                 val grad = gradHess(indexGrad)
                 val hess = gradHess(indexGrad + 1)
                 Iterator.single((treeId, nodeId, colId), (bin, grad, hess))

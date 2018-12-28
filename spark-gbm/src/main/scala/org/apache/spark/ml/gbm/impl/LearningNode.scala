@@ -55,5 +55,8 @@ private[gbm] class LearningNode(val nodeId: Int,
 private[gbm] object LearningNode {
   def create(nodeId: Int): LearningNode =
     new LearningNode(nodeId, true, 0.0F, None, None, None)
+
+  def create(nodeId: Int, prediction: Float) =
+    new LearningNode(nodeId, true, prediction, None, None, None)
 }
 

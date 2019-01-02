@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.ruifengz.gbm</groupId>
         <artifactId>spark-gbm-parent</artifactId>
-        <version>2.4.0</version>
+        <version>2.3.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -23,7 +23,7 @@
         <dependency>
             <groupId>com.ruifengz.gbm</groupId>
             <artifactId>spark-gbm</artifactId>
-            <version>2.4.0</version>
+            <version>2.3.0</version>
             <scope>provided</scope>
         </dependency>
     </dependencies>

@@ -11,7 +11,6 @@ import org.apache.spark.ml.gbm.func._
 import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.util._
-import org.apache.spark.ml.util.Instrumentation.instrumented
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.sql._
@@ -166,7 +165,7 @@ class GBMRegressor(override val uid: String) extends
   }
 
   private[ml] def fit(dataset: Dataset[_],
-                      testDataset: Option[Dataset[_]]): GBMRegressionModel = instrumented { instr =>
+                      testDataset: Option[Dataset[_]]): GBMRegressionModel = {
     transformSchema(dataset.schema, logging = true)
 
     if ($(parallelismType) == "feature") {
@@ -174,9 +173,8 @@ class GBMRegressor(override val uid: String) extends
     }
     require($(maxDrop) >= $(minDrop))
 
-    instr.logPipelineStage(this)
-    instr.logDataset(dataset)
-    instr.logParams(this, params: _*)
+    val instr = Instrumentation.create(this, dataset)
+    instr.logParams(params: _*)
 
     val objFunc: ObjFunc =
       $(objectiveFunc) match {
@@ -279,7 +277,7 @@ class GBMRegressor(override val uid: String) extends
     val gbmModel = gbm.fit(data, test)
 
     val model = new GBMRegressionModel(uid, gbmModel)
-    instr.logSuccess()
+    instr.logSuccess(model)
     copyValues(model.setParent(this))
   }
 
@@ -423,7 +421,7 @@ object GBMRegressionModel extends MLReadable[GBMRegressionModel] {
       val gbModel = GBMModel.load(path)
 
       val model = new GBMRegressionModel(metadata.uid, gbModel)
-      metadata.getAndSetParams(model)
+      DefaultParamsReader.getAndSetParams(model, metadata)
       model
     }
   }

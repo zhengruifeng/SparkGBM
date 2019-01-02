@@ -11,7 +11,6 @@ import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.HasThreshold
 import org.apache.spark.ml.util._
-import org.apache.spark.ml.util.Instrumentation.instrumented
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql._
@@ -176,7 +175,7 @@ class GBMClassifier(override val uid: String)
   }
 
   private[ml] def fit(dataset: Dataset[_],
-                      testDataset: Option[Dataset[_]]): GBMClassificationModel = instrumented { instr =>
+                      testDataset: Option[Dataset[_]]): GBMClassificationModel = {
     transformSchema(dataset.schema, logging = true)
 
     val spark = dataset.sparkSession
@@ -187,9 +186,8 @@ class GBMClassifier(override val uid: String)
     }
     require($(maxDrop) >= $(minDrop))
 
-    instr.logPipelineStage(this)
-    instr.logDataset(dataset)
-    instr.logParams(this, params: _*)
+    val instr = Instrumentation.create(this, dataset)
+    instr.logParams( params: _*)
 
     val w = if (isDefined(weightCol) && $(weightCol).nonEmpty) {
       col($(weightCol)).cast(DoubleType)
@@ -319,7 +317,7 @@ class GBMClassifier(override val uid: String)
     val gbmModel = gbm.fit(data, test)
 
     val model = new GBMClassificationModel(uid, gbmModel, numClasses)
-    instr.logSuccess()
+    instr.logSuccess(model)
     copyValues(model.setParent(this))
   }
 
@@ -522,7 +520,7 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
       val gbModel = GBMModel.load(path)
 
       val model = new GBMClassificationModel(metadata.uid, gbModel, numClasses)
-      metadata.getAndSetParams(model)
+      DefaultParamsReader.getAndSetParams(model, metadata)
       model
     }
   }

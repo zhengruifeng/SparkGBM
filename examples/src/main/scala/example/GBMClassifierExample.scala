@@ -51,8 +51,6 @@ object GBMClassifierExample {
       .setModelCheckpointInterval(4)
       .setModelCheckpointPath(modelCheckpointPath)
       .setZeroAsMissing(true)
-      .setGreedierSearch(true)
-      .setStepSizeByNode(0.2)
       .setReduceParallelism(300)
       .setSeed(123L)
 

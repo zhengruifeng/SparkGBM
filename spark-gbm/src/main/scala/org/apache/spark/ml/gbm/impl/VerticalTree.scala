@@ -52,7 +52,7 @@ object VerticalTree extends Logging {
 
     val cleaner = new ResourceCleaner
 
-    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
+    while (finished.contains(false) && depth < boostConf.getMaxDepth) {
       val tic1 = System.nanoTime()
 
       logInfo(s"Iter ${baseConf.iteration}: Depth $depth: splitting start")
@@ -67,7 +67,7 @@ object VerticalTree extends Logging {
 
 
       // merge `colSamplingByLevel` into the BaseConf.
-      val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
+      val newBaseConfig = BaseConfig.mergeColSamplingByNode(boostConf, baseConf, depth)
 
 
       val vdata = if (depth == 0) {
@@ -117,7 +117,7 @@ object VerticalTree extends Logging {
       depth += 1
     }
 
-    if (depth >= boostConf.getMaxDepth) {
+    if (depth == boostConf.getMaxDepth) {
       logInfo(s"Iter ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
         s"trees growth finished, duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     } else {

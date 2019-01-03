@@ -346,7 +346,7 @@ object HorizontalGBM extends Logging {
       case GBM.Goss =>
         buildTreesWithGoss[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, computeRaw, computeGradBlock, boostConf, bcBoostConf, baseConfig, cleaner)
 
-      case _ if boostConf.getSubSampleRate == 1 =>
+      case _ if boostConf.getSubSampleRateByTree == 1 =>
         buildTreesWithNonSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, computeRaw, computeGradBlock, boostConf, bcBoostConf, baseConfig, cleaner)
 
       case GBM.Partition =>
@@ -733,7 +733,7 @@ object HorizontalGBM extends Logging {
                                                      ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = weightBlocks.sparkContext
 
-    val partSelector = Selector.create(boostConf.getSubSampleRate, weightBlocks.getNumPartitions,
+    val partSelector = Selector.create(boostConf.getSubSampleRateByTree, weightBlocks.getNumPartitions,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
     logInfo(s"Iter ${baseConf.iteration}: PartSelector $partSelector")
 
@@ -872,7 +872,7 @@ object HorizontalGBM extends Logging {
                                                  ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = weightBlocks.sparkContext
 
-    val blockSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks,
+    val blockSelector = Selector.create(boostConf.getSubSampleRateByTree, boostConf.getNumBlocks,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
     logInfo(s"Iter ${baseConf.iteration}: BlockSelector $blockSelector")
 
@@ -1041,7 +1041,7 @@ object HorizontalGBM extends Logging {
                                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = weightBlocks.sparkContext
 
-    val rowSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks * boostConf.getBlockSize,
+    val rowSelector = Selector.create(boostConf.getSubSampleRateByTree, boostConf.getNumBlocks * boostConf.getBlockSize,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
     logInfo(s"Iter ${baseConf.iteration}: RowSelector $rowSelector")
 

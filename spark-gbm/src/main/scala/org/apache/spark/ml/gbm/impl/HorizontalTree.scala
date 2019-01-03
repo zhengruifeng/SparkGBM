@@ -50,7 +50,6 @@ object HorizontalTree extends Logging {
         new VoteHistogramUpdater[T, N, C, B, H]
 
       case Tree.Subtract =>
-        require(boostConf.getSubSampleRateByLevel == 1)
         new SubtractHistogramUpdater[T, N, C, B, H]
     }
 
@@ -62,7 +61,7 @@ object HorizontalTree extends Logging {
     var depth = 0
     var splits = Map.empty[(T, N), Split]
 
-    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
+    while (finished.contains(false) && depth < boostConf.getMaxDepth) {
       val tic1 = System.nanoTime()
 
       logInfo(s"Iter ${baseConf.iteration}, Depth $depth: splitting start")
@@ -90,7 +89,7 @@ object HorizontalTree extends Logging {
     }
 
 
-    if (depth >= boostConf.getMaxDepth) {
+    if (depth == boostConf.getMaxDepth) {
       logInfo(s"Iter ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
         s"trees growth finished, duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     } else {

@@ -34,21 +34,6 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * whether to update prediction and gradient after each level.
-    * (default = false)
-    *
-    * @group param
-    */
-  final val greedierSearch: BooleanParam =
-    new BooleanParam(this, "greedierSearch", "Whether to update " +
-      "prediction and gradient after each level.")
-
-  def getGreedierSearch: Boolean = $(greedierSearch)
-
-  setDefault(greedierSearch -> false)
-
-
-  /**
     * Leaf index column name.
     * (default = leafCol)
     *
@@ -215,34 +200,35 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Subsample ratio of the training instance.
+    * Subsample ratio of the training instance when constructing each tree.
     * (default = 1.0)
     *
     * @group param
     */
-  final val subSampleRate: DoubleParam =
-    new DoubleParam(this, "subSampleRate", "Subsample ratio of the training instance.",
-      ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
+  final val subSampleRateByTree: DoubleParam =
+    new DoubleParam(this, "subSampleRateByTree", "Subsample ratio of the training" +
+      " instance when constructing each tree.",
+      ParamValidators.inRange(0.0, 1.0, false, true))
 
-  def getSubSampleRate: Double = $(subSampleRate)
+  def getSubSampleRateByTree: Double = $(subSampleRateByTree)
 
-  setDefault(subSampleRate -> 1.0)
+  setDefault(subSampleRateByTree -> 1.0)
 
 
   /**
-    * Subsample ratio of the training instance when constructing each level.
+    * Subsample ratio of the training instance when constructing each node.
     * (default = 1.0)
     *
     * @group param
     */
-  final val subSampleRateByLevel: DoubleParam =
-    new DoubleParam(this, "subSampleRateByLevel", "Subsample ratio of the training" +
-      " instance when constructing each level.",
-      ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
+  final val subSampleRateByNode: DoubleParam =
+    new DoubleParam(this, "subSampleRateByNode", "Subsample ratio of the training" +
+      " instance when constructing each node.",
+      ParamValidators.inRange(0.0, 1.0, false, true))
 
-  def getSubSampleRateByLevel: Double = $(subSampleRateByLevel)
+  def getSubSampleRateByNode: Double = $(subSampleRateByNode)
 
-  setDefault(subSampleRateByLevel -> 1.0)
+  setDefault(subSampleRateByNode -> 1.0)
 
 
   /**
@@ -254,7 +240,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   final val colSampleRateByTree: DoubleParam =
     new DoubleParam(this, "colSampleRateByTree", "Subsample ratio of columns " +
       "when constructing each tree.",
-      ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
+      ParamValidators.inRange(0.0, 1.0, false, true))
 
   def getColSampleRateByTree: Double = $(colSampleRateByTree)
 
@@ -262,19 +248,19 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Subsample ratio of columns when constructing each level.
+    * Subsample ratio of columns when constructing each node.
     * (default = 1.0)
     *
     * @group param
     */
-  final val colSampleRateByLevel: DoubleParam =
-    new DoubleParam(this, "colSampleRateByLevel", "Subsample ratio of columns when " +
-      "constructing each tree.",
-      ParamValidators.inRange(0.0, 1.0, lowerInclusive = false, upperInclusive = true))
+  final val colSampleRateByNode: DoubleParam =
+    new DoubleParam(this, "colSampleRateByNode", "Subsample ratio of columns when " +
+      "constructing each node.",
+      ParamValidators.inRange(0.0, 1.0, false, true))
 
-  def getColSampleRateByLevel: Double = $(colSampleRateByLevel)
+  def getColSampleRateByNode: Double = $(colSampleRateByNode)
 
-  setDefault(colSampleRateByLevel -> 1.0)
+  setDefault(colSampleRateByNode -> 1.0)
 
 
   /**
@@ -348,7 +334,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     */
   final val dropRate: DoubleParam =
     new DoubleParam(this, "dropRate", "Dropout rate in each iteration.",
-      ParamValidators.inRange(0.0, 1.0))
+      ParamValidators.inRange(0.0, 1.0, true, true))
 
   def getDropRate: Double = $(dropRate)
 
@@ -363,7 +349,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     */
   final val dropSkip: DoubleParam =
     new DoubleParam(this, "dropSkip", "Probability of skipping drop.",
-      ParamValidators.inRange(0.0, 1.0))
+      ParamValidators.inRange(0.0, 1.0, true, true))
 
   def getDropSkip: Double = $(dropSkip)
 
@@ -485,7 +471,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     */
   final val maxBruteBins: IntParam = new IntParam(this, "maxBruteBins", "The maximum number " +
     "of non-zero histogram bins to search split for categorical columns by brute force.",
-    ParamValidators.inRange(0, 64))
+    ParamValidators.inRange(0, 64, false, true))
 
   def getMaxBruteBins: Int = $(maxBruteBins)
 
@@ -675,5 +661,35 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getImportanceType: String = $(importanceType)
 
   setDefault(importanceType -> "numsplits")
+
+
+  /**
+    * whether to update prediction and gradient after each split.
+    * (default = false)
+    *
+    * @group param
+    */
+  final val greedierSearch: BooleanParam =
+    new BooleanParam(this, "greedierSearch", "Whether to update " +
+      "prediction and gradient after each level.")
+
+  def getGreedierSearch: Boolean = $(greedierSearch)
+
+  setDefault(greedierSearch -> false)
+
+
+  /**
+    * Step size for gradient node boosting.
+    * (default = 0.1)
+    *
+    * @group param
+    */
+  final val stepSizeByNode: DoubleParam =
+    new DoubleParam(this, "stepSizeByNode", "Step size for gradient node boosting.",
+      ParamValidators.inRange(0, 1, true, true))
+
+  def getStepSizeByNode: Double = $(stepSizeByNode)
+
+  setDefault(stepSizeByNode -> 0.1)
 }
 

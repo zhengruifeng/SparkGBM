@@ -50,17 +50,6 @@ class BoostConfig extends Logging with Serializable {
   def getParallelismType: String = parallelismType
 
 
-  /** whether to update prediction and gradient after each level */
-  private var greedierSearch: Boolean = false
-
-  private[gbm] def setGreedierSearch(value: Boolean): this.type = {
-    greedierSearch = value
-    this
-  }
-
-  def getGreedierSearch: Boolean = greedierSearch
-
-
   /** boosting type */
   private var boostType: String = "gbtree"
 
@@ -239,37 +228,37 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** subsample ratio of the training instance when constructing each tree */
-  private var subSampleRate: Double = 1.0
+  private var subSampleRateByTree: Double = 1.0
 
-  private[gbm] def setSubSampleRate(value: Double): this.type = {
+  private[gbm] def setSubSampleRateByTree(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    subSampleRate = value
+    subSampleRateByTree = value
     this
   }
 
-  def updateSubSampleRate(value: Double): this.type = {
-    logInfo(s"subSampleRate was changed from $subSampleRate to $value")
-    setSubSampleRate(value)
+  def updateSubSampleRateByTree(value: Double): this.type = {
+    logInfo(s"subSampleRateByTree was changed from $subSampleRateByTree to $value")
+    setSubSampleRateByTree(value)
   }
 
-  def getSubSampleRate: Double = subSampleRate
+  def getSubSampleRateByTree: Double = subSampleRateByTree
 
 
-  /** subsample ratio of the training instance when constructing each level */
-  private var subSampleRateByLevel: Double = 1.0
+  /** subsample ratio of the training instance when constructing each node */
+  private var subSampleRateByNode: Double = 1.0
 
-  private[gbm] def setSubSampleRateByLevel(value: Double): this.type = {
+  private[gbm] def setSubSampleRateByNode(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    subSampleRateByLevel = value
+    subSampleRateByNode = value
     this
   }
 
-  def updateSubSampleRateByLevel(value: Double): this.type = {
-    logInfo(s"subSampleRateByLevel was changed from $subSampleRateByLevel to $value")
-    setSubSampleRateByLevel(value)
+  def updateSubSampleRateByNode(value: Double): this.type = {
+    logInfo(s"subSampleRateByNode was changed from $subSampleRateByNode to $value")
+    setSubSampleRateByNode(value)
   }
 
-  def getSubSampleRateByLevel: Double = subSampleRateByLevel
+  def getSubSampleRateByNode: Double = subSampleRateByNode
 
 
   /** retain fraction of large gradient data */
@@ -328,21 +317,21 @@ class BoostConfig extends Logging with Serializable {
   def getColSampleRateByTree: Double = colSampleRateByTree
 
 
-  /** subsample ratio of columns when constructing each level */
-  private var colSampleRateByLevel: Double = 1.0
+  /** subsample ratio of columns when constructing each node */
+  private var colSampleRateByNode: Double = 1.0
 
-  private[gbm] def setColSampleRateByLevel(value: Double): this.type = {
+  private[gbm] def setColSampleRateByNode(value: Double): this.type = {
     require(value > 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    colSampleRateByLevel = value
+    colSampleRateByNode = value
     this
   }
 
-  def updateColSampleRateByLevel(value: Double): this.type = {
-    logInfo(s"colSampleRateByLevel was changed from $colSampleRateByLevel to $value")
-    setColSampleRateByLevel(value)
+  def updateColSampleRateByNode(value: Double): this.type = {
+    logInfo(s"colSampleRateByNode was changed from $colSampleRateByNode to $value")
+    setColSampleRateByNode(value)
   }
 
-  def getColSampleRateByLevel: Double = colSampleRateByLevel
+  def getColSampleRateByNode: Double = colSampleRateByNode
 
 
   /** the maximum number of non-zero histogram bins to search split for categorical columns by brute force */
@@ -564,7 +553,30 @@ class BoostConfig extends Logging with Serializable {
   def getSeed: Long = seed
 
 
-  /** scalar objective function */
+  /** whether to update prediction and gradient after each level */
+  private var greedierSearch: Boolean = false
+
+  private[gbm] def setGreedierSearch(value: Boolean): this.type = {
+    greedierSearch = value
+    this
+  }
+
+  def getGreedierSearch: Boolean = greedierSearch
+
+
+  /** step size for gradient node boosting */
+  private var stepSizeByNode: Double = 0.1
+
+  private[gbm] def setStepSizeByNode(value: Double): this.type = {
+    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
+    stepSizeByNode = value
+    this
+  }
+
+  def getStepSizeByNode: Double = stepSizeByNode
+
+
+  /** objective function */
   private var objFunc: ObjFunc = new SquareObj
 
   private[gbm] def setObjFunc(value: ObjFunc): this.type = {
@@ -574,7 +586,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateObjFunc(value: ObjFunc): this.type = {
-    logInfo(s"scalarObjFunc was changed from ${objFunc.name} to ${value.name}")
+    logInfo(s"objFunc was changed from ${objFunc.name} to ${value.name}")
     setObjFunc(value)
   }
 
@@ -591,7 +603,7 @@ class BoostConfig extends Logging with Serializable {
   }
 
   def updateEvalFunc(value: Array[EvalFunc]): this.type = {
-    logInfo(s"scalarIncEvalFunc was changed from ${evalFunc.map(_.name)} to ${value.map(_.name)}")
+    logInfo(s"evalFunc was changed from ${evalFunc.map(_.name)} to ${value.map(_.name)}")
     setEvalFunc(value)
   }
 
@@ -868,18 +880,18 @@ private[gbm] object BaseConfig extends Serializable {
 
   /**
     * The default `BaseConfig` passed in `Tree` contains selector for tree-wise column sampling.
-    * Call this function to merge level-wise column sampling if needed.
+    * Call this function to merge node-wise column sampling if needed.
     */
-  def mergeColSamplingByLevel(boostConf: BoostConfig,
-                              baseConf: BaseConfig,
-                              depth: Int): BaseConfig = {
+  def mergeColSamplingByNode(boostConf: BoostConfig,
+                             baseConf: BaseConfig,
+                             depth: Int): BaseConfig = {
 
-    if (boostConf.getColSampleRateByLevel == 1) {
+    if (boostConf.getColSampleRateByNode == 1) {
       baseConf
     } else {
-      val levelSelector = Selector.create(boostConf.getColSampleRateByLevel, boostConf.getNumCols,
+      val nodeSelector = Selector.create(boostConf.getColSampleRateByNode, boostConf.getNumCols,
         boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
-      val unionSelector = Selector.union(baseConf.colSelector, levelSelector)
+      val unionSelector = Selector.union(baseConf.colSelector, nodeSelector)
       new BaseConfig(baseConf.iteration, unionSelector)
     }
   }

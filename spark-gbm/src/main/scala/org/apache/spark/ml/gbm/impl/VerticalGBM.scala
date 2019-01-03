@@ -477,7 +477,7 @@ object VerticalGBM extends Logging {
     // Each `prepareTreeInput**` method will internally cache necessary datasets in a compact fashion.
     // These cached datasets are holden in `recoder`, and will be freed after training.
     val trees = boostConf.getSubSampleType match {
-      case _ if boostConf.getSubSampleRate == 1 =>
+      case _ if boostConf.getSubSampleRateByTree == 1 =>
         buildTreesWithNonSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGradBlock, boostConf, bcBoostConf, baseConfig, cleaner)
 
       case GBM.Block =>
@@ -574,7 +574,7 @@ object VerticalGBM extends Logging {
                                                  ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = weightBlocks.sparkContext
 
-    val blockSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks,
+    val blockSelector = Selector.create(boostConf.getSubSampleRateByTree, boostConf.getNumBlocks,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
     logInfo(s"Iter ${baseConf.iteration}: BlockSelector $blockSelector")
 
@@ -712,7 +712,7 @@ object VerticalGBM extends Logging {
                                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val sc = weightBlocks.sparkContext
 
-    val rowSelector = Selector.create(boostConf.getSubSampleRate, boostConf.getNumBlocks * boostConf.getBlockSize,
+    val rowSelector = Selector.create(boostConf.getSubSampleRateByTree, boostConf.getNumBlocks * boostConf.getBlockSize,
       boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
     logInfo(s"Iter ${baseConf.iteration}: RowSelector $rowSelector")
 

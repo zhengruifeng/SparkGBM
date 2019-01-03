@@ -9,6 +9,7 @@ import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.util.random.XORShiftRandom
 
 
 object GreedierTree extends Logging {
@@ -46,7 +47,7 @@ object GreedierTree extends Logging {
 
     val gradBlocks = computeGradBlocks[T, N, C, B, H](auxilaryBlocks, weightBlocks, labelBlocks, bcBoostConf)
 
-    val rootWeights = computeRootWeights[T, H](gradBlocks, treeIdBlocks, boostConf)
+    val rootWeights = computeRootWeights[T, H](gradBlocks, treeIdBlocks, boostConf, baseConf)
     val roots = Array.tabulate(boostConf.getNumTrees)(i => LearningNode.create(1, rootWeights.getOrElse(i, 0.0F)))
 
 
@@ -65,7 +66,7 @@ object GreedierTree extends Logging {
     var depth = 0
     var splits = Map.empty[(T, N), Split]
 
-    while (finished.contains(false) && depth <= boostConf.getMaxDepth) {
+    while (finished.contains(false) && depth < boostConf.getMaxDepth) {
       val tic1 = System.nanoTime()
 
       logInfo(s"Iter ${baseConf.iteration}, Depth $depth: splitting start")
@@ -76,7 +77,7 @@ object GreedierTree extends Logging {
       } else {
         auxilaryBlocks = updateAuxilaryBlocks[T, N, C, B, H](auxilaryBlocks, binVecBlocks, treeIdBlocks, bcBoostConf, splits)
       }
-      auxilaryBlocks.setName(s"Iter ${baseConf.iteration}, depth $depth: NodeIds & LevelPreds")
+      auxilaryBlocks.setName(s"Iter ${baseConf.iteration}, depth $depth: NodeIds & NodePreds")
       auxilaryBlocksCheckpointer.update(auxilaryBlocks)
 
 
@@ -101,7 +102,7 @@ object GreedierTree extends Logging {
     }
 
 
-    if (depth >= boostConf.getMaxDepth) {
+    if (depth == boostConf.getMaxDepth) {
       logInfo(s"Iter ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
         s"trees growth finished, duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     } else {
@@ -136,7 +137,7 @@ object GreedierTree extends Logging {
 
             val nodeIdBlock = ArrayBlock.build[N](nodeIdIter)
 
-            val levelPredIter = Utils.zip2(rawBlock.iterator, treeIdBlock.iterator)
+            val nodePredIter = Utils.zip2(rawBlock.iterator, treeIdBlock.iterator)
               .map { case (rawSeq, treeIds) =>
                 if (treeIds.isEmpty) {
                   neh.emptyArray
@@ -144,19 +145,61 @@ object GreedierTree extends Logging {
                   rawSeq
                 } else {
                   require(treeIds.length % rawSeq.length == 0)
-                  val levelPred = Array.ofDim[H](treeIds.length)
+                  val nodePred = Array.ofDim[H](treeIds.length)
                   var offset = 0
-                  while (offset < levelPred.length) {
-                    System.arraycopy(rawSeq, 0, levelPred, offset, rawSeq.length)
+                  while (offset < nodePred.length) {
+                    System.arraycopy(rawSeq, 0, nodePred, offset, rawSeq.length)
                     offset += rawSeq.length
                   }
-                  levelPred
+                  nodePred
                 }
               }
 
-            val levelPredBlock = ArrayBlock.build[H](levelPredIter)
+            val nodePredBlock = ArrayBlock.build[H](nodePredIter)
 
-            (nodeIdBlock, levelPredBlock)
+            (nodeIdBlock, nodePredBlock)
+          }
+    }
+  }
+
+
+  def updateAuxilaryBlocks[T, N, H](auxilaryBlocks: RDD[(ArrayBlock[N], ArrayBlock[H])],
+                                    treeIdBlocks: RDD[ArrayBlock[T]],
+                                    boostConf: BoostConfig,
+                                    rootWeights: Map[Int, Float])
+                                   (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                    cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                    ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(ArrayBlock[N], ArrayBlock[H])] = {
+    import nuh._
+
+    val scaledWeights = rootWeights
+      .map { case (treeId, weight) => (int.fromInt(treeId), neh.fromDouble(weight * boostConf.getStepSizeByNode)) }
+
+
+    auxilaryBlocks.zipPartitions(treeIdBlocks) {
+      case (auxilaryBlockIter, treeIdBlockIter) =>
+        Utils.zip2(auxilaryBlockIter, treeIdBlockIter)
+          .map { case ((nodeIdBlock, nodePredBlock), treeIdBlock) =>
+            require(nodeIdBlock.size == nodePredBlock.size)
+            require(nodeIdBlock.size == treeIdBlock.size)
+
+            val newNodePredIter = Utils.zip2(nodePredBlock.iterator, treeIdBlock.iterator)
+              .map { case (nodePred, treeIds) =>
+                require(nodePred.length == treeIds.length)
+
+                var i = 0
+                while (i < treeIds.length) {
+                  val treeId = treeIds(i)
+                  nodePred(i) += scaledWeights.getOrElse(treeId, nuh.zero)
+                  i += 1
+                }
+
+                nodePred
+              }
+
+            val newNodePredBlock = ArrayBlock.build[H](newNodePredIter)
+
+            (nodeIdBlock, newNodePredBlock)
           }
     }
   }
@@ -178,18 +221,18 @@ object GreedierTree extends Logging {
       case (auxilaryBlockIter, binVecBlockIter, treeIdBlockIter) =>
 
         val boostConf = bcBoostConf.value
-        val stepSize = neh.fromDouble(boostConf.getStepSize)
+        val stepSize = neh.fromDouble(boostConf.getStepSizeByNode)
 
         Utils.zip3(auxilaryBlockIter, binVecBlockIter, treeIdBlockIter)
-          .map { case ((nodeIdBlock, levelPredBlock), binVecBlock, treeIdBlock) =>
-            require(nodeIdBlock.size == levelPredBlock.size)
+          .map { case ((nodeIdBlock, nodePredBlock), binVecBlock, treeIdBlock) =>
+            require(nodeIdBlock.size == nodePredBlock.size)
             require(nodeIdBlock.size == binVecBlock.size)
             require(nodeIdBlock.size == treeIdBlock.size)
 
-            val iter = Utils.zip4(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator, levelPredBlock.iterator)
-              .map { case (binVec, treeIds, nodeIds, levelPred) =>
+            val iter = Utils.zip4(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator, nodePredBlock.iterator)
+              .map { case (binVec, treeIds, nodeIds, nodePred) =>
                 require(treeIds.length == nodeIds.length)
-                require(treeIds.length == levelPred.length)
+                require(treeIds.length == nodePred.length)
 
                 var i = 0
                 while (i < treeIds.length) {
@@ -201,29 +244,29 @@ object GreedierTree extends Logging {
                       val leftNodeId = inn.plus(nodeId, nodeId)
                       if (split.goLeft[B](binVec.apply)) {
                         nodeIds(i) = leftNodeId
-                        levelPred(i) += neh.fromFloat(split.leftWeight) * stepSize
+                        nodePred(i) += neh.fromFloat(split.leftWeight) * stepSize
                       } else {
                         nodeIds(i) = inn.plus(leftNodeId, inn.one)
-                        levelPred(i) += neh.fromFloat(split.rightWeight) * stepSize
+                        nodePred(i) += neh.fromFloat(split.rightWeight) * stepSize
                       }
                     }
 
                   i += 1
                 }
 
-                (nodeIds, levelPred)
+                (nodeIds, nodePred)
               }
 
             val nodeIdBlockBuilder = new ArrayBlockBuilder[N]
-            val levelPredBlockBuilder = new ArrayBlockBuilder[H]
+            val nodePredBlockBuilder = new ArrayBlockBuilder[H]
 
             while (iter.hasNext) {
-              val (nodeIds, levelPred) = iter.next()
+              val (nodeIds, nodePred) = iter.next()
               nodeIdBlockBuilder += nodeIds
-              levelPredBlockBuilder += levelPred
+              nodePredBlockBuilder += nodePred
             }
 
-            (nodeIdBlockBuilder.result(), levelPredBlockBuilder.result())
+            (nodeIdBlockBuilder.result(), nodePredBlockBuilder.result())
           }
     }
   }
@@ -248,20 +291,20 @@ object GreedierTree extends Logging {
         val objFunc = boostConf.getObjFunc
 
         Utils.zip3(auxilaryBlockIter, weightBlockIter, labelBlockIter)
-          .map { case ((nodeIdBlock, levelPredBlock), weightBlock, labelBlock) =>
-            require(nodeIdBlock.size == levelPredBlock.size)
+          .map { case ((nodeIdBlock, nodePredBlock), weightBlock, labelBlock) =>
+            require(nodeIdBlock.size == nodePredBlock.size)
             require(nodeIdBlock.size == weightBlock.size)
             require(nodeIdBlock.size == labelBlock.size)
 
-            val iter = Utils.zip4(nodeIdBlock.iterator, levelPredBlock.iterator, weightBlock.iterator, labelBlock.iterator)
-              .map { case (nodeIds, levelPred, weight, label) =>
+            val iter = Utils.zip4(nodeIdBlock.iterator, nodePredBlock.iterator, weightBlock.iterator, labelBlock.iterator)
+              .map { case (nodeIds, nodePred, weight, label) =>
                 require(nodeIds.length % rawSize == 0)
-                require(nodeIds.length == levelPred.length)
+                require(nodeIds.length == nodePred.length)
 
                 val gradArr = Array.ofDim[H](nodeIds.length << 1)
 
-                if (levelPred.length == rawSize) {
-                  val score = objFunc.transform(neh.toDouble(levelPred))
+                if (nodePred.length == rawSize) {
+                  val score = objFunc.transform(neh.toDouble(nodePred))
                   val (grad, hess) = objFunc.compute(neh.toDouble(label), score)
                   require(grad.length == rawSize && hess.length == rawSize)
 
@@ -276,7 +319,7 @@ object GreedierTree extends Logging {
                 } else {
 
                   var j = 0
-                  levelPred.grouped(rawSize)
+                  nodePred.grouped(rawSize)
                     .foreach { pred =>
                       val score = objFunc.transform(neh.toDouble(pred))
                       val (grad, hess) = objFunc.compute(neh.toDouble(label), score)
@@ -304,14 +347,20 @@ object GreedierTree extends Logging {
 
   def computeRootWeights[T, H](gradBlocks: RDD[ArrayBlock[H]],
                                treeIdBlocks: RDD[ArrayBlock[T]],
-                               boostConf: BoostConfig)
+                               boostConf: BoostConfig,
+                               baseConf: BaseConfig)
                               (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Map[Int, Float] = {
+
+    val seed = boostConf.getSeed.toInt * baseConf.iteration + 1
+    val rate = boostConf.getColSampleRateByNode
 
     gradBlocks.zipPartitions(treeIdBlocks) {
       case (gradBlockIter, treeIdBlockIter) =>
         val iter = Utils.zip2(gradBlockIter, treeIdBlockIter)
         val sum = mutable.OpenHashMap.empty[T, (H, H)]
+
+        val rng = new XORShiftRandom(seed)
 
         while (iter.hasNext) {
           val (gradBlock, treeIdBlock) = iter.next()
@@ -327,12 +376,15 @@ object GreedierTree extends Logging {
 
               var j = 0
               while (j < treeIdArr.length) {
-                val treeId = treeIdArr(j)
-                val indexGrad = (j % size) << 1
-                val grad = gradArr(indexGrad)
-                val hess = gradArr(indexGrad + 1)
-                val (g0, h0) = sum.getOrElse(treeId, (nuh.zero, nuh.zero))
-                sum.update(treeId, (nuh.plus(g0, grad), nuh.plus(h0, hess)))
+                if (rng.nextDouble() < rate) {
+                  val treeId = treeIdArr(j)
+                  val indexGrad = (j % size) << 1
+                  val grad = gradArr(indexGrad)
+                  val hess = gradArr(indexGrad + 1)
+                  val (g0, h0) = sum.getOrElse(treeId, (nuh.zero, nuh.zero))
+                  sum.update(treeId, (nuh.plus(g0, grad), nuh.plus(h0, hess)))
+                }
+
                 j += 1
               }
             }
@@ -355,47 +407,6 @@ object GreedierTree extends Logging {
       }.toMap
   }
 
-
-  def updateAuxilaryBlocks[T, N, H](auxilaryBlocks: RDD[(ArrayBlock[N], ArrayBlock[H])],
-                                    treeIdBlocks: RDD[ArrayBlock[T]],
-                                    boostConf: BoostConfig,
-                                    rootWeights: Map[Int, Float])
-                                   (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
-                                    cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
-                                    ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(ArrayBlock[N], ArrayBlock[H])] = {
-    import nuh._
-
-    val scaledWeights = rootWeights
-      .map { case (treeId, weight) => (int.fromInt(treeId), neh.fromDouble(weight * boostConf.getStepSize)) }
-
-
-    auxilaryBlocks.zipPartitions(treeIdBlocks) {
-      case (auxilaryBlockIter, treeIdBlockIter) =>
-        Utils.zip2(auxilaryBlockIter, treeIdBlockIter)
-          .map { case ((nodeIdBlock, levelPredBlock), treeIdBlock) =>
-            require(nodeIdBlock.size == levelPredBlock.size)
-            require(nodeIdBlock.size == treeIdBlock.size)
-
-            val newLevelPredIter = Utils.zip2(levelPredBlock.iterator, treeIdBlock.iterator)
-              .map { case (levelPred, treeIds) =>
-                require(levelPred.length == treeIds.length)
-
-                var i = 0
-                while (i < treeIds.length) {
-                  val treeId = treeIds(i)
-                  levelPred(i) += scaledWeights.getOrElse(treeId, nuh.zero)
-                  i += 1
-                }
-
-                levelPred
-              }
-
-            val newLevelPredBlock = ArrayBlock.build[H](newLevelPredIter)
-
-            (nodeIdBlock, newLevelPredBlock)
-          }
-    }
-  }
 }
 
 

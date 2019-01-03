@@ -90,13 +90,13 @@ class GBMClassifier(override val uid: String)
 
   def setRankCols(value: Array[Int]): this.type = set(rankCols, value)
 
-  def setSubSampleRate(value: Double): this.type = set(subSampleRate, value)
+  def setSubSampleRateByTree(value: Double): this.type = set(subSampleRateByTree, value)
 
-  def setSubSampleRateByLevel(value: Double): this.type = set(subSampleRateByLevel, value)
+  def setSubSampleRateByNode(value: Double): this.type = set(subSampleRateByNode, value)
 
   def setColSampleRateByTree(value: Double): this.type = set(colSampleRateByTree, value)
 
-  def setColSampleRateByLevel(value: Double): this.type = set(colSampleRateByLevel, value)
+  def setColSampleRateByNode(value: Double): this.type = set(colSampleRateByNode, value)
 
   def setMinGain(value: Double): this.type = set(minGain, value)
 
@@ -111,8 +111,6 @@ class GBMClassifier(override val uid: String)
   def setEvaluateFunc(value: Array[String]): this.type = set(evaluateFunc, value)
 
   def setParallelismType(value: String): this.type = set(parallelismType, value)
-
-  def setGreedierSearch(value: Boolean): this.type = set(greedierSearch, value)
 
   def setBoostType(value: String): this.type = set(boostType, value)
 
@@ -159,6 +157,10 @@ class GBMClassifier(override val uid: String)
   def setBlockSize(value: Int): this.type = set(blockSize, value)
 
   def setImportanceType(value: String): this.type = set(importanceType, value)
+
+  def setGreedierSearch(value: Boolean): this.type = set(greedierSearch, value)
+
+  def setStepSizeByNode(value: Double): this.type = set(stepSizeByNode, value)
 
   override def fit(dataset: Dataset[_]): GBMClassificationModel = {
     fit(dataset, None)
@@ -256,10 +258,10 @@ class GBMClassifier(override val uid: String)
       .setCallbackFunc(callBackFunc.toArray)
       .setCatCols($(catCols).toSet)
       .setRankCols($(rankCols).toSet)
-      .setSubSampleRate($(subSampleRate))
-      .setSubSampleRateByLevel($(subSampleRateByLevel))
+      .setSubSampleRateByTree($(subSampleRateByTree))
+      .setSubSampleRateByNode($(subSampleRateByNode))
       .setColSampleRateByTree($(colSampleRateByTree))
-      .setColSampleRateByLevel($(colSampleRateByLevel))
+      .setColSampleRateByNode($(colSampleRateByNode))
       .setCheckpointInterval($(checkpointInterval))
       .setStorageLevel1(StorageLevel.fromString($(storageLevel1)))
       .setStorageLevel2(StorageLevel.fromString($(storageLevel2)))
@@ -268,6 +270,7 @@ class GBMClassifier(override val uid: String)
       .setSeed($(seed))
       .setParallelismType($(parallelismType))
       .setGreedierSearch($(greedierSearch))
+      .setStepSizeByNode($(stepSizeByNode))
       .setBoostType($(boostType))
       .setDropRate($(dropRate))
       .setDropSkip($(dropSkip))

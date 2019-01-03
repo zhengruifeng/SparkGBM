@@ -18,7 +18,7 @@ From XGBoost we introduced:
 
 2, L1/L2 regularization of weights to prevent overfitting
 
-3, Column subsampling by tree and by level
+3, Column subsampling by tree and by node
 
 4, Sparsity-awareness
 
@@ -37,71 +37,71 @@ From LightGBM we introduced:
 [Source](https://github.com/zhengruifeng/SparkGBM/blob/master/gbm/src/main/scala/org/apache/spark/ml/classification/GBMClassifier.scala)
 [Example](https://github.com/zhengruifeng/SparkGBM/blob/master/examples/src/main/scala/example/GBMClassifierExample.scala)
 
-    import org.apache.spark.ml.classification._
+         import org.apache.spark.ml.classification._
     
-    val gbmc = new GBMClassifier
+         val gbmc = new GBMClassifier
     
-    gbmc.setBoostType("gbtree")                     // "dart" -> DART, "gbtree" -> gradient boosting
-        .setObjectiveFunc("logistic")               // "logistic" -> logloss
-        .setEvaluateFunc(Array("auc", "logloss"))   // "auc", "logloss", "error"
-        .setMaxIter(10)                             // maximum number of iterations
-        .setModelCheckpointInterval(4)              // model checkpoint interval
-        .setModelCheckpointPath(path)               // model checkpoint directory
+         gbmc.setBoostType("gbtree")                     // "dart" -> DART, "gbtree" -> gradient boosting
+           .setObjectiveFunc("logistic")               // "logistic" -> logloss
+           .setEvaluateFunc(Array("auc", "logloss"))   // "auc", "logloss", "error"
+           .setMaxIter(10)                             // maximum number of iterations
+           .setModelCheckpointInterval(4)              // model checkpoint interval
+           .setModelCheckpointPath(path)               // model checkpoint directory
     
-    // training without validation
-    val model = gbmc.fit(train)
+         /** training without validation */
+         val model = gbmc.fit(train)
     
-    // load the snapshots saved during the training
-    val modelSnapshot4 = GBMClassificationModel.load(s"$path/model-4")
-    val modelSnapshot8 = GBMClassificationModel.load(s"$path/model-8")
+         /** load the snapshots saved during the training */
+         val modelSnapshot4 = GBMClassificationModel.load(s"$path/model-4")
+         val modelSnapshot8 = GBMClassificationModel.load(s"$path/model-8")
 
-    // model save and load
-    model.save(savePath)
-    val model2 = GBMClassificationModel.load(savePath)
+         /** model save and load */
+         model.save(savePath)
+         val model2 = GBMClassificationModel.load(savePath)
 
 **GBMRegressor** for regression: 
 [Source](https://github.com/zhengruifeng/SparkGBM/blob/master/gbm/src/main/scala/org/apache/spark/ml/regression/GBMRegressor.scala)
 [Example](https://github.com/zhengruifeng/SparkGBM/blob/master/examples/src/main/scala/example/GBMRegressorExample.scala)
 
 
-    import org.apache.spark.ml.regression._
+         import org.apache.spark.ml.regression._
     
-    val gbmr = new GBMRegressor
+         val gbmr = new GBMRegressor
     
-    gbmr.setBoostType("dart")                   // "dart" -> DART, "gbtree" -> gradient boosting
-        .setObjectiveFunc("square")             // "square" -> MSE, "huber" -> Pseudo-Huber loss
-        .setEvaluateFunc(Array("rmse", "mae"))  // "rmse", "mse", "mae"
-        .setMaxIter(10)                         // maximum number of iterations
-        .setMaxDepth(7)                         // maximum depth
-        .setMaxBins(32)                         // maximum number of bins
-        .setNumericalBinType("width")           // "width" -> by interval-equal bins, "depth" -> by quantiles 
-        .setMaxLeaves(100)                      // maximum number of leaves
-        .setMinNodeHess(0.001)                  // minimum hessian needed in a node
-        .setRegAlpha(0.1)                       // L1 regularization
-        .setRegLambda(0.5)                      // L2 regularization
-        .setDropRate(0.1)                       // dropout rate
-        .setDropSkip(0.5)                       // probability of skipping drop
-        .setInitialModelPath(path)              // path of initial model
-        .setEarlyStopIters(10)                  // early stopping
+         gbmr.setBoostType("dart")                   // "dart" -> DART, "gbtree" -> gradient boosting
+           .setObjectiveFunc("square")             // "square" -> MSE, "huber" -> Pseudo-Huber loss
+           .setEvaluateFunc(Array("rmse", "mae"))  // "rmse", "mse", "mae"
+           .setMaxIter(10)                         // maximum number of iterations
+           .setMaxDepth(7)                         // maximum depth
+           .setMaxBins(32)                         // maximum number of bins
+           .setNumericalBinType("width")           // "width" -> by interval-equal bins, "depth" -> by quantiles 
+           .setMaxLeaves(100)                      // maximum number of leaves
+           .setMinNodeHess(0.001)                  // minimum hessian needed in a node
+           .setRegAlpha(0.1)                       // L1 regularization
+           .setRegLambda(0.5)                      // L2 regularization
+           .setDropRate(0.1)                       // dropout rate
+           .setDropSkip(0.5)                       // probability of skipping drop
+           .setInitialModelPath(path)              // path of initial model
+           .setEarlyStopIters(10)                  // early stopping
     
-    // training without validation, early stopping is ignored
-    val model1 = gbmr.fit(train) 
+         /** training without validation, early stopping is ignored */
+         val model1 = gbmr.fit(train) 
     
-    // training with validation
-    val model2 = gbmr.fit(train, test)
+         /** training with validation */
+         val model2 = gbmr.fit(train, test)
     
-    // using only 5 tree for the following feature importance computation, prediction and leaf transformation 
-    model2.setFirstTrees(5)
+         /**  using only 5 tree for the following feature importance computation, prediction and leaf transformation */
+         model2.setFirstTrees(5)
     
-    // feature importance
-    model2.featureImportances
+         /**  feature importance */
+         model2.featureImportances
     
-    // prediction
-    model2.transform(test)
+         /**  prediction */
+         model2.transform(test)
     
-    // enable one-hot leaf transform
-    model2.setEnableOneHot(true)
-    model2.leaf(test)
+         /**  enable one-hot leaf transform */
+         model2.setEnableOneHot(true)
+         model2.leaf(test)
    
 
 ### Low-level RDD-based APIs:
@@ -110,76 +110,78 @@ Besides all the functions in DataFrame-based APIs, RDD-based APIs also support u
 [Source](https://github.com/zhengruifeng/SparkGBM/blob/master/gbm/src/main/scala/org/apache/spark/ml/gbm/GBM.scala)
 [Example](https://github.com/zhengruifeng/SparkGBM/blob/master/examples/src/main/scala/example/GBMExample.scala)
 
-    import org.apache.spark.ml.gbm._
+         import org.apache.spark.ml.gbm._
     
-     /** User defined objective function */
-      val obj = new ScalarObjFunc {
-          override def compute(label: Double, score: Double): (Double, Double) = (score - label, 1.0)
-    
-          override def name: String = "Another Square"
-      }
-    
-       /** User defined evaluation function for R2 */
-       val r2Eval = new ScalarEvalFunc {
-          override def isLargerBetter: Boolean = true
-    
-          override def name: String = "R2 (no weight)"
-    
-          // (weight, label, raw, score)
-          override def computeImpl(data: RDD[(Double, Double, Double, Double)]): Double = {
-            /** ignore weight */
-            new RegressionMetrics(data.map(t => (t._4, t._2))).r2
-          }
-       }
-    
-       /** User defined evaluation function for MAE */
-       val maeEval = new SimpleEvalFunc {
-          override def compute(label: Double,
-                               score: Double): Double = (label - score).abs
-    
-          override def isLargerBetter: Boolean = false
-    
-          override def name: String = "Another MAE"
-       }
-    
-       /** User defined callback function */
-       val lrUpdater = new CallbackFunc {
-          override def compute(spark: SparkSession,
-                               boostConfig: BoostConfig,
-                               model: GBMModel,
-                               trainMetrics: Array[Map[String, Double]],
-                               testMetrics: Array[Map[String, Double]]): Boolean = {
-           /** learning rate decay */
-           if (boostConfig.getStepSize > 0.01) {
-              boostConfig.updateStepSize(boostConfig.getStepSize * 0.95)
+         /** User defined objective function */
+         val obj = new ScalarObjFunc {
+           override def compute(label: Double, score: Double): (Double, Double) = (score - label, 1.0)
+     
+           override def name: String = "Another Square"
+         }
+     
+         /** User defined evaluation function for R2 */
+         val r2Eval = new ScalarEvalFunc {
+           override def isLargerBetter: Boolean = true
+     
+           override def name: String = "R2 (no weight)"
+     
+           // (weight, label, raw, score)
+           override def computeImpl(data: RDD[(Double, Double, Double, Double)]): Double = {
+             /** ignore weight */
+             new RegressionMetrics(data.map(t => (t._4, t._2))).r2
            }
-    
-           println(s"Round ${model.numTrees}: train metrics: ${trainMetrics.last}")
-           if (testMetrics.nonEmpty) {
-              println(s"Round ${model.numTrees}: test metrics: ${testMetrics.last}")
+         }
+     
+         /** User defined evaluation function for MAE */
+         val maeEval = new SimpleEvalFunc {
+           override def compute(label: Double,
+                                score: Double): Double = (label - score).abs
+     
+           override def isLargerBetter: Boolean = false
+     
+           override def name: String = "Another MAE"
+         }
+     
+         /** User defined callback function */
+         val lrUpdater = new CallbackFunc {
+           override def compute(boostConfig: BoostConfig,
+                                model: GBMModel,
+                                iteration: Int,
+                                trainMetrics: Array[Map[String, Double]],
+                                testMetrics: Array[Map[String, Double]]): Boolean = {
+             /** learning rate decay */
+             if (boostConfig.getStepSize > 0.01) {
+               boostConfig.updateStepSize(boostConfig.getStepSize * 0.95)
+             }
+     
+             println(s"Round ${model.numTrees}: train metrics: ${trainMetrics.last}")
+             if (testMetrics.nonEmpty) {
+               println(s"Round ${model.numTrees}: test metrics: ${testMetrics.last}")
+             }
+             false
            }
-           false
-          }
-    
-          override def name: String = "Learning Rate Updater"
-       }
-    
-       val recoder = new MetricRecoder
-    
-       val gbm = new GBM
-       gbm.setMaxIter(15)
-          .setMaxDepth(5)
-          .setStepSize(0.2)
-          .setMinNodeHess(1e-2)
-          .setNumericalBinType("depth")
-          .setObjFunc(obj)
-          .setEvalFunc(Array(r2Eval, maeEval, new R2Eval))
-          .setCallbackFunc(Array(lrUpdater, recoder))
-          .setBaseScore(Array(avg))
-          .setBaseModelParallelism(3)
-    
-       /** train with validation */
-       val model = gbm.fit(train, test)
+     
+           override def name: String = "Learning Rate Updater"
+         }
+     
+         val recoder = new MetricRecoder
+     
+         val gbm = new GBM
+         gbm.setBoostType("gbtree")
+           .setSubSampleType("goss")
+           .setMaxIter(15)
+           .setMaxDepth(5)
+           .setStepSize(0.2)
+           .setMinNodeHess(1e-2)
+           .setNumericalBinType("depth")
+           .setObjFunc(obj)
+           .setEvalFunc(Array(r2Eval, maeEval, new R2Eval))
+           .setCallbackFunc(Array(lrUpdater, recoder))
+           .setBaseModelParallelism(3)
+           .setBlockSize(4)
+     
+         /** train with validation */
+         val model = gbm.fit(train, test)
 
     
 

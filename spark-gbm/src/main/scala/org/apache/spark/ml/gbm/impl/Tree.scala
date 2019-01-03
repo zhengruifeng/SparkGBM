@@ -2,6 +2,7 @@ package org.apache.spark.ml.gbm.impl
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
+
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
@@ -9,6 +10,7 @@ import org.apache.spark.ml.gbm.linalg._
 import org.apache.spark.ml.gbm.rdd.RDDFunctions._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.unsafe.hash.Murmur3_x86_32
 import org.apache.spark.util.random.XORShiftRandom
 
 
@@ -191,18 +193,26 @@ private[gbm] object Tree extends Logging {
 
     updater match {
       case _: SubtractHistogramUpdater[_, _, _, _, _] =>
-        require(boostConf.getSubSampleRateByLevel == 1)
-
+        // Note: param subSampleRateByNode is IGNORED!
         // If we update histograms by subtraction, we should compute histogram on all
         // columns selected by `colSamplingByTree`, since the updated histograms will be
-        // used in next level, and `colSamplingByLevel` in each level perform differently.
+        // used in next level, and `colSamplingByNode` in each level perform differently.
         val histograms = updater.update(binVecBlocks.zip3(treeIdBlocks, nodeIdBlocks, gradBlocks),
           boostConf, bcBoostConf, baseConf, splits, depth)
           .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
 
-        // perform column sampling by level
-        val sampledHistograms = if (boostConf.getColSampleRateByLevel < 1) {
-          histograms.sample(false, boostConf.getColSampleRateByLevel, baseConf.iteration + depth)
+
+        val sampledHistograms = if (boostConf.getColSampleRateByNode < 1) {
+
+          // perform column sampling by node
+
+          val threshold = (boostConf.getColSampleRateByNode * Long.MaxValue).toLong
+          val seed = boostConf.getSeed.toInt * baseConf.iteration + depth
+
+          histograms.filter { case ((treeId, nodeId, colId), _) =>
+            Murmur3_x86_32.hashLong(inc.toLong(colId), seed + int.toInt(treeId) + inn.toInt(nodeId)).abs < threshold
+          }
+
         } else {
           histograms
         }
@@ -212,16 +222,20 @@ private[gbm] object Tree extends Logging {
 
       case _ =>
         // For other types, we do not need to cache intermediate histograms,
-        // so we can merge `colSamplingByLevel` into the BaseConf.
-        val newBaseConfig = BaseConfig.mergeColSamplingByLevel(boostConf, baseConf, depth)
+        // so we can merge `colSamplingByNode` into the BaseConf to perform
+        // tree-wise and node-wise colsample at one time.
+        val newBaseConfig = BaseConfig.mergeColSamplingByNode(boostConf, baseConf, depth)
 
-        // perform instances sampling by level
-        // disable some nodes in histogram computation by setting zero values
-        val sampledNodeIdBlocks = if (boostConf.getSubSampleRateByLevel < 1) {
-          val seed = baseConf.iteration + depth
+
+        val sampledNodeIdBlocks = if (boostConf.getSubSampleRateByNode < 1) {
+
+          // perform instances sampling by node
+          // disable some nodes in histogram computation by setting zero values
+
+          val seed = boostConf.getSeed.toInt * baseConf.iteration + depth
 
           nodeIdBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-            val rate = bcBoostConf.value.getSubSampleRateByLevel
+            val rate = bcBoostConf.value.getSubSampleRateByNode
             val rng = new XORShiftRandom(seed * partId + 1)
 
             iter.map { nodeIdBlock =>

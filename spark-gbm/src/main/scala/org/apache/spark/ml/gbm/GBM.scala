@@ -162,22 +162,22 @@ class GBM extends Logging with Serializable {
   def getRankCols: Set[Int] = boostConf.getRankCols.toSet
 
 
-  /** subsample ratio of the training instance */
-  def setSubSampleRate(value: Double): this.type = {
-    boostConf.setSubSampleRate(value)
+  /** subsample ratio of the training instance when constructing each tree */
+  def setSubSampleRateByTree(value: Double): this.type = {
+    boostConf.setSubSampleRateByTree(value)
     this
   }
 
-  def getSubSampleRate: Double = boostConf.getSubSampleRate
+  def getSubSampleRate: Double = boostConf.getSubSampleRateByTree
 
 
-  /** subsample ratio of the training instance when constructing each level */
-  def setSubSampleRateByLevel(value: Double): this.type = {
-    boostConf.setSubSampleRateByLevel(value)
+  /** subsample ratio of the training instance when constructing each node */
+  def setSubSampleRateByNode(value: Double): this.type = {
+    boostConf.setSubSampleRateByNode(value)
     this
   }
 
-  def getSubSampleRateByLevel: Double = boostConf.getSubSampleRateByLevel
+  def getSubSampleRateByLevel: Double = boostConf.getSubSampleRateByNode
 
 
   /** subsample ratio of columns when constructing each tree */
@@ -189,13 +189,13 @@ class GBM extends Logging with Serializable {
   def getColSampleRateByTree: Double = boostConf.getColSampleRateByTree
 
 
-  /** subsample ratio of columns when constructing each level */
-  def setColSampleRateByLevel(value: Double): this.type = {
-    boostConf.setColSampleRateByLevel(value)
+  /** subsample ratio of columns when constructing each node */
+  def setColSampleRateByNode(value: Double): this.type = {
+    boostConf.setColSampleRateByNode(value)
     this
   }
 
-  def getColSampleRateByLevel: Double = boostConf.getColSampleRateByLevel
+  def getColSampleRateByLevel: Double = boostConf.getColSampleRateByNode
 
 
   /** checkpoint interval */
@@ -277,6 +277,15 @@ class GBM extends Logging with Serializable {
   }
 
   def getGreedierSearch: Boolean = boostConf.getGreedierSearch
+
+
+  /** step size for gradient node boosting */
+  def setStepSizeByNode(value: Double): this.type = {
+    boostConf.setStepSizeByNode(value)
+    this
+  }
+
+  def getStepSizeByNode: Double = boostConf.getStepSizeByNode
   
 
   /** boosting type */

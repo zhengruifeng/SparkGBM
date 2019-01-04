@@ -69,6 +69,10 @@ class TreeModel(val root: Node) extends Serializable {
         counts.mapValues(_.toDouble).toMap
     }
   }
+
+  override def toString: String = {
+    s"TreeModel(depth:$depth, numNodes:$numNodes, numLeaves:$numLeaves, nodes:${root.toString(1)})"
+  }
 }
 
 
@@ -122,9 +126,6 @@ private[gbm] object TreeModel {
 }
 
 
-
-
-
 trait Node extends Serializable {
 
   private[gbm] def index[@spec(Byte, Short, Int) B](bins: Int => B)
@@ -144,6 +145,8 @@ trait Node extends Serializable {
 
   def numLeaves: Int =
     nodeIterator.count(_.isInstanceOf[LeafNode])
+
+  protected[gbm] def toString(nodeId: Int): String
 }
 
 
@@ -218,6 +221,11 @@ class InternalNode(val colId: Int,
       leftNode.internalNodeIterator ++
       rightNode.internalNodeIterator
   }
+
+  override protected def toString(nodeId: Int): String = {
+    val leftNodeId = nodeId << 1
+    s"Node$nodeId -> (${leftNode.toString(leftNodeId)}, ${rightNode.toString(leftNodeId + 1)})"
+  }
 }
 
 class LeafNode(val weight: Float,
@@ -234,6 +242,8 @@ class LeafNode(val weight: Float,
 
   private[gbm] override def predict[@spec(Byte, Short, Int) B](bins: Int => B)
                                                               (implicit inb: Integral[B]): Float = weight
+
+  override protected def toString(nodeId: Int): String = s"Leaf$nodeId"
 }
 
 

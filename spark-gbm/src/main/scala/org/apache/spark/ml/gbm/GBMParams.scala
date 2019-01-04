@@ -605,7 +605,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   /**
     * Method to compute histograms.
-    * (default = "subtract")
+    * (default = "basic")
     *
     * @group param
     */
@@ -615,7 +615,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   def getHistogramComputationType: String = $(histogramComputationType)
 
-  setDefault(histogramComputationType -> "subtract")
+  setDefault(histogramComputationType -> "basic")
 
 
   /**

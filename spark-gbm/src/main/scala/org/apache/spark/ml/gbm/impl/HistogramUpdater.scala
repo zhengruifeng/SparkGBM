@@ -102,7 +102,6 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
                       cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
-    require(boostConf.getSubSampleRateByNode == 1)
 
     val sc = data.sparkContext
     val minNodeId = inn.fromInt(1 << depth)

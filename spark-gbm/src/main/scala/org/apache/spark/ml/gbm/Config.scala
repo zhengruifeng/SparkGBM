@@ -508,7 +508,7 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** method to compute histograms */
-  private var histogramComputationType: String = "subtract"
+  private var histogramComputationType: String = "basic"
 
   private[gbm] def setHistogramComputationType(value: String): this.type = {
     require(Array("basic", "subtract", "vote").contains(value))

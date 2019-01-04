@@ -222,7 +222,7 @@ class InternalNode(val colId: Int,
       rightNode.internalNodeIterator
   }
 
-  override protected def toString(nodeId: Int): String = {
+  override protected[gbm] def toString(nodeId: Int): String = {
     val leftNodeId = nodeId << 1
     s"Node$nodeId -> (${leftNode.toString(leftNodeId)}, ${rightNode.toString(leftNodeId + 1)})"
   }
@@ -243,7 +243,7 @@ class LeafNode(val weight: Float,
   private[gbm] override def predict[@spec(Byte, Short, Int) B](bins: Int => B)
                                                               (implicit inb: Integral[B]): Float = weight
 
-  override protected def toString(nodeId: Int): String = s"Leaf$nodeId"
+  override protected[gbm] def toString(nodeId: Int): String = s"Leaf$nodeId"
 }
 
 

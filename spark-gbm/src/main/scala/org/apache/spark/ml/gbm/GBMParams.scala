@@ -678,18 +678,18 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   setDefault(greedierSearch -> false)
 
 
-  /**
-    * Step size for gradient node boosting.
-    * (default = 0.1)
-    *
-    * @group param
-    */
-  final val stepSizeByNode: DoubleParam =
-    new DoubleParam(this, "stepSizeByNode", "Step size for gradient node boosting.",
-      ParamValidators.inRange(0, 1, true, true))
-
-  def getStepSizeByNode: Double = $(stepSizeByNode)
-
-  setDefault(stepSizeByNode -> 0.1)
+//  /**
+//    * Step size for gradient node boosting.
+//    * (default = 0.1)
+//    *
+//    * @group param
+//    */
+//  final val stepSizeByNode: DoubleParam =
+//    new DoubleParam(this, "stepSizeByNode", "Step size for gradient node boosting.",
+//      ParamValidators.inRange(0, 1, true, true))
+//
+//  def getStepSizeByNode: Double = $(stepSizeByNode)
+//
+//  setDefault(stepSizeByNode -> 0.1)
 }
 

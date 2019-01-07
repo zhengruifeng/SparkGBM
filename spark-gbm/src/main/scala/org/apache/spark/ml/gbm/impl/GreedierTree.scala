@@ -173,7 +173,7 @@ object GreedierTree extends Logging {
     import nuh._
 
     val scaledWeights = rootWeights
-      .map { case (treeId, weight) => (int.fromInt(treeId), neh.fromDouble(weight * boostConf.getStepSizeByNode)) }
+      .map { case (treeId, weight) => (int.fromInt(treeId), neh.fromDouble(weight * boostConf.getStepSize)) }
 
 
     auxilaryBlocks.zipPartitions(treeIdBlocks) {
@@ -221,7 +221,7 @@ object GreedierTree extends Logging {
       case (auxilaryBlockIter, binVecBlockIter, treeIdBlockIter) =>
 
         val boostConf = bcBoostConf.value
-        val stepSize = neh.fromDouble(boostConf.getStepSizeByNode)
+        val stepSize = neh.fromDouble(boostConf.getStepSize)
 
         Utils.zip3(auxilaryBlockIter, binVecBlockIter, treeIdBlockIter)
           .map { case ((nodeIdBlock, nodePredBlock), binVecBlock, treeIdBlock) =>

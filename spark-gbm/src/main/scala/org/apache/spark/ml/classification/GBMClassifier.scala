@@ -160,7 +160,7 @@ class GBMClassifier(override val uid: String)
 
   def setGreedierSearch(value: Boolean): this.type = set(greedierSearch, value)
 
-  def setStepSizeByNode(value: Double): this.type = set(stepSizeByNode, value)
+//  def setStepSizeByNode(value: Double): this.type = set(stepSizeByNode, value)
 
   override def fit(dataset: Dataset[_]): GBMClassificationModel = {
     fit(dataset, None)
@@ -270,7 +270,7 @@ class GBMClassifier(override val uid: String)
       .setSeed($(seed))
       .setParallelismType($(parallelismType))
       .setGreedierSearch($(greedierSearch))
-      .setStepSizeByNode($(stepSizeByNode))
+//      .setStepSizeByNode($(stepSizeByNode))
       .setBoostType($(boostType))
       .setDropRate($(dropRate))
       .setDropSkip($(dropSkip))

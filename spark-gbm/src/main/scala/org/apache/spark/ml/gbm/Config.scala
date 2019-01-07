@@ -564,16 +564,16 @@ class BoostConfig extends Logging with Serializable {
   def getGreedierSearch: Boolean = greedierSearch
 
 
-  /** step size for gradient node boosting */
-  private var stepSizeByNode: Double = 0.1
-
-  private[gbm] def setStepSizeByNode(value: Double): this.type = {
-    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
-    stepSizeByNode = value
-    this
-  }
-
-  def getStepSizeByNode: Double = stepSizeByNode
+//  /** step size for gradient node boosting */
+//  private var stepSizeByNode: Double = 0.1
+//
+//  private[gbm] def setStepSizeByNode(value: Double): this.type = {
+//    require(value >= 0 && value <= 1 && !value.isNaN && !value.isInfinity)
+//    stepSizeByNode = value
+//    this
+//  }
+//
+//  def getStepSizeByNode: Double = stepSizeByNode
 
 
   /** objective function */

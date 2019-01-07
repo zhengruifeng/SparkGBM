@@ -279,13 +279,13 @@ class GBM extends Logging with Serializable {
   def getGreedierSearch: Boolean = boostConf.getGreedierSearch
 
 
-  /** step size for gradient node boosting */
-  def setStepSizeByNode(value: Double): this.type = {
-    boostConf.setStepSizeByNode(value)
-    this
-  }
-
-  def getStepSizeByNode: Double = boostConf.getStepSizeByNode
+//  /** step size for gradient node boosting */
+//  def setStepSizeByNode(value: Double): this.type = {
+//    boostConf.setStepSizeByNode(value)
+//    this
+//  }
+//
+//  def getStepSizeByNode: Double = boostConf.getStepSizeByNode
   
 
   /** boosting type */

@@ -23,21 +23,6 @@ class BoostConfig extends Logging with Serializable {
   private[gbm] def getSparkSession: SparkSession = spark
 
 
-  var realParallelism = -1
-
-  private[gbm] def updateParallelismInfo(): Unit = {
-    realParallelism = if (reduceParallelism > 0) {
-      reduceParallelism.ceil.toInt
-    } else {
-      (spark.sparkContext.defaultParallelism * reduceParallelism.abs).ceil.toInt
-    }
-
-    require(realParallelism > 0)
-  }
-
-  private[gbm] def getRealParallelism: Int = realParallelism
-
-
   /** parallelism type */
   private var parallelismType: String = "data"
 
@@ -754,11 +739,23 @@ class BoostConfig extends Logging with Serializable {
 
   private var numBlocksPerPart: Array[Long] = Array.emptyLongArray
 
+  private var realParallelism = -1
+
   private[gbm] def setNumBlocksPerPart(value: Array[Long]): this.type = {
     require(value.nonEmpty)
+
     numBlocksPerPart = value
+
+    realParallelism = if (reduceParallelism > 0) {
+      reduceParallelism.ceil.toInt
+    } else {
+      (numBlocksPerPart.length * reduceParallelism.abs).ceil.toInt
+    }
+
     this
   }
+
+  private[gbm] def getRealParallelism: Int = realParallelism
 
   private[gbm] def getNumBlocksPerPart: Array[Long] = numBlocksPerPart
 

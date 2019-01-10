@@ -462,7 +462,6 @@ class GBM extends Logging with Serializable {
       boostConf.setSparkSession(
         SparkSession.builder().sparkContext(data.sparkContext).getOrCreate())
     }
-    boostConf.updateParallelismInfo()
 
     if (getParallelismType == "feature") {
       require(data.sparkContext.getCheckpointDir.nonEmpty)

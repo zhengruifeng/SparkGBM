@@ -38,8 +38,6 @@ object VerticalGBM extends Logging {
     val sc = trainBlocks._1.sparkContext
     require(sc.getCheckpointDir.nonEmpty, s"VerticalGBM needs checkpoints to make data sync robust.")
 
-    boostConf.updateVPartInfo()
-
     // train blocks
     val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
     GBM.touchBlocksAndUpdatePartInfo[H](trainWeightBlocks, boostConf, true)
@@ -49,6 +47,7 @@ object VerticalGBM extends Logging {
       GBM.touchBlocksAndUpdatePartInfo(testWeightBlocks, boostConf, false)
     }
 
+    boostConf.updateVPartInfo()
 
     // vertical train sub-binvec blocks
     val subBinVecBlocks = divideBinVecBlocks[C, B](trainBinVecBlocks, boostConf)

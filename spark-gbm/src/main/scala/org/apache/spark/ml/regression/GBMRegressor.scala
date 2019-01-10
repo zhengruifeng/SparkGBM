@@ -156,8 +156,6 @@ class GBMRegressor(override val uid: String) extends
 
   def setGreedierSearch(value: Boolean): this.type = set(greedierSearch, value)
 
-//  def setStepSizeByNode(value: Double): this.type = set(stepSizeByNode, value)
-
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)
   }
@@ -252,7 +250,6 @@ class GBMRegressor(override val uid: String) extends
       .setSeed($(seed))
       .setParallelismType($(parallelismType))
       .setGreedierSearch($(greedierSearch))
-//      .setStepSizeByNode($(stepSizeByNode))
       .setBoostType($(boostType))
       .setDropRate($(dropRate))
       .setDropSkip($(dropSkip))

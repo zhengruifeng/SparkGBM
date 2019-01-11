@@ -177,8 +177,9 @@ object GreedierTree extends Logging {
                                     ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[(ArrayBlock[N], ArrayBlock[H])] = {
     import nuh._
 
-    val scaledWeights = rootWeights
-      .map { case (treeId, weight) => (int.fromInt(treeId), neh.fromDouble(weight * boostConf.getStepSize)) }
+    val scaledWeights = rootWeights.map { case (treeId, weight) =>
+      (int.fromInt(treeId), neh.fromDouble(weight * boostConf.getStepSize))
+    }
 
 
     auxilaryBlocks.zipPartitions(treeIdBlocks) {
@@ -353,11 +354,11 @@ object GreedierTree extends Logging {
   def computeRootWeights[T, H](gradBlocks: RDD[ArrayBlock[H]],
                                treeIdBlocks: RDD[ArrayBlock[T]],
                                boostConf: BoostConfig,
-                               baseConf: TreeConfig)
+                               treeConf: TreeConfig)
                               (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Map[Int, Float] = {
 
-    val seed = boostConf.getSeed.toInt * baseConf.iteration + 1
+    val seed = boostConf.getSeed.toInt * treeConf.iteration + 1
     val rate = boostConf.getColSampleRateByNode
 
     gradBlocks.zipPartitions(treeIdBlocks) {

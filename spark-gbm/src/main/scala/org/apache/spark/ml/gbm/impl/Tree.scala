@@ -26,7 +26,7 @@ private[gbm] object Tree extends Logging {
     *
     * @param splits          best splits
     * @param boostConf       boosting config
-    * @param baseConf        base model config
+    * @param treeConf        base model config
     * @param roots           root nodes of trees, will be updated
     * @param remainingLeaves number of remained leaves of trees, will be updated
     * @param finished        indicates that where a tree has stopped growth, will be updated
@@ -34,7 +34,7 @@ private[gbm] object Tree extends Logging {
     */
   def updateTrees[T, N](splits: Map[(T, N), Split],
                         boostConf: BoostConfig,
-                        baseConf: TreeConfig,
+                        treeConf: TreeConfig,
                         roots: Array[LearningNode],
                         remainingLeaves: Array[Int],
                         finished: Array[Boolean],
@@ -63,13 +63,13 @@ private[gbm] object Tree extends Logging {
 
       updateRoots[T, N](roots, depth, splits, additive)
 
-      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: splitting finished, $numFinished trees" +
+      logInfo(s"Iteration ${treeConf.iteration}: Depth $depth: splitting finished, $numFinished trees" +
         s" growth finished, ${splits.size} leaves split, total gain=${splits.valuesIterator.map(_.gain).sum}.")
 
     } else {
       Iterator.range(0, finished.length)
         .foreach(finished(_) = true)
-      logInfo(s"Iteration ${baseConf.iteration}: Depth $depth: no more splits found, trees growth finished.")
+      logInfo(s"Iteration ${treeConf.iteration}: Depth $depth: no more splits found, trees growth finished.")
     }
   }
 

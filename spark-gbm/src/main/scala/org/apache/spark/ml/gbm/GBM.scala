@@ -1043,7 +1043,6 @@ private[gbm] object GBM extends Logging {
                        (implicit cc: ClassTag[C], inc: Integral[C],
                         cb: ClassTag[B], inb: Integral[B],
                         ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Map[String, Double] = {
-    import RDDFunctions._
 
     if (boostConf.getEvalFunc.isEmpty) {
       return Map.empty

@@ -304,16 +304,15 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       val duplicatedGlobalVoted = globalVoted.allgather(numParts)
         .setName(s"Iter ${treeConf.iteration}, depth: $depth: Global Voted Top2K (AllGathered)")
 
-      localHistograms.zipPartitions(duplicatedGlobalVoted)(f = {
+      localHistograms.zipPartitions(duplicatedGlobalVoted) {
         case (localIter, globalIter) =>
-          val flattenIter = globalIter
-            .flatMap { case ((treeId, nodeId), colIds) =>
-              colIds.iterator.map { colId => ((treeId, nodeId, colId), null) }
-            }
+          val flattenIter = globalIter.flatMap { case ((treeId, nodeId), colIds) =>
+            colIds.iterator.map { colId => ((treeId, nodeId, colId), null) }
+          }
 
           Utils.innerJoinSortedIters(localIter, flattenIter)
             .map { case (ids, hist, _) => (ids, hist) }
-      }).reduceByKey(partitioner, _.plus(_).compress)
+      }.reduceByKey(partitioner, _.plus(_).compress)
     }
   }
 
@@ -336,7 +335,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 private[gbm] object HistogramUpdater extends Logging {
 
   /**
-    * Locally compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    * Locally compute local histogram of nodes
     *
     * @param data         instances appended with (bins, treeIds, nodeIds, grad-hess)
     * @param filterNodeId function to filter nodeIds
@@ -361,7 +360,7 @@ private[gbm] object HistogramUpdater extends Logging {
       None
     }
 
-    data.mapPartitionsWithIndex { case (partId, iter) =>
+    data.mapPartitions { iter =>
       val boostConf = bcBoostConf.value
       val treeConf = bcTreeConf.value
 
@@ -490,7 +489,7 @@ private[gbm] object HistogramUpdater extends Logging {
 
 
   /**
-    * Compute the histogram of root node or the right leaves with nodeId greater than minNodeId
+    * Compute the histogram of nodes
     *
     * @param vdata        instances appended with (bins, treeIds, nodeIds, grad-hess)
     * @param filterNodeId function to filter nodeIds

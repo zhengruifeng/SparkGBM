@@ -188,7 +188,7 @@ private[gbm] object Split extends Logging {
       return None
     }
 
-    val colIsSeq = if (treeConf.colSelectAhead) {
+    val colIsSeq = if (treeConf.colSampledAhead) {
       treeConf.isSeq(colId)
     } else {
       boostConf.isSeq(colId)

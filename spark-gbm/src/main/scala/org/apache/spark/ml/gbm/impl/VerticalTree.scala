@@ -119,8 +119,9 @@ object VerticalTree extends Logging {
 
       // `computeLocalHistograms` will treat an unavailable column on one partititon as
       // all a zero-value column, so we should filter it in `computeHistogramsVertical`.
+      val minNodeId = inn.fromInt(1 << depth)
       val histograms = HistogramUpdater.computeHistogramsVertical[T, N, C, B, H](vdata,
-        boostConf, bcBoostConf, bcTreeConf, extraSelector, (n: N) => true)
+        boostConf, bcBoostConf, bcTreeConf, extraSelector, (n: N) => inn.gteq(n, minNodeId))
         .setName(s"Iter ${treeConf.iteration}, depth $depth: Histograms")
 
 

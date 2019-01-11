@@ -103,7 +103,7 @@ object HorizontalTree extends Logging {
     updater.destroy()
 
 
-    if (treeConf.colSelectAhead) {
+    if (treeConf.colSampledAhead) {
       roots.map(root => TreeModel.createModel(root, treeConf.sortedIndices))
     } else {
       roots.map(TreeModel.createModel)

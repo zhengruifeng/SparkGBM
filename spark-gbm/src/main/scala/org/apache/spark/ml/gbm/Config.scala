@@ -4,9 +4,11 @@ import scala.collection.BitSet
 import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.func._
-import org.apache.spark.ml.gbm.util.{Selector, TrueSelector}
+import org.apache.spark.ml.gbm.linalg._
+import org.apache.spark.ml.gbm.util._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 
@@ -850,7 +852,7 @@ private[gbm] class TreeConfig(val iteration: Int,
                               val catCols: BitSet,
                               val sortedIndices: Array[Int]) extends Serializable {
 
-  private[gbm] def colSelectAhead: Boolean = sortedIndices.nonEmpty
+  private[gbm] def colSampledAhead: Boolean = sortedIndices.nonEmpty
 
   private[gbm] def isCat(colId: Int): Boolean = catCols.contains(colId)
 
@@ -863,7 +865,24 @@ private[gbm] class TreeConfig(val iteration: Int,
       None
     }
 
+  private[gbm] def sliceVector[K, V]()
+                                    (implicit ck: ClassTag[K], ink: Integral[K],
+                                     cv: ClassTag[V], nuv: Numeric[V]): KVVector[K, V] => KVVector[K, V] =
+    if (colSampledAhead) {
+      vector: KVVector[K, V] => vector.slice(sortedIndices)
+    } else {
+      vector: KVVector[K, V] => vector
+    }
 
+
+  private[gbm] def sliceMatrix[K, V]()
+                                    (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                                     cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVMatrix[K, V] => KVMatrix[K, V] =
+    if (colSampledAhead) {
+      matrix: KVMatrix[K, V] => matrix.slice(sortedIndices)
+    } else {
+      matrix: KVMatrix[K, V] => matrix
+    }
 }
 
 
@@ -910,31 +929,29 @@ private[gbm] object TreeConfig extends Serializable {
 
       } else {
 
-        val catCols =
-          if (boostConf.getCatCols.nonEmpty) {
-            val builder = BitSet.newBuilder
-            var i = 0
-            while (i < indices.length) {
-              if (boostConf.isCat(indices(i))) {
-                builder += i
-              }
-              i += 1
+        val catCols = if (boostConf.getCatCols.nonEmpty) {
+          val builder = BitSet.newBuilder
+          var i = 0
+          while (i < indices.length) {
+            if (boostConf.isCat(indices(i))) {
+              builder += i
             }
-            builder.result()
-
-          } else {
-            BitSet.empty
+            i += 1
           }
+          builder.result()
+
+        } else {
+          BitSet.empty
+        }
 
 
-        val colSelector =
-          if (boostConf.getBaseModelParallelism == 1) {
-            TrueSelector(boostConf.getNumTrees)
-          } else {
-            val adjustedColSampleRateByTree = boostConf.getColSampleRateByTree * boostConf.getNumCols / indices.length
-            Selector.create(adjustedColSampleRateByTree, indices.length,
-              boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed + iteration)
-          }
+        val colSelector = if (boostConf.getBaseModelParallelism == 1) {
+          TrueSelector(boostConf.getNumTrees)
+        } else {
+          val adjustedColSampleRateByTree = boostConf.getColSampleRateByTree * boostConf.getNumCols / indices.length
+          Selector.create(adjustedColSampleRateByTree, indices.length,
+            boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed + iteration)
+        }
 
         new TreeConfig(iteration, colSelector, catCols, indices)
       }

@@ -469,21 +469,28 @@ object VerticalGBM extends Logging {
     }
 
 
-    val baseConfig = BaseConfig.create(boostConf, iteration, boostConf.getSeed + iteration)
-    logInfo(s"Iter $iteration: ColSelector ${baseConfig.colSelector}")
+    val treeConfig = TreeConfig.create(boostConf, iteration)
+    logInfo(s"Iter $iteration: ColSelector ${treeConfig.colSelector}")
+
+    val bcTreeConf = sc.broadcast(treeConfig)
+    cleaner.registerBroadcastedObjects(bcTreeConf)
+
 
     // To alleviate memory footprint in caching layer, different schemas of intermediate dataset are designed.
     // Each `prepareTreeInput**` method will internally cache necessary datasets in a compact fashion.
     // These cached datasets are holden in `recoder`, and will be freed after training.
     val trees = boostConf.getSubSampleType match {
       case _ if boostConf.getSubSampleRateByTree == 1 =>
-        buildTreesWithNonSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGradBlock, boostConf, bcBoostConf, baseConfig, cleaner)
+        buildTreesWithNonSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGradBlock,
+          boostConf, bcBoostConf, treeConfig, bcTreeConf, cleaner)
 
       case GBM.Block =>
-        buildTreesWithBlockSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGradBlock, boostConf, bcBoostConf, baseConfig, cleaner)
+        buildTreesWithBlockSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGradBlock,
+          boostConf, bcBoostConf, treeConfig, bcTreeConf, cleaner)
 
       case GBM.Row =>
-        buildTreesWithRowSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGrad, boostConf, bcBoostConf, baseConfig, cleaner)
+        buildTreesWithRowSampling[T, N, C, B, H](weightBlocks, labelBlocks, binVecBlocks, rawBlocks, subBinVecBlocks, computeGrad,
+          boostConf, bcBoostConf, treeConfig, bcTreeConf, cleaner)
     }
 
     cleaner.clear(false)
@@ -501,27 +508,30 @@ object VerticalGBM extends Logging {
                                                computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
                                                boostConf: BoostConfig,
                                                bcBoostConf: Broadcast[BoostConfig],
-                                               baseConf: BaseConfig,
+                                               treeConf: TreeConfig,
+                                               bcTreeConf: Broadcast[TreeConfig],
                                                cleaner: ResourceCleaner)
                                               (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                                cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                                cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                                cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
-    val treeIdBlocks = weightBlocks
-      .mapPartitions { iter =>
-        val blockSize = bcBoostConf.value.getBlockSize
-        val numTrees = bcBoostConf.value.getNumTrees
-        val treeIds = Array.tabulate(numTrees)(int.fromInt)
-        val defaultTreeIdBlock = ArrayBlock.fill(blockSize, treeIds)
-        iter.map { weightBlock =>
-          if (weightBlock.size == blockSize) {
-            defaultTreeIdBlock
-          } else {
-            ArrayBlock.fill(weightBlock.size, treeIds)
-          }
+
+    val treeIdBlocks = weightBlocks.mapPartitions { iter =>
+      val boostConf = bcBoostConf.value
+      val blockSize = boostConf.getBlockSize
+      val numTrees = boostConf.getNumTrees
+      val treeIds = Array.tabulate(numTrees)(int.fromInt)
+      val defaultTreeIdBlock = ArrayBlock.fill(blockSize, treeIds)
+
+      iter.map { weightBlock =>
+        if (weightBlock.size == blockSize) {
+          defaultTreeIdBlock
+        } else {
+          ArrayBlock.fill(weightBlock.size, treeIds)
         }
-      }.setName(s"Iter ${baseConf.iteration}: TreeIds")
+      }
+    }.setName(s"Iter ${treeConf.iteration}: TreeIds")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
@@ -530,10 +540,10 @@ object VerticalGBM extends Logging {
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .map { case (weightBlock, labelBlock, rawBlock) =>
         computeGradBlock(weightBlock, labelBlock, rawBlock)
-      }.setName(s"Iter ${baseConf.iteration}: Grads")
+      }.setName(s"Iter ${treeConf.iteration}: Grads")
 
     val agGradBlocks = gatherByLayer(gradBlocks, null, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter ${baseConf.iteration}: Grads (Gathered)")
+      .setName(s"Iter ${treeConf.iteration}: Grads (Gathered)")
 
 
     val agTreeIdBlocks = agGradBlocks
@@ -549,10 +559,10 @@ object VerticalGBM extends Logging {
             ArrayBlock.fill(gradBlock.size, treeIds)
           }
         }
-      }.setName(s"Iter ${baseConf.iteration}: TreeIds (Gathered)")
+      }.setName(s"Iter ${treeConf.iteration}: TreeIds (Gathered)")
 
     VerticalTree.train[T, N, C, B, H](binVecBlocks, treeIdBlocks, subBinVecBlocks, null,
-      agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, baseConf)
+      agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)
   }
 
 
@@ -564,7 +574,8 @@ object VerticalGBM extends Logging {
                                                  computeGradBlock: (CompactArray[H], ArrayBlock[H], ArrayBlock[H]) => ArrayBlock[H],
                                                  boostConf: BoostConfig,
                                                  bcBoostConf: Broadcast[BoostConfig],
-                                                 baseConf: BaseConfig,
+                                                 treeConf: TreeConfig,
+                                                 bcTreeConf: Broadcast[TreeConfig],
                                                  cleaner: ResourceCleaner)
                                                 (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                                  cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
@@ -574,8 +585,8 @@ object VerticalGBM extends Logging {
     val sc = weightBlocks.sparkContext
 
     val blockSelector = Selector.create(boostConf.getSubSampleRateByTree, boostConf.getNumBlocks,
-      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
-    logInfo(s"Iter ${baseConf.iteration}: BlockSelector $blockSelector")
+      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + treeConf.iteration)
+    logInfo(s"Iter ${treeConf.iteration}: BlockSelector $blockSelector")
 
     val bcBlockSelector = sc.broadcast(blockSelector)
     cleaner.registerBroadcastedObjects(bcBlockSelector)
@@ -583,8 +594,10 @@ object VerticalGBM extends Logging {
 
     val sampledBinVecBlocks = binVecBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
+        val boostConf = bcBoostConf.value
+        var blockId = boostConf.getBlockOffset(partId) - 1
+
         val blockSelector = bcBlockSelector.value
-        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { binVecBlock =>
           blockId += 1
@@ -594,7 +607,7 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"Iter ${baseConf.iteration}: BinVecs (Block-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: BinVecs (Block-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledBinVecBlocks)
@@ -602,9 +615,11 @@ object VerticalGBM extends Logging {
 
     val treeIdBlocks = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
+        val boostConf = bcBoostConf.value
+        val computeTreeIds = boostConf.computeTreeIds[T]()
+        var blockId = boostConf.getBlockOffset(partId) - 1
+
         val blockSelector = bcBlockSelector.value
-        val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
-        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { weightBlock =>
           blockId += 1
@@ -617,7 +632,7 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"Iter ${baseConf.iteration}: TreeIds (Block-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: TreeIds (Block-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
@@ -625,8 +640,10 @@ object VerticalGBM extends Logging {
 
     val sampledBlockIds = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
+        val boostConf = bcBoostConf.value
+        var blockId = boostConf.getBlockOffset(partId) - 1
+
         val blockSelector = bcBlockSelector.value
-        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.flatMap { _ =>
           blockId += 1
@@ -637,21 +654,23 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"Iter ${baseConf.iteration}: BlockIds (Block-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: BlockIds (Block-Sampled)")
 
     sampledBlockIds.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledBlockIds)
 
 
     val agTreeIdBlocks = gatherByLayer(treeIdBlocks, sampledBlockIds, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter ${baseConf.iteration}: TreeIds (Block-Sampled) (Gathered)")
+      .setName(s"Iter ${treeConf.iteration}: TreeIds (Block-Sampled) (Gathered)")
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
       .mapPartitionsWithIndex {
         case (partId, iter) =>
+          val boostConf = bcBoostConf.value
+          var blockId = boostConf.getBlockOffset(partId) - 1
+
           val blockSelector = bcBlockSelector.value
-          var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
           iter.flatMap {
             case (weightBlock, labelBlock, rawBlock) =>
@@ -663,17 +682,19 @@ object VerticalGBM extends Logging {
                 Iterator.empty
               }
           }
-      }.setName(s"Iter ${baseConf.iteration}: Grads (Block-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: Grads (Block-Sampled)")
 
     val agGradBlocks = gatherByLayer(gradBlocks, sampledBlockIds, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter ${baseConf.iteration}: Grads (Block-Sampled) (Gathered)")
+      .setName(s"Iter ${treeConf.iteration}: Grads (Block-Sampled) (Gathered)")
 
 
     val sampledSubBinVecBlocks = subBinVecBlocks
       .mapPartitionsWithIndex { case (vPartId, iter) =>
-        val numVLayers = bcBoostConf.value.getNumVLayers
+        val boostConf = bcBoostConf.value
+        val numVLayers = boostConf.getNumVLayers
+        var blockId = boostConf.getVBlockOffset(vPartId) - numVLayers
+
         val blockSelector = bcBlockSelector.value
-        var blockId = bcBoostConf.value.getVBlockOffset(vPartId) - numVLayers
 
         iter.flatMap { subBinVecBlock =>
           blockId += numVLayers
@@ -683,14 +704,14 @@ object VerticalGBM extends Logging {
             Iterator.empty
           }
         }
-      }.setName(s"Iter ${baseConf.iteration}: SubBinVecs (Block-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: SubBinVecs (Block-Sampled)")
 
     sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledSubBinVecBlocks)
 
 
     VerticalTree.train[T, N, C, B, H](sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks,
-      sampledBlockIds, agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, baseConf)
+      sampledBlockIds, agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)
   }
 
 
@@ -702,7 +723,8 @@ object VerticalGBM extends Logging {
                                                computeGrad: (H, Array[H], Array[H]) => Array[H],
                                                boostConf: BoostConfig,
                                                bcBoostConf: Broadcast[BoostConfig],
-                                               baseConf: BaseConfig,
+                                               treeConf: TreeConfig,
+                                               bcTreeConf: Broadcast[TreeConfig],
                                                cleaner: ResourceCleaner)
                                               (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                                cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
@@ -712,17 +734,19 @@ object VerticalGBM extends Logging {
     val sc = weightBlocks.sparkContext
 
     val rowSelector = Selector.create(boostConf.getSubSampleRateByTree, boostConf.getNumBlocks * boostConf.getBlockSize,
-      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + baseConf.iteration)
-    logInfo(s"Iter ${baseConf.iteration}: RowSelector $rowSelector")
+      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + treeConf.iteration)
+    logInfo(s"Iter ${treeConf.iteration}: RowSelector $rowSelector")
 
     val bcRowSelector = sc.broadcast(rowSelector)
     cleaner.registerBroadcastedObjects(bcRowSelector)
 
     val sampledBinVecBlocks = binVecBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
-        val blockSize = bcBoostConf.value.getBlockSize
+        val boostConf = bcBoostConf.value
+        val blockSize = boostConf.getBlockSize
+        var blockId = boostConf.getBlockOffset(partId) - 1
+
         val rowSelector = bcRowSelector.value
-        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.map { binVecBlock =>
           blockId += 1
@@ -739,7 +763,7 @@ object VerticalGBM extends Logging {
             }
           KVMatrix.build[C, B](iter2)
         }
-      }.setName(s"Iter ${baseConf.iteration}: BinVecs (Row-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: BinVecs (Row-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledBinVecBlocks)
@@ -747,10 +771,12 @@ object VerticalGBM extends Logging {
 
     val treeIdBlocks = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
-        val blockSize = bcBoostConf.value.getBlockSize
-        val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
+        val boostConf = bcBoostConf.value
+        val blockSize = boostConf.getBlockSize
+        val computeTreeIds = boostConf.computeTreeIds[T]()
+        var blockId = boostConf.getBlockOffset(partId) - 1
+
         val rowSelector = bcRowSelector.value
-        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
 
         iter.map { weightBlock =>
           blockId += 1
@@ -769,13 +795,13 @@ object VerticalGBM extends Logging {
             }
           ArrayBlock.build[T](iter2)
         }
-      }.setName(s"Iter ${baseConf.iteration}: TreeIds (Row-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: TreeIds (Row-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
 
     val agTreeIdBlocks = gatherByLayer(treeIdBlocks, null, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter ${baseConf.iteration}: TreeIds (Instance-Sampled) (Gathered)")
+      .setName(s"Iter ${treeConf.iteration}: TreeIds (Instance-Sampled) (Gathered)")
 
 
     val gradBlocks = weightBlocks.zip2(labelBlocks, rawBlocks)
@@ -802,20 +828,22 @@ object VerticalGBM extends Logging {
             }
           ArrayBlock.build[H](iter2)
         }
-      }.setName(s"Iter ${baseConf.iteration}: Grads (Row-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: Grads (Row-Sampled)")
 
 
     val agGradBlocks = gatherByLayer(gradBlocks, null, boostConf, bcBoostConf, cleaner)
-      .setName(s"Iter ${baseConf.iteration}: Grads (Row-Sampled) (AllGathered)")
+      .setName(s"Iter ${treeConf.iteration}: Grads (Row-Sampled) (AllGathered)")
 
 
     val sampledSubBinVecBlocks = subBinVecBlocks
       .mapPartitionsWithIndex { case (vPartId, iter) =>
-        val blockSize = bcBoostConf.value.getBlockSize
-        val numVLayers = bcBoostConf.value.getNumVLayers
+        val boostConf = bcBoostConf.value
+        val blockSize = boostConf.getBlockSize
+        val numVLayers = boostConf.getNumVLayers
+        val localColIds = boostConf.getVCols[C](vPartId)
+        var blockId = boostConf.getVBlockOffset(vPartId) - numVLayers
+
         val rowSelector = bcRowSelector.value
-        val localColIds = bcBoostConf.value.getVCols[C](vPartId)
-        var blockId = bcBoostConf.value.getVBlockOffset(vPartId) - numVLayers
 
         iter.map { subBinVecBlock =>
           blockId += numVLayers
@@ -832,13 +860,13 @@ object VerticalGBM extends Logging {
             }
           KVMatrix.sliceAndBuild[C, B](localColIds, iter2)
         }
-      }.setName(s"Iter ${baseConf.iteration}: SubBinVecs (Row-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: SubBinVecs (Row-Sampled)")
 
     sampledSubBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledSubBinVecBlocks)
 
     VerticalTree.train[T, N, C, B, H](sampledBinVecBlocks, treeIdBlocks, sampledSubBinVecBlocks, null,
-      agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, baseConf)
+      agTreeIdBlocks, agGradBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)
   }
 }
 

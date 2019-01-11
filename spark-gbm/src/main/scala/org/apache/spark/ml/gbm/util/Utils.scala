@@ -710,7 +710,7 @@ private[gbm] object Utils extends Logging {
           classOf[TreeModel],
 
           classOf[BoostConfig],
-          classOf[BaseConfig],
+          classOf[TreeConfig],
 
           classOf[ColDiscretizer],
           classOf[Array[ColDiscretizer]],

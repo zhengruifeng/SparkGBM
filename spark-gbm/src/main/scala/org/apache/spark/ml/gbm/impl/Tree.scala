@@ -34,7 +34,7 @@ private[gbm] object Tree extends Logging {
     */
   def updateTrees[T, N](splits: Map[(T, N), Split],
                         boostConf: BoostConfig,
-                        baseConf: BaseConfig,
+                        baseConf: TreeConfig,
                         roots: Array[LearningNode],
                         remainingLeaves: Array[Int],
                         finished: Array[Boolean],
@@ -181,7 +181,8 @@ private[gbm] object Tree extends Logging {
                                 updater: HistogramUpdater[T, N, C, B, H],
                                 boostConf: BoostConfig,
                                 bcBoostConf: Broadcast[BoostConfig],
-                                baseConf: BaseConfig,
+                                treeConf: TreeConfig,
+                                bcTreeConf: Broadcast[TreeConfig],
                                 splits: Map[(T, N), Split],
                                 remainingLeaves: Array[Int],
                                 depth: Int)
@@ -193,13 +194,13 @@ private[gbm] object Tree extends Logging {
 
     updater match {
       case _: SubtractHistogramUpdater[_, _, _, _, _] =>
-        // Note: param subSampleRateByNode is IGNORED!
+        // Note: param subSampleRateByNode is always IGNORED!
         // If we update histograms by subtraction, we should compute histogram on all
         // columns selected by `colSamplingByTree`, since the updated histograms will be
         // used in next level, and `colSamplingByNode` in each level perform differently.
         val histograms = updater.update(binVecBlocks.zip3(treeIdBlocks, nodeIdBlocks, gradBlocks),
-          boostConf, bcBoostConf, baseConf, splits, depth)
-          .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
+          boostConf, bcBoostConf, treeConf, bcTreeConf, None, splits, depth)
+          .setName(s"Iter ${treeConf.iteration}, depth $depth: Histograms")
 
 
         val sampledHistograms = if (boostConf.getColSampleRateByNode < 1) {
@@ -207,7 +208,7 @@ private[gbm] object Tree extends Logging {
           // perform column sampling by node
 
           val threshold = (boostConf.getColSampleRateByNode * Long.MaxValue).toLong
-          val seed = boostConf.getSeed.toInt * baseConf.iteration + depth
+          val seed = boostConf.getSeed.toInt * treeConf.iteration + depth
 
           histograms.filter { case ((treeId, nodeId, colId), _) =>
             Murmur3_x86_32.hashLong(inc.toLong(colId), seed + int.toInt(treeId) + inn.toInt(nodeId)).abs < threshold
@@ -217,23 +218,33 @@ private[gbm] object Tree extends Logging {
           histograms
         }
 
-        findSplitsImpl[T, N, C, B, H](sampledHistograms, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
+        findSplitsImpl[T, N, C, B, H](sampledHistograms, boostConf, bcBoostConf,
+          treeConf, bcTreeConf, remainingLeaves, depth)
 
 
       case _ =>
         // For other types, we do not need to cache intermediate histograms,
-        // so we can merge `colSamplingByNode` into the BaseConf to perform
-        // tree-wise and node-wise colsample at one time.
-        val newBaseConfig = BaseConfig.mergeColSamplingByNode(boostConf, baseConf, depth)
+        // so we create extra column selector to perform node-wise colsample at one time,
+        // and randomly mask nodeIds in `nodeIdBlocks` to perform node-wise rowsample.
+
+        val seed = boostConf.getSeed.toInt * treeConf.iteration + depth
+
+        val extraSelector = if (boostConf.getColSampleRateByNode < 1) {
+          val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
+
+          // Note that different tree in one base model DO NOT share same col-sampler.
+          Some(Selector.create(boostConf.getColSampleRateByNode, numCols,
+            boostConf.getNumTrees, 1, seed))
+
+        } else {
+          None
+        }
 
 
         val sampledNodeIdBlocks = if (boostConf.getSubSampleRateByNode < 1) {
 
           // perform instances sampling by node
-          // disable some nodes in histogram computation by setting zero values
-
-          val seed = boostConf.getSeed.toInt * baseConf.iteration + depth
-
+          // randomly mask some nodes in histogram computation by setting zero values
           nodeIdBlocks.mapPartitionsWithIndex { case (partId, iter) =>
             val rate = bcBoostConf.value.getSubSampleRateByNode
             val rng = new XORShiftRandom(seed * partId + 1)
@@ -261,10 +272,11 @@ private[gbm] object Tree extends Logging {
         }
 
         val histograms = updater.update(binVecBlocks.zip3(treeIdBlocks, sampledNodeIdBlocks, gradBlocks),
-          boostConf, bcBoostConf, newBaseConfig, splits, depth)
-          .setName(s"Iter ${baseConf.iteration}, depth $depth: Histograms")
+          boostConf, bcBoostConf, treeConf, bcTreeConf, extraSelector, splits, depth)
+          .setName(s"Iter ${treeConf.iteration}, depth $depth: Histograms")
 
-        findSplitsImpl[T, N, C, B, H](histograms, boostConf, bcBoostConf, baseConf, remainingLeaves, depth)
+        findSplitsImpl[T, N, C, B, H](histograms, boostConf, bcBoostConf,
+          treeConf, bcTreeConf, remainingLeaves, depth)
     }
   }
 
@@ -278,7 +290,8 @@ private[gbm] object Tree extends Logging {
   def findSplitsImpl[T, N, C, B, H](histograms: RDD[((T, N, C), KVVector[B, H])],
                                     boostConf: BoostConfig,
                                     bcBoostConf: Broadcast[BoostConfig],
-                                    baseConf: BaseConfig,
+                                    treeConf: TreeConfig,
+                                    bcTreeConf: Broadcast[TreeConfig],
                                     remainingLeaves: Array[Int],
                                     depth: Int)
                                    (implicit ct: ClassTag[T], int: Integral[T],
@@ -293,6 +306,7 @@ private[gbm] object Tree extends Logging {
     val (splits, Array(numTrials, numSplits, numDenses, sumSize, nnz)) =
       histograms.mapPartitionsWithIndex { case (partId, iter) =>
         val boostConf = bcBoostConf.value
+        val treeConf = bcTreeConf.value
 
         val splits = mutable.OpenHashMap.empty[(T, N), Split]
 
@@ -311,7 +325,7 @@ private[gbm] object Tree extends Logging {
             numDenses += 1
           }
 
-          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, baseConf)
+          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, treeConf)
             .foreach { split =>
               numSplits += 1
               val prevSplit = splits.get((treeId, nodeId))

@@ -100,7 +100,7 @@ private[gbm] object Selector extends Serializable {
     */
   def union(selectors: Selector*): Selector = {
     require(selectors.nonEmpty)
-    require(selectors.map(_.size).distinct.size == 1)
+    require(selectors.map(_.size).distinct.size == 1, s"selectors: ${selectors.mkString(",")}")
 
     val nonTrues = selectors.flatMap {
       case s: TrueSelector => Iterator.empty

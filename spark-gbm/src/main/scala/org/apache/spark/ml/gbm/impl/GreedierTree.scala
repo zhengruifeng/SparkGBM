@@ -18,7 +18,7 @@ object GreedierTree extends Logging {
   /**
     *
     * @param boostConf boosting configure
-    * @param baseConf  trees-growth configure
+    * @param treeConf  trees-growth configure
     * @return tree models
     */
   def train[T, N, C, B, H](weightBlocks: RDD[CompactArray[H]],
@@ -28,7 +28,8 @@ object GreedierTree extends Logging {
                            treeIdBlocks: RDD[ArrayBlock[T]],
                            boostConf: BoostConfig,
                            bcBoostConf: Broadcast[BoostConfig],
-                           baseConf: BaseConfig)
+                           treeConf: TreeConfig,
+                           bcTreeConf: Broadcast[TreeConfig])
                           (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                            cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                            cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
@@ -36,7 +37,7 @@ object GreedierTree extends Logging {
                            ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val tic0 = System.nanoTime()
     val sc = binVecBlocks.sparkContext
-    logInfo(s"Iteration ${baseConf.iteration}: trees growth start")
+    logInfo(s"Iteration ${treeConf.iteration}: trees growth start")
 
     var auxilaryBlocks = initializeAuxilaryBlocks[T, N, H](rawPredBlocks, treeIdBlocks)
 
@@ -47,7 +48,7 @@ object GreedierTree extends Logging {
 
     val gradBlocks = computeGradBlocks[T, N, C, B, H](auxilaryBlocks, weightBlocks, labelBlocks, bcBoostConf)
 
-    val rootWeights = computeRootWeights[T, H](gradBlocks, treeIdBlocks, boostConf, baseConf)
+    val rootWeights = computeRootWeights[T, H](gradBlocks, treeIdBlocks, boostConf, treeConf)
     val roots = Array.tabulate(boostConf.getNumTrees)(i => LearningNode.create(1, rootWeights.getOrElse(i, 0.0F)))
 
 
@@ -69,7 +70,7 @@ object GreedierTree extends Logging {
     while (finished.contains(false) && depth < boostConf.getMaxDepth) {
       val tic1 = System.nanoTime()
 
-      logInfo(s"Iter ${baseConf.iteration}, Depth $depth: splitting start")
+      logInfo(s"Iter ${treeConf.iteration}, Depth $depth: splitting start")
 
 
       if (depth == 0) {
@@ -77,24 +78,24 @@ object GreedierTree extends Logging {
       } else {
         auxilaryBlocks = updateAuxilaryBlocks[T, N, C, B, H](auxilaryBlocks, binVecBlocks, treeIdBlocks, bcBoostConf, splits)
       }
-      auxilaryBlocks.setName(s"Iter ${baseConf.iteration}, depth $depth: NodeIds & NodePreds")
+      auxilaryBlocks.setName(s"Iter ${treeConf.iteration}, depth $depth: NodeIds & NodePreds")
       auxilaryBlocksCheckpointer.update(auxilaryBlocks)
 
 
       val nodeIdBlocks = auxilaryBlocks.map(_._1)
-        .setName(s"Iter ${baseConf.iteration}, depth $depth: NodeIds")
+        .setName(s"Iter ${treeConf.iteration}, depth $depth: NodeIds")
 
       val gradBlocks = computeGradBlocks[T, N, C, B, H](auxilaryBlocks, weightBlocks, labelBlocks, bcBoostConf)
-        .setName(s"Iter ${baseConf.iteration}, depth $depth: Grads")
+        .setName(s"Iter ${treeConf.iteration}, depth $depth: Grads")
 
 
       splits = Tree.findSplits[T, N, C, B, H](binVecBlocks, treeIdBlocks, nodeIdBlocks, gradBlocks, updater,
-        boostConf, bcBoostConf, baseConf, splits, remainingLeaves, depth)
+        boostConf, bcBoostConf, treeConf, bcTreeConf, splits, remainingLeaves, depth)
 
 
       // update trees
-      Tree.updateTrees[T, N](splits, boostConf, baseConf, roots, remainingLeaves, finished, depth, true)
-      logInfo(s"Iter ${baseConf.iteration}, Depth $depth: growth finished," +
+      Tree.updateTrees[T, N](splits, boostConf, treeConf, roots, remainingLeaves, finished, depth, true)
+      logInfo(s"Iter ${treeConf.iteration}, Depth $depth: growth finished," +
         s" duration ${(System.nanoTime() - tic1) / 1e9} seconds")
 
       updater.clear()
@@ -103,10 +104,10 @@ object GreedierTree extends Logging {
 
 
     if (depth == boostConf.getMaxDepth) {
-      logInfo(s"Iter ${baseConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
+      logInfo(s"Iter ${treeConf.iteration}: maxDepth=${boostConf.getMaxDepth} reached, " +
         s"trees growth finished, duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     } else {
-      logInfo(s"Iter ${baseConf.iteration}: trees growth finished, " +
+      logInfo(s"Iter ${treeConf.iteration}: trees growth finished, " +
         s"duration ${(System.nanoTime() - tic0) / 1e9} seconds")
     }
 
@@ -115,7 +116,11 @@ object GreedierTree extends Logging {
     updater.destroy()
 
 
-    roots.map(TreeModel.createModel)
+    if (treeConf.colSelectAhead) {
+      roots.map(root => TreeModel.createModel(root, treeConf.sortedIndices))
+    } else {
+      roots.map(TreeModel.createModel)
+    }
   }
 
 
@@ -348,7 +353,7 @@ object GreedierTree extends Logging {
   def computeRootWeights[T, H](gradBlocks: RDD[ArrayBlock[H]],
                                treeIdBlocks: RDD[ArrayBlock[T]],
                                boostConf: BoostConfig,
-                               baseConf: BaseConfig)
+                               baseConf: TreeConfig)
                               (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Map[Int, Float] = {
 

@@ -134,13 +134,13 @@ private[gbm] object Split extends Logging {
     * @param colId     feature index
     * @param hist      histogram
     * @param boostConf boosting config info
-    * @param baseConf  tree config info
+    * @param treeConf  tree config info
     * @return best split if any
     */
   def split[@spec(Float, Double) H](colId: Int,
                                     hist: Array[H],
                                     boostConf: BoostConfig,
-                                    baseConf: BaseConfig)
+                                    treeConf: TreeConfig)
                                    (implicit nuh: Numeric[H]): Option[Split] = {
     require(hist.length % 2 == 0)
 
@@ -188,7 +188,13 @@ private[gbm] object Split extends Logging {
       return None
     }
 
-    val split = if (boostConf.isSeq(colId)) {
+    val colIsSeq = if (treeConf.colSelectAhead) {
+      treeConf.isSeq(colId)
+    } else {
+      boostConf.isSeq(colId)
+    }
+
+    val split = if (colIsSeq) {
       splitSeq(colId, gradSeq, hessSeq, boostConf)
     } else if (nnz <= boostConf.getMaxBruteBins) {
       splitSetBrute(colId, gradSeq, hessSeq, boostConf)

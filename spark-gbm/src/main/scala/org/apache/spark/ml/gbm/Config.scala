@@ -1,11 +1,12 @@
 package org.apache.spark.ml.gbm
 
 import scala.collection.BitSet
+import scala.collection.mutable
 import scala.reflect.ClassTag
-
+import scala.util.Random
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.func._
-import org.apache.spark.ml.gbm.util.Selector
+import org.apache.spark.ml.gbm.util.{Selector, TrueSelector}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 
@@ -844,40 +845,99 @@ class BoostConfig extends Logging with Serializable {
 }
 
 
-private[gbm] class BaseConfig(val iteration: Int,
-                              val colSelector: Selector) extends Serializable
+private[gbm] class TreeConfig(val iteration: Int,
+                              val colSelector: Selector,
+                              val catCols: BitSet,
+                              val sortedIndices: Array[Int]) extends Serializable {
+
+  private[gbm] def colSelectAhead: Boolean = sortedIndices.nonEmpty
+
+  private[gbm] def isCat(colId: Int): Boolean = catCols.contains(colId)
+
+  private[gbm] def isSeq(colId: Int): Boolean = !isCat(colId)
+
+  private[gbm] def getNumCols: Option[Int] =
+    if (sortedIndices.nonEmpty) {
+      Some(sortedIndices.length)
+    } else {
+      None
+    }
 
 
-private[gbm] object BaseConfig extends Serializable {
+}
+
+
+private[gbm] object TreeConfig extends Serializable {
 
 
   def create(boostConf: BoostConfig,
-             iteration: Int,
-             seed: Long): BaseConfig = {
+             iteration: Int): TreeConfig = {
 
     val colSelector = Selector.create(boostConf.getColSampleRateByTree, boostConf.getNumCols,
-      boostConf.getBaseModelParallelism, boostConf.getRawSize, seed)
+      boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed + iteration)
 
-
-    new BaseConfig(iteration, colSelector)
+    new TreeConfig(iteration, colSelector, BitSet.empty, Array.emptyIntArray)
   }
 
 
-  /**
-    * The default `BaseConfig` passed in `Tree` contains selector for tree-wise column sampling.
-    * Call this function to merge node-wise column sampling if needed.
-    */
-  def mergeColSamplingByNode(boostConf: BoostConfig,
-                             baseConf: BaseConfig,
-                             depth: Int): BaseConfig = {
+  def createWithAdjustedColSampling(boostConf: BoostConfig,
+                                    iteration: Int): TreeConfig = {
 
-    if (boostConf.getColSampleRateByNode == 1) {
-      baseConf
+    if (boostConf.getColSampleRateByTree == 1) {
+      new TreeConfig(iteration, TrueSelector(boostConf.getNumTrees), BitSet.empty, Array.emptyIntArray)
+
     } else {
-      val nodeSelector = Selector.create(boostConf.getColSampleRateByNode, boostConf.getNumCols,
-        boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed * baseConf.iteration + depth)
-      val unionSelector = Selector.union(baseConf.colSelector, nodeSelector)
-      new BaseConfig(baseConf.iteration, unionSelector)
+
+      val rng = new Random(boostConf.getSeed + iteration)
+
+      val indiceBuilder = mutable.ArrayBuilder.make[Int]
+
+      var i = 0
+      while (i < boostConf.getNumCols) {
+        if (Iterator.range(0, boostConf.getBaseModelParallelism)
+          .exists(_ => rng.nextDouble < boostConf.getColSampleRateByTree)) {
+          indiceBuilder += i
+        }
+
+        i += 1
+      }
+
+      val indices = indiceBuilder.result().sorted
+      require(indices.nonEmpty)
+
+      if (indices.length == boostConf.getNumCols) {
+        new TreeConfig(iteration, TrueSelector(boostConf.getNumTrees), BitSet.empty, Array.emptyIntArray)
+
+      } else {
+
+        val catCols =
+          if (boostConf.getCatCols.nonEmpty) {
+            val builder = BitSet.newBuilder
+            var i = 0
+            while (i < indices.length) {
+              if (boostConf.isCat(indices(i))) {
+                builder += i
+              }
+              i += 1
+            }
+            builder.result()
+
+          } else {
+            BitSet.empty
+          }
+
+
+        val colSelector =
+          if (boostConf.getBaseModelParallelism == 1) {
+            TrueSelector(boostConf.getNumTrees)
+          } else {
+            val adjustedColSampleRateByTree = boostConf.getColSampleRateByTree * boostConf.getNumCols / indices.length
+            Selector.create(adjustedColSampleRateByTree, indices.length,
+              boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed + iteration)
+          }
+
+        new TreeConfig(iteration, colSelector, catCols, indices)
+      }
     }
   }
 }

@@ -289,6 +289,50 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
           }
     }
   }
+
+
+  def slice(sortedIndices: Array[Int])
+           (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+            cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): KVMatrix[K, V] = {
+    require(sortedIndices.nonEmpty)
+    require(sortedIndices.distinct.length == sortedIndices.length)
+    require(sortedIndices.forall(i => i >= 0 && i < vectorSize))
+
+
+    mode match {
+
+      case 2 =>
+        // all vectors are dense
+
+        val slicedValues = Array.ofDim[V](sortedIndices.length * size)
+
+        var vi = 0
+        var si = 0
+        var i = 0
+        var j = 0
+
+        while (i < size) {
+          j = 0
+          while (j < sortedIndices.length) {
+            slicedValues(si) = values(vi + sortedIndices(j))
+            si += 1
+            j += 1
+          }
+
+          vi += vectorSize
+          i += 1
+        }
+
+        new KVMatrix[K, V](nek.emptyArray, slicedValues, Array(2, size, sortedIndices.length))
+
+
+      case _ =>
+        // TODO: specialize impl with mode 3 and 4
+
+        val slicedIter = iterator.map(_.slice(sortedIndices))
+        KVMatrix.build[K, V](slicedIter)
+    }
+  }
 }
 
 

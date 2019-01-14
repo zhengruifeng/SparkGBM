@@ -323,22 +323,27 @@ object GreedierTree extends Logging {
 
                 } else {
 
-                  var j = 0
-                  nodePred.grouped(rawSize)
-                    .foreach { pred =>
-                      val score = objFunc.transform(neh.toDouble(pred))
-                      val (grad, hess) = objFunc.compute(neh.toDouble(label), score)
-                      require(grad.length == rawSize && hess.length == rawSize)
+                  val predIter = if (rawSize == 1) {
+                    nodePred.iterator.map(p => Array(p))
+                  } else {
+                    nodePred.grouped(rawSize)
+                  }
 
-                      var i = 0
-                      while (i < rawSize) {
-                        gradArr(j) = neh.fromDouble(grad(i)) * weight
-                        j += 1
-                        gradArr(j) = neh.fromDouble(hess(i)) * weight
-                        j += 1
-                        i += 1
-                      }
+                  var j = 0
+                  predIter.foreach { pred =>
+                    val score = objFunc.transform(neh.toDouble(pred))
+                    val (grad, hess) = objFunc.compute(neh.toDouble(label), score)
+                    require(grad.length == rawSize && hess.length == rawSize)
+
+                    var i = 0
+                    while (i < rawSize) {
+                      gradArr(j) = neh.fromDouble(grad(i)) * weight
+                      j += 1
+                      gradArr(j) = neh.fromDouble(hess(i)) * weight
+                      j += 1
+                      i += 1
                     }
+                  }
                 }
 
                 gradArr

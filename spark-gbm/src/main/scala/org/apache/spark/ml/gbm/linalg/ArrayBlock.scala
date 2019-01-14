@@ -60,7 +60,11 @@ class ArrayBlock[@spec(Byte, Short, Int, Long, Float, Double) V](val values: Arr
       }
 
     } else if (flag > 0) {
-      values.grouped(flag)
+      if (flag == 1) {
+        values.iterator.map(v => Array(v))
+      } else {
+        values.grouped(flag)
+      }
 
     } else {
       // IMPORTANT!

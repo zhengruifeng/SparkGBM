@@ -291,7 +291,6 @@ object GreedierTree extends Logging {
 
     auxilaryBlocks.zipPartitions(weightBlocks, labelBlocks) {
       case (auxilaryBlockIter, weightBlockIter, labelBlockIter) =>
-
         val boostConf = bcBoostConf.value
         val rawSize = boostConf.getRawSize
         val objFunc = boostConf.getObjFunc

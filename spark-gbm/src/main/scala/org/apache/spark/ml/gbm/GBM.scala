@@ -359,12 +359,12 @@ class GBM extends Logging with Serializable {
 
 
   /** number of base models in one round */
-  def setBaseModelParallelism(value: Int): this.type = {
-    boostConf.setBaseModelParallelism(value)
+  def setForestSize(value: Int): this.type = {
+    boostConf.setForestSize(value)
     this
   }
 
-  def getBaseModelParallelism: Int = boostConf.getBaseModelParallelism
+  def getForestSize: Int = boostConf.getForestSize
 
 
   /** method of data sampling */

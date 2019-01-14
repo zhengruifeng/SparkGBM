@@ -665,24 +665,24 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** number of base models in one round */
-  private var baseModelParallelism: Int = 1
+  private var forestSize: Int = 1
 
-  private[gbm] def setBaseModelParallelism(value: Int): this.type = {
+  private[gbm] def setForestSize(value: Int): this.type = {
     require(value > 0)
-    baseModelParallelism = value
+    forestSize = value
     this
   }
 
-  def updateBaseModelParallelism(value: Int): this.type = {
-    logInfo(s"numParallelBaseModels was changed from $baseModelParallelism to $value")
-    setBaseModelParallelism(value)
+  def updateForestSize(value: Int): this.type = {
+    logInfo(s"forestSize was changed from $forestSize to $value")
+    setForestSize(value)
   }
 
-  def getBaseModelParallelism: Int = baseModelParallelism
+  def getForestSize: Int = forestSize
 
 
   /** number of trees in one round */
-  def getNumTrees: Int = getBaseModelParallelism * getRawSize
+  def getNumTrees: Int = getForestSize * getRawSize
 
 
   /** numerical precision */
@@ -893,7 +893,7 @@ private[gbm] object TreeConfig extends Serializable {
              iteration: Int): TreeConfig = {
 
     val colSelector = Selector.create(boostConf.getColSampleRateByTree, boostConf.getNumCols,
-      boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed + iteration)
+      boostConf.getForestSize, boostConf.getRawSize, boostConf.getSeed + iteration)
 
     new TreeConfig(iteration, colSelector, BitSet.empty, Array.emptyIntArray)
   }
@@ -913,7 +913,7 @@ private[gbm] object TreeConfig extends Serializable {
 
       var i = 0
       while (i < boostConf.getNumCols) {
-        if (Iterator.range(0, boostConf.getBaseModelParallelism)
+        if (Iterator.range(0, boostConf.getForestSize)
           .exists(_ => rng.nextDouble < boostConf.getColSampleRateByTree)) {
           indiceBuilder += i
         }
@@ -945,12 +945,12 @@ private[gbm] object TreeConfig extends Serializable {
         }
 
 
-        val colSelector = if (boostConf.getBaseModelParallelism == 1) {
+        val colSelector = if (boostConf.getForestSize == 1) {
           TrueSelector(boostConf.getNumTrees)
         } else {
           val adjustedColSampleRateByTree = boostConf.getColSampleRateByTree * boostConf.getNumCols / indices.length
           Selector.create(adjustedColSampleRateByTree, indices.length,
-            boostConf.getBaseModelParallelism, boostConf.getRawSize, boostConf.getSeed + iteration)
+            boostConf.getForestSize, boostConf.getRawSize, boostConf.getSeed + iteration)
         }
 
         new TreeConfig(iteration, colSelector, catCols, indices)

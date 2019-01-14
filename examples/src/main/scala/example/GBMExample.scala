@@ -96,7 +96,7 @@ object GBMExample {
       .setObjFunc(obj)
       .setEvalFunc(Array(r2Eval, maeEval, new R2Eval))
       .setCallbackFunc(Array(lrUpdater, recoder))
-      .setBaseModelParallelism(3)
+      .setForestSize(3)
       .setBlockSize(4)
 
     /** train with validation */

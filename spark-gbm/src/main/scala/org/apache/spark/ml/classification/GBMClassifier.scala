@@ -152,7 +152,7 @@ class GBMClassifier(override val uid: String)
 
   def setHistogramComputationType(value: String): this.type = set(histogramComputationType, value)
 
-  def setBaseModelParallelism(value: Int): this.type = set(baseModelParallelism, value)
+  def setForestSize(value: Int): this.type = set(forestSize, value)
 
   def setBlockSize(value: Int): this.type = set(blockSize, value)
 
@@ -281,7 +281,7 @@ class GBMClassifier(override val uid: String)
       .setReduceParallelism($(reduceParallelism))
       .setSubSampleType($(subSampleType))
       .setHistogramComputationType($(histogramComputationType))
-      .setBaseModelParallelism($(baseModelParallelism))
+      .setForestSize($(forestSize))
       .setBlockSize($(blockSize))
       .setInitialModel(initialModel)
 

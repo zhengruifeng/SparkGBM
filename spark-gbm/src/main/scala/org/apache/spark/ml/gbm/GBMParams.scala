@@ -624,13 +624,13 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val baseModelParallelism: IntParam =
-    new IntParam(this, "baseModelParallelism", "Number of base models in one round.",
+  final val forestSize: IntParam =
+    new IntParam(this, "forestSize", "Number of base models in one round.",
       ParamValidators.gt(0))
 
-  def getBaseModelParallelism: Int = $(baseModelParallelism)
+  def getForestSize: Int = $(forestSize)
 
-  setDefault(baseModelParallelism -> 1)
+  setDefault(forestSize -> 1)
 
 
   /**

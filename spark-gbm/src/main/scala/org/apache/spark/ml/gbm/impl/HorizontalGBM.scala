@@ -214,7 +214,7 @@ object HorizontalGBM extends Logging {
                           ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     import Utils._
 
-    val numTrees = boostConf.getBaseModelParallelism * boostConf.getRawSize
+    val numTrees = boostConf.getForestSize * boostConf.getRawSize
     logInfo(s"Iteration $iteration: Starting to create next $numTrees trees")
 
     val treeIdType = Utils.getTypeByRange(numTrees)
@@ -394,7 +394,7 @@ object HorizontalGBM extends Logging {
     val sc = weightBlocks.sparkContext
 
     val otherSelector = Selector.create(boostConf.getOtherSampleRate, boostConf.getNumBlocks * boostConf.getBlockSize,
-      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + treeConf.iteration)
+      boostConf.getForestSize, 1, boostConf.getSeed + treeConf.iteration)
     logInfo(s"Iter ${treeConf.iteration}: OtherSelector $otherSelector")
 
     val bcOtherSelector = sc.broadcast(otherSelector)
@@ -433,27 +433,28 @@ object HorizontalGBM extends Logging {
     val tic = System.nanoTime()
     logInfo(s"Iter ${treeConf.iteration}: start to compute the threshold of top gradients")
 
-    val summary = gradNormBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-      var s = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold,
-        QuantileSummaries.defaultRelativeError)
+    val summary = gradNormBlocks
+      .mapPartitionsWithIndex { case (partId, iter) =>
+        var s = new QuantileSummaries(QuantileSummaries.defaultCompressThreshold,
+          QuantileSummaries.defaultRelativeError)
 
-      val gradNormIter = iter.flatMap(_._2.iterator).map(nuh.toDouble)
-      while (gradNormIter.hasNext) {
-        s = s.insert(gradNormIter.next())
-      }
+        val gradNormIter = iter.flatMap(_._2.iterator).map(nuh.toDouble)
+        while (gradNormIter.hasNext) {
+          s = s.insert(gradNormIter.next())
+        }
 
-      s = s.compress
+        s = s.compress
 
-      if (s.count > 0) {
-        Iterator.single(s)
-      } else if (partId == 0) {
-        // avoid `treeReduce` on empty RDD
-        Iterator.single(s)
-      } else {
-        Iterator.empty
-      }
+        if (s.count > 0) {
+          Iterator.single(s)
+        } else if (partId == 0) {
+          // avoid `treeReduce` on empty RDD
+          Iterator.single(s)
+        } else {
+          Iterator.empty
+        }
 
-    }.treeReduce(f = _.merge(_).compress,
+      }.treeReduce(f = _.merge(_).compress,
       depth = boostConf.getAggregationDepth)
 
     val threshold = neh.fromDouble(summary.query(1 - boostConf.getTopRate).get)
@@ -643,41 +644,42 @@ object HorizontalGBM extends Logging {
 
     } else {
 
-      val gradBlocks = gradNormBlocks.mapPartitionsWithIndex { case (partId, iter) =>
+      val gradBlocks = gradNormBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
 
-        val boostConf = bcBoostConf.value
-        val blockSize = boostConf.getBlockSize
-        val weightScale = neh.fromDouble(boostConf.getOtherReweight)
-        var blockId = boostConf.getBlockOffset(partId) - 1
+          val boostConf = bcBoostConf.value
+          val blockSize = boostConf.getBlockSize
+          val weightScale = neh.fromDouble(boostConf.getOtherReweight)
+          var blockId = boostConf.getBlockOffset(partId) - 1
 
-        val otherSelector = bcOtherSelector.value
+          val otherSelector = bcOtherSelector.value
 
-        iter.flatMap { case (gradBlock, normBlock) =>
-          require(gradBlock.size == normBlock.length)
-          blockId += 1
-          var rowId = blockId * blockSize - 1
+          iter.flatMap { case (gradBlock, normBlock) =>
+            require(gradBlock.size == normBlock.length)
+            blockId += 1
+            var rowId = blockId * blockSize - 1
 
-          Utils.zip2(gradBlock.iterator, normBlock.iterator)
-            .flatMap { case (grad, norm) =>
-              rowId += 1
-              if (norm >= threshold) {
-                Iterator.single(grad)
+            Utils.zip2(gradBlock.iterator, normBlock.iterator)
+              .flatMap { case (grad, norm) =>
+                rowId += 1
+                if (norm >= threshold) {
+                  Iterator.single(grad)
 
-              } else if (otherSelector.contains[Long](rowId)) {
-                var i = 0
-                while (i < grad.length) {
-                  grad(i) *= weightScale
-                  i += 1
+                } else if (otherSelector.contains[Long](rowId)) {
+                  var i = 0
+                  while (i < grad.length) {
+                    grad(i) *= weightScale
+                    i += 1
+                  }
+                  Iterator.single(grad)
+
+                } else {
+                  Iterator.empty
                 }
-                Iterator.single(grad)
-
-              } else {
-                Iterator.empty
               }
-            }
-        }.grouped(blockSize)
-          .map(ArrayBlock.build[H])
-      }.setName(s"Iter ${treeConf.iteration}: Grads (GOSS)")
+          }.grouped(blockSize)
+            .map(ArrayBlock.build[H])
+        }.setName(s"Iter ${treeConf.iteration}: Grads (GOSS)")
 
 
       gradBlocks.persist(boostConf.getStorageLevel1)
@@ -707,32 +709,33 @@ object HorizontalGBM extends Logging {
                                                cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                                ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
 
-    val treeIdBlocks = weightBlocks.mapPartitions { iter =>
+    val treeIdBlocks = weightBlocks
+      .mapPartitions { iter =>
+        val boostConf = bcBoostConf.value
+        val blockSize = boostConf.getBlockSize
+        val numTrees = boostConf.getNumTrees
+        val treeIds = Array.tabulate(numTrees)(int.fromInt)
+        val defaultTreeIdBlock = ArrayBlock.fill(blockSize, treeIds)
 
-      val boostConf = bcBoostConf.value
-      val blockSize = boostConf.getBlockSize
-      val numTrees = boostConf.getNumTrees
-      val treeIds = Array.tabulate(numTrees)(int.fromInt)
-      val defaultTreeIdBlock = ArrayBlock.fill(blockSize, treeIds)
-
-      iter.map { weightBlock =>
-        if (weightBlock.size == blockSize) {
-          defaultTreeIdBlock
-        } else {
-          ArrayBlock.fill(weightBlock.size, treeIds)
+        iter.map { weightBlock =>
+          if (weightBlock.size == blockSize) {
+            defaultTreeIdBlock
+          } else {
+            ArrayBlock.fill(weightBlock.size, treeIds)
+          }
         }
-      }
-    }.setName(s"Iter ${treeConf.iteration}: TreeIds")
+      }.setName(s"Iter ${treeConf.iteration}: TreeIds")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
 
 
     val sampledBinVecBlocks = if (treeConf.colSampledAhead) {
-      val colSampled = binVecBlocks.mapPartitions { iter =>
-        val treeConf = bcTreeConf.value
-        iter.map(_.slice(treeConf.sortedIndices))
-      }
+      val colSampled = binVecBlocks
+        .mapPartitions { iter =>
+          val treeConf = bcTreeConf.value
+          iter.map(_.slice(treeConf.sortedIndices))
+        }
 
       colSampled.persist(boostConf.getStorageLevel1)
       cleaner.registerCachedRDDs(colSampled)
@@ -751,8 +754,8 @@ object HorizontalGBM extends Logging {
 
         case _ =>
           rawBlocks.map { rawBlock =>
-            val iter2 = rawBlock.iterator.map(computeRaw)
-            ArrayBlock.build[H](iter2)
+            val iter = rawBlock.iterator.map(computeRaw)
+            ArrayBlock.build[H](iter)
           }
       }
       rawPredBlocks.setName(s"Iter ${treeConf.iteration}: RawPreds")
@@ -799,7 +802,7 @@ object HorizontalGBM extends Logging {
     val sc = weightBlocks.sparkContext
 
     val partSelector = Selector.create(boostConf.getSubSampleRateByTree, weightBlocks.getNumPartitions,
-      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + treeConf.iteration)
+      boostConf.getForestSize, 1, boostConf.getSeed + treeConf.iteration)
     logInfo(s"Iter ${treeConf.iteration}: PartSelector $partSelector")
 
     val bcPartSelector = sc.broadcast(partSelector)
@@ -807,58 +810,61 @@ object HorizontalGBM extends Logging {
 
 
     val sampledBinVecBlocks = if (treeConf.colSampledAhead) {
-      val colSampled = binVecBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-        val treeConf = bcTreeConf.value
-        val partSelector = bcPartSelector.value
-        if (partSelector.contains[Int](partId)) {
-          iter.map(_.slice(treeConf.sortedIndices))
-        } else {
-          Iterator.empty
+      val colSampled = binVecBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val treeConf = bcTreeConf.value
+          val partSelector = bcPartSelector.value
+          if (partSelector.contains[Int](partId)) {
+            iter.map(_.slice(treeConf.sortedIndices))
+          } else {
+            Iterator.empty
+          }
         }
-      }
 
       colSampled.persist(boostConf.getStorageLevel1)
       cleaner.registerCachedRDDs(colSampled)
       colSampled
 
     } else {
-      binVecBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-        val partSelector = bcPartSelector.value
-        if (partSelector.contains[Int](partId)) {
-          iter
-        } else {
-          Iterator.empty
+      binVecBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val partSelector = bcPartSelector.value
+          if (partSelector.contains[Int](partId)) {
+            iter
+          } else {
+            Iterator.empty
+          }
         }
-      }
     }
 
     sampledBinVecBlocks.setName(s"Iter ${treeConf.iteration}: BinVecs (Partition-Sampled)")
 
 
-    val treeIdBlocks = weightBlocks.mapPartitionsWithIndex { case (partId, iter) =>
+    val treeIdBlocks = weightBlocks
+      .mapPartitionsWithIndex { case (partId, iter) =>
 
-      val boostConf = bcBoostConf.value
-      val blockSize = boostConf.getBlockSize
+        val boostConf = bcBoostConf.value
+        val blockSize = boostConf.getBlockSize
 
-      val partSelector = bcPartSelector.value
-      val baseIds = partSelector.index[T, Int](partId)
+        val partSelector = bcPartSelector.value
+        val baseIds = partSelector.index[T, Int](partId)
 
-      if (baseIds.nonEmpty) {
-        val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
-        val treeIds = computeTreeIds(baseIds)
-        val defaultTreeIdBlock = ArrayBlock.fill(blockSize, treeIds)
+        if (baseIds.nonEmpty) {
+          val computeTreeIds = bcBoostConf.value.computeTreeIds[T]()
+          val treeIds = computeTreeIds(baseIds)
+          val defaultTreeIdBlock = ArrayBlock.fill(blockSize, treeIds)
 
-        iter.map { weightBlock =>
-          if (weightBlock.size == blockSize) {
-            defaultTreeIdBlock
-          } else {
-            ArrayBlock.fill(weightBlock.size, treeIds)
+          iter.map { weightBlock =>
+            if (weightBlock.size == blockSize) {
+              defaultTreeIdBlock
+            } else {
+              ArrayBlock.fill(weightBlock.size, treeIds)
+            }
           }
+        } else {
+          Iterator.empty
         }
-      } else {
-        Iterator.empty
-      }
-    }.setName(s"Iter ${treeConf.iteration}: TreeIds (Partition-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: TreeIds (Partition-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
@@ -866,49 +872,53 @@ object HorizontalGBM extends Logging {
 
     if (boostConf.getGreedierSearch) {
 
-      val sampledWeightBlocks = weightBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-        val partSelector = bcPartSelector.value
-        if (partSelector.contains[Int](partId)) {
-          iter
-        } else {
-          Iterator.empty
-        }
-      }.setName(s"Iter ${treeConf.iteration}: Weights (Partition-Sampled)")
+      val sampledWeightBlocks = weightBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val partSelector = bcPartSelector.value
+          if (partSelector.contains[Int](partId)) {
+            iter
+          } else {
+            Iterator.empty
+          }
+        }.setName(s"Iter ${treeConf.iteration}: Weights (Partition-Sampled)")
 
 
-      val sampledLabelBlocks = labelBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-        val partSelector = bcPartSelector.value
-        if (partSelector.contains[Int](partId)) {
-          iter
-        } else {
-          Iterator.empty
-        }
-      }.setName(s"Iter ${treeConf.iteration}: Labels (Partition-Sampled)")
+      val sampledLabelBlocks = labelBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val partSelector = bcPartSelector.value
+          if (partSelector.contains[Int](partId)) {
+            iter
+          } else {
+            Iterator.empty
+          }
+        }.setName(s"Iter ${treeConf.iteration}: Labels (Partition-Sampled)")
 
 
       val sampledRawPredBlocks = boostConf.getBoostType match {
         case GBM.GBTree =>
-          rawBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-            val partSelector = bcPartSelector.value
-            if (partSelector.contains[Int](partId)) {
-              iter
-            } else {
-              Iterator.empty
+          rawBlocks
+            .mapPartitionsWithIndex { case (partId, iter) =>
+              val partSelector = bcPartSelector.value
+              if (partSelector.contains[Int](partId)) {
+                iter
+              } else {
+                Iterator.empty
+              }
             }
-          }
 
         case _ =>
-          rawBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-            val partSelector = bcPartSelector.value
-            if (partSelector.contains[Int](partId)) {
-              iter.map { rawBlock =>
-                val iter2 = rawBlock.iterator.map(computeRaw)
-                ArrayBlock.build[H](iter2)
+          rawBlocks
+            .mapPartitionsWithIndex { case (partId, iter) =>
+              val partSelector = bcPartSelector.value
+              if (partSelector.contains[Int](partId)) {
+                iter.map { rawBlock =>
+                  val iter2 = rawBlock.iterator.map(computeRaw)
+                  ArrayBlock.build[H](iter2)
+                }
+              } else {
+                Iterator.empty
               }
-            } else {
-              Iterator.empty
             }
-          }
       }
       sampledRawPredBlocks.setName(s"Iter ${treeConf.iteration}: RawPreds (Partition-Sampled)")
 
@@ -960,92 +970,99 @@ object HorizontalGBM extends Logging {
     val sc = weightBlocks.sparkContext
 
     val blockSelector = Selector.create(boostConf.getSubSampleRateByTree, boostConf.getNumBlocks,
-      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + treeConf.iteration)
+      boostConf.getForestSize, 1, boostConf.getSeed + treeConf.iteration)
     logInfo(s"Iter ${treeConf.iteration}: BlockSelector $blockSelector")
 
     val bcBlockSelector = sc.broadcast(blockSelector)
     cleaner.registerBroadcastedObjects(bcBlockSelector)
 
 
-    val sampledBinVecBlocks = binVecBlocks.mapPartitionsWithIndex { case (partId, iter) =>
+    val sampledBinVecBlocks = binVecBlocks
+      .mapPartitionsWithIndex { case (partId, iter) =>
+        val boostConf = bcBoostConf.value
+        var blockId = boostConf.getBlockOffset(partId) - 1
 
-      val boostConf = bcBoostConf.value
-      var blockId = boostConf.getBlockOffset(partId) - 1
+        val treeConf = bcTreeConf.value
+        val sliceBlock = treeConf.sliceMatrix[C, B]
 
-      val treeConf = bcTreeConf.value
-      val sliceBlock = treeConf.sliceMatrix[C, B]
+        val blockSelector = bcBlockSelector.value
 
-      val blockSelector = bcBlockSelector.value
-
-      iter.flatMap { binVecBlock =>
-        blockId += 1
-        if (blockSelector.contains[Long](blockId)) {
-          Iterator.single(sliceBlock(binVecBlock))
-        } else {
-          Iterator.empty
+        iter.flatMap { binVecBlock =>
+          blockId += 1
+          if (blockSelector.contains[Long](blockId)) {
+            Iterator.single(sliceBlock(binVecBlock))
+          } else {
+            Iterator.empty
+          }
         }
-      }
-    }.setName(s"Iter ${treeConf.iteration}: BinVecs (Block-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: BinVecs (Block-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledBinVecBlocks)
 
 
-    val treeIdBlocks = weightBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-      val boostConf = bcBoostConf.value
-      val computeTreeIds = boostConf.computeTreeIds[T]()
-      var blockId = boostConf.getBlockOffset(partId) - 1
+    val treeIdBlocks = weightBlocks
+      .mapPartitionsWithIndex { case (partId, iter) =>
+        val boostConf = bcBoostConf.value
+        val computeTreeIds = boostConf.computeTreeIds[T]()
+        var blockId = boostConf.getBlockOffset(partId) - 1
 
-      val blockSelector = bcBlockSelector.value
+        val blockSelector = bcBlockSelector.value
 
-      iter.flatMap { weightBlock =>
-        blockId += 1
-        val baseIds = blockSelector.index[T, Long](blockId)
-        if (baseIds.nonEmpty) {
-          val treeIds = computeTreeIds(baseIds)
-          Iterator.single(ArrayBlock.fill(weightBlock.size, treeIds))
-        } else {
-          Iterator.empty
+        iter.flatMap { weightBlock =>
+          blockId += 1
+          val baseIds = blockSelector.index[T, Long](blockId)
+          if (baseIds.nonEmpty) {
+            val treeIds = computeTreeIds(baseIds)
+            Iterator.single(ArrayBlock.fill(weightBlock.size, treeIds))
+          } else {
+            Iterator.empty
+          }
         }
-      }
-    }.setName(s"Iter ${treeConf.iteration}: TreeIds (Block-Sampled)")
+      }.setName(s"Iter ${treeConf.iteration}: TreeIds (Block-Sampled)")
 
     treeIdBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(treeIdBlocks)
 
 
     if (boostConf.getGreedierSearch) {
-      val sampledWeightBlocks = weightBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
-        val blockSelector = bcBlockSelector.value
+      val sampledWeightBlocks = weightBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val boostConf = bcBoostConf.value
+          var blockId = boostConf.getBlockOffset(partId) - 1
 
-        iter.flatMap { weightBlock =>
-          blockId += 1
-          if (blockSelector.contains[Long](blockId)) {
-            Iterator.single(weightBlock)
-          } else {
-            Iterator.empty
+          val blockSelector = bcBlockSelector.value
+
+          iter.flatMap { weightBlock =>
+            blockId += 1
+            if (blockSelector.contains[Long](blockId)) {
+              Iterator.single(weightBlock)
+            } else {
+              Iterator.empty
+            }
           }
-        }
-      }.setName(s"Iter ${treeConf.iteration}: Weights (Block-Sampled)")
+        }.setName(s"Iter ${treeConf.iteration}: Weights (Block-Sampled)")
 
       sampledWeightBlocks.persist(boostConf.getStorageLevel1)
       cleaner.registerCachedRDDs(sampledWeightBlocks)
 
 
-      val sampledLabelBlocks = labelBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-        var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
-        val blockSelector = bcBlockSelector.value
+      val sampledLabelBlocks = labelBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val boostConf = bcBoostConf.value
+          var blockId = boostConf.getBlockOffset(partId) - 1
 
-        iter.flatMap { labelBlock =>
-          blockId += 1
-          if (blockSelector.contains[Long](blockId)) {
-            Iterator.single(labelBlock)
-          } else {
-            Iterator.empty
+          val blockSelector = bcBlockSelector.value
+
+          iter.flatMap { labelBlock =>
+            blockId += 1
+            if (blockSelector.contains[Long](blockId)) {
+              Iterator.single(labelBlock)
+            } else {
+              Iterator.empty
+            }
           }
-        }
-      }.setName(s"Iter ${treeConf.iteration}: Weights (Block-Sampled)")
+        }.setName(s"Iter ${treeConf.iteration}: Weights (Block-Sampled)")
 
       sampledWeightBlocks.persist(boostConf.getStorageLevel1)
       cleaner.registerCachedRDDs(sampledWeightBlocks)
@@ -1053,35 +1070,41 @@ object HorizontalGBM extends Logging {
 
       val sampledRawPredBlocks = boostConf.getBoostType match {
         case GBM.GBTree =>
-          rawBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-            var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
-            val blockSelector = bcBlockSelector.value
+          rawBlocks
+            .mapPartitionsWithIndex { case (partId, iter) =>
+              val boostConf = bcBoostConf.value
+              var blockId = boostConf.getBlockOffset(partId) - 1
 
-            iter.flatMap { rawBlock =>
-              blockId += 1
-              if (blockSelector.contains[Long](blockId)) {
-                Iterator.single(rawBlock)
-              } else {
-                Iterator.empty
+              val blockSelector = bcBlockSelector.value
+
+              iter.flatMap { rawBlock =>
+                blockId += 1
+                if (blockSelector.contains[Long](blockId)) {
+                  Iterator.single(rawBlock)
+                } else {
+                  Iterator.empty
+                }
               }
             }
-          }
 
         case _ =>
-          rawBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-            var blockId = bcBoostConf.value.getBlockOffset(partId) - 1
-            val blockSelector = bcBlockSelector.value
+          rawBlocks
+            .mapPartitionsWithIndex { case (partId, iter) =>
+              val boostConf = bcBoostConf.value
+              var blockId = boostConf.getBlockOffset(partId) - 1
 
-            iter.flatMap { rawBlock =>
-              blockId += 1
-              if (blockSelector.contains[Long](blockId)) {
-                val iter2 = rawBlock.iterator.map(computeRaw)
-                Iterator.single(ArrayBlock.build[H](iter2))
-              } else {
-                Iterator.empty
+              val blockSelector = bcBlockSelector.value
+
+              iter.flatMap { rawBlock =>
+                blockId += 1
+                if (blockSelector.contains[Long](blockId)) {
+                  val iter2 = rawBlock.iterator.map(computeRaw)
+                  Iterator.single(ArrayBlock.build[H](iter2))
+                } else {
+                  Iterator.empty
+                }
               }
             }
-          }
       }
       sampledRawPredBlocks.setName(s"Iter ${treeConf.iteration}: RawPreds (Block-Sampled)")
 
@@ -1137,80 +1160,50 @@ object HorizontalGBM extends Logging {
     val sc = weightBlocks.sparkContext
 
     val rowSelector = Selector.create(boostConf.getSubSampleRateByTree, boostConf.getNumBlocks * boostConf.getBlockSize,
-      boostConf.getBaseModelParallelism, 1, boostConf.getSeed + treeConf.iteration)
+      boostConf.getForestSize, 1, boostConf.getSeed + treeConf.iteration)
     logInfo(s"Iter ${treeConf.iteration}: RowSelector $rowSelector")
 
     val bcRowSelector = sc.broadcast(rowSelector)
     cleaner.registerBroadcastedObjects(bcRowSelector)
 
 
-    val sampledBinVecBlocks = binVecBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-      val boostConf = bcBoostConf.value
-      val blockSize = boostConf.getBlockSize
-      var blockId = boostConf.getBlockOffset(partId) - 1
+    val sampledBinVecBlocks = binVecBlocks
+      .mapPartitionsWithIndex { case (partId, iter) =>
+        val boostConf = bcBoostConf.value
+        val blockSize = boostConf.getBlockSize
+        var blockId = boostConf.getBlockOffset(partId) - 1
 
-      val treeConf = bcTreeConf.value
-      val sliceVec = treeConf.sliceVector[C, B]
+        val treeConf = bcTreeConf.value
+        val sliceVec = treeConf.sliceVector[C, B]
 
-      val rowSelector = bcRowSelector.value
+        val rowSelector = bcRowSelector.value
 
-      iter.flatMap { binVecBlock =>
-        blockId += 1
-        var rowId = blockId * blockSize - 1
+        iter.flatMap { binVecBlock =>
+          blockId += 1
+          var rowId = blockId * blockSize - 1
 
-        binVecBlock.iterator
-          .flatMap { binVec =>
-            rowId += 1
-            if (rowSelector.contains[Long](rowId)) {
-              Iterator.single(sliceVec(binVec))
-            } else {
-              Iterator.empty
+          binVecBlock.iterator
+            .flatMap { binVec =>
+              rowId += 1
+              if (rowSelector.contains[Long](rowId)) {
+                Iterator.single(sliceVec(binVec))
+              } else {
+                Iterator.empty
+              }
             }
-          }
-      }.grouped(blockSize)
-        .map(KVMatrix.build[C, B])
-    }.setName(s"Iter ${treeConf.iteration}: BinVecs (Row-Sampled)")
+        }.grouped(blockSize)
+          .map(KVMatrix.build[C, B])
+      }.setName(s"Iter ${treeConf.iteration}: BinVecs (Row-Sampled)")
 
     sampledBinVecBlocks.persist(boostConf.getStorageLevel1)
     cleaner.registerCachedRDDs(sampledBinVecBlocks)
 
 
-    val treeIdBlocks = weightBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-      val boostConf = bcBoostConf.value
-      val blockSize = boostConf.getBlockSize
-      val computeTreeIds = boostConf.computeTreeIds[T]()
-      var blockId = boostConf.getBlockOffset(partId) - 1
-
-      val rowSelector = bcRowSelector.value
-
-      iter.flatMap { weightBlock =>
-        blockId += 1
-        var rowId = blockId * blockSize - 1
-
-        Iterator.range(0, weightBlock.size)
-          .flatMap { _ =>
-            rowId += 1
-            val baseIds = rowSelector.index[T, Long](rowId)
-            if (baseIds.nonEmpty) {
-              val treeIds = computeTreeIds(baseIds)
-              Iterator.single(treeIds)
-            } else {
-              Iterator.empty
-            }
-          }
-      }.grouped(blockSize)
-        .map(ArrayBlock.build[T])
-    }.setName(s"Iter ${treeConf.iteration}: TreeIds (Row-Sampled)")
-
-    treeIdBlocks.persist(boostConf.getStorageLevel1)
-    cleaner.registerCachedRDDs(treeIdBlocks)
-
-
-    if (boostConf.getGreedierSearch) {
-
-      val sampledWeightBlocks = weightBlocks.mapPartitionsWithIndex { case (partId, iter) =>
+    val treeIdBlocks = weightBlocks
+      .mapPartitionsWithIndex { case (partId, iter) =>
         val boostConf = bcBoostConf.value
         val blockSize = boostConf.getBlockSize
+        val computeTreeIds = boostConf.computeTreeIds[T]()
         var blockId = boostConf.getBlockOffset(partId) - 1
 
         val rowSelector = bcRowSelector.value
@@ -1219,74 +1212,109 @@ object HorizontalGBM extends Logging {
           blockId += 1
           var rowId = blockId * blockSize - 1
 
-          weightBlock.iterator
-            .flatMap { weight =>
+          Iterator.range(0, weightBlock.size)
+            .flatMap { _ =>
               rowId += 1
-              if (rowSelector.contains[Long](rowId)) {
-                Iterator.single(weight)
+              val baseIds = rowSelector.index[T, Long](rowId)
+              if (baseIds.nonEmpty) {
+                val treeIds = computeTreeIds(baseIds)
+                Iterator.single(treeIds)
               } else {
                 Iterator.empty
               }
             }
         }.grouped(blockSize)
-          .map(CompactArray.build[H])
-      }.setName(s"Iter ${treeConf.iteration}: Weights (Row-Sampled)")
+          .map(ArrayBlock.build[T])
+      }.setName(s"Iter ${treeConf.iteration}: TreeIds (Row-Sampled)")
+
+    treeIdBlocks.persist(boostConf.getStorageLevel1)
+    cleaner.registerCachedRDDs(treeIdBlocks)
+
+
+    if (boostConf.getGreedierSearch) {
+
+      val sampledWeightBlocks = weightBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val boostConf = bcBoostConf.value
+          val blockSize = boostConf.getBlockSize
+          var blockId = boostConf.getBlockOffset(partId) - 1
+
+          val rowSelector = bcRowSelector.value
+
+          iter.flatMap { weightBlock =>
+            blockId += 1
+            var rowId = blockId * blockSize - 1
+
+            weightBlock.iterator
+              .flatMap { weight =>
+                rowId += 1
+                if (rowSelector.contains[Long](rowId)) {
+                  Iterator.single(weight)
+                } else {
+                  Iterator.empty
+                }
+              }
+          }.grouped(blockSize)
+            .map(CompactArray.build[H])
+        }.setName(s"Iter ${treeConf.iteration}: Weights (Row-Sampled)")
 
       sampledWeightBlocks.persist(boostConf.getStorageLevel1)
       cleaner.registerCachedRDDs(sampledWeightBlocks)
 
 
-      val sampledLabelBlocks = labelBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-        val boostConf = bcBoostConf.value
-        val blockSize = boostConf.getBlockSize
-        var blockId = boostConf.getBlockOffset(partId) - 1
+      val sampledLabelBlocks = labelBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val boostConf = bcBoostConf.value
+          val blockSize = boostConf.getBlockSize
+          var blockId = boostConf.getBlockOffset(partId) - 1
 
-        val rowSelector = bcRowSelector.value
+          val rowSelector = bcRowSelector.value
 
-        iter.flatMap { labelBlock =>
-          blockId += 1
-          var rowId = blockId * blockSize - 1
+          iter.flatMap { labelBlock =>
+            blockId += 1
+            var rowId = blockId * blockSize - 1
 
-          labelBlock.iterator
-            .flatMap { label =>
-              rowId += 1
-              if (rowSelector.contains[Long](rowId)) {
-                Iterator.single(label)
-              } else {
-                Iterator.empty
+            labelBlock.iterator
+              .flatMap { label =>
+                rowId += 1
+                if (rowSelector.contains[Long](rowId)) {
+                  Iterator.single(label)
+                } else {
+                  Iterator.empty
+                }
               }
-            }
-        }.grouped(blockSize)
-          .map(ArrayBlock.build[H])
-      }.setName(s"Iter ${treeConf.iteration}: Labels (Row-Sampled)")
+          }.grouped(blockSize)
+            .map(ArrayBlock.build[H])
+        }.setName(s"Iter ${treeConf.iteration}: Labels (Row-Sampled)")
 
       sampledLabelBlocks.persist(boostConf.getStorageLevel1)
       cleaner.registerCachedRDDs(sampledLabelBlocks)
 
 
-      val sampledRawPredBlocks = rawBlocks.mapPartitionsWithIndex { case (partId, iter) =>
-        val boostConf = bcBoostConf.value
-        val blockSize = boostConf.getBlockSize
-        var blockId = boostConf.getBlockOffset(partId) - 1
+      val sampledRawPredBlocks = rawBlocks
+        .mapPartitionsWithIndex { case (partId, iter) =>
+          val boostConf = bcBoostConf.value
+          val blockSize = boostConf.getBlockSize
+          var blockId = boostConf.getBlockOffset(partId) - 1
 
-        val rowSelector = bcRowSelector.value
+          val rowSelector = bcRowSelector.value
 
-        iter.flatMap { rawBlock =>
-          blockId += 1
-          var rowId = blockId * blockSize - 1
+          iter.flatMap { rawBlock =>
+            blockId += 1
+            var rowId = blockId * blockSize - 1
 
-          rawBlock.iterator
-            .flatMap { raw =>
-              rowId += 1
-              if (rowSelector.contains[Long](rowId)) {
-                Iterator.single(computeRaw(raw))
-              } else {
-                Iterator.empty
+            rawBlock.iterator
+              .flatMap { raw =>
+                rowId += 1
+                if (rowSelector.contains[Long](rowId)) {
+                  Iterator.single(computeRaw(raw))
+                } else {
+                  Iterator.empty
+                }
               }
-            }
-        }.grouped(blockSize)
-          .map(ArrayBlock.build[H])
-      }.setName(s"Iter ${treeConf.iteration}: RawPreds (Row-Sampled)")
+          }.grouped(blockSize)
+            .map(ArrayBlock.build[H])
+        }.setName(s"Iter ${treeConf.iteration}: RawPreds (Row-Sampled)")
 
       GreedierTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
         sampledRawPredBlocks, treeIdBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)

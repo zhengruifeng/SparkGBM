@@ -883,6 +883,11 @@ private[gbm] class TreeConfig(val iteration: Int,
     } else {
       matrix: KVMatrix[K, V] => matrix
     }
+
+  override def toString: String = {
+    s"TreeConfig(iter: $iteration, colSelector: $colSelector, catCols: ${catCols.mkString("[",",","]")}, " +
+      s"indices: ${sortedIndices.mkString("[",",","]")}"
+  }
 }
 
 

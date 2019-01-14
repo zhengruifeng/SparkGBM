@@ -348,7 +348,7 @@ object VerticalGBM extends Logging {
     import Utils._
 
     val numTrees = boostConf.getForestSize * boostConf.getRawSize
-    logInfo(s"Iteration $iteration: Starting to create next $numTrees trees")
+    logInfo(s"Iter $iteration: Starting to create next $numTrees trees")
 
     val treeIdType = Utils.getTypeByRange(numTrees)
     logInfo(s"DataType of TreeId: $treeIdType")

@@ -78,7 +78,7 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
 
     val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
     val partitioner = new RangePratitioner[T, N, C](boostConf.getRealParallelism, numCols, treeNodeIds)
-    logInfo(s"Iteration ${treeConf.iteration}: Depth $depth, partitioner $partitioner")
+    logInfo(s"Iter ${treeConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
     val minNodeId = inn.fromInt(1 << depth)
@@ -125,7 +125,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
 
     val partitioner = HistogramUpdater.updatePartitioner[T, N, C](boostConf, treeConf,
       treeIds, depth, boostConf.getRealParallelism, prevPartitioner)
-    logInfo(s"Iteration ${treeConf.iteration}: Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
+    logInfo(s"Iter ${treeConf.iteration}: Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
 
     val histograms = if (depth == 0) {
       // direct compute the histogram of roots
@@ -151,7 +151,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
       val collected = histograms.collect
 
       val exactSize = collected.length
-      logInfo(s"Iteration: ${treeConf.iteration}, depth: $depth, " +
+      logInfo(s"Iter ${treeConf.iteration}, depth: $depth, " +
         s"expectedSize: ${expectedSize.toInt}, exactSize: $exactSize, delta: $delta")
       delta *= exactSize / expectedSize
 
@@ -217,7 +217,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
     val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
     val partitioner = new RangePratitioner[T, N, C](boostConf.getRealParallelism, numCols, treeNodeIds)
-    logInfo(s"Iteration ${treeConf.iteration}: Depth $depth, partitioner $partitioner")
+    logInfo(s"Iter ${treeConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
     val minNodeId = inn.fromInt(1 << depth)
@@ -271,7 +271,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
       val collected = globalVoted.collect.sortBy(_._1)
 
       val exactSize = collected.iterator.map(_._2.length).sum
-      logInfo(s"Iteration: ${treeConf.iteration}, depth: $depth, expectedSize: ${expectedSize.toInt}, " +
+      logInfo(s"Iter: ${treeConf.iteration}, depth: $depth, expectedSize: ${expectedSize.toInt}, " +
         s"exactSize: $exactSize, delta: $delta")
       delta *= exactSize.toDouble / expectedSize
 

@@ -63,13 +63,13 @@ private[gbm] object Tree extends Logging {
 
       updateRoots[T, N](roots, depth, splits, additive)
 
-      logInfo(s"Iteration ${treeConf.iteration}: Depth $depth: splitting finished, $numFinished trees" +
+      logInfo(s"Iter ${treeConf.iteration}: Depth $depth: splitting finished, $numFinished trees" +
         s" growth finished, ${splits.size} leaves split, total gain=${splits.valuesIterator.map(_.gain).sum}.")
 
     } else {
       Iterator.range(0, finished.length)
         .foreach(finished(_) = true)
-      logInfo(s"Iteration ${treeConf.iteration}: Depth $depth: no more splits found, trees growth finished.")
+      logInfo(s"Iter ${treeConf.iteration}: Depth $depth: no more splits found, trees growth finished.")
     }
   }
 
@@ -374,7 +374,8 @@ private[gbm] object Tree extends Logging {
       }, boostConf.getAggregationDepth)
 
 
-    logInfo(s"Depth $depth: $numTrials trials -> $numSplits splits -> ${splits.length} best splits, " +
+    logInfo(s"Iter: ${treeConf.iteration}, Depth $depth: " +
+      s"$numTrials trials -> $numSplits splits -> ${splits.length} best splits, " +
       s"fraction of sparse vectors: ${1 - numDenses.toDouble / numTrials}, " +
       s"sparsity of histogram elements: ${1 - nnz.toDouble / sumSize}")
 

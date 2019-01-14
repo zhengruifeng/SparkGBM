@@ -37,7 +37,7 @@ object GreedierTree extends Logging {
                            ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Array[TreeModel] = {
     val tic0 = System.nanoTime()
     val sc = binVecBlocks.sparkContext
-    logInfo(s"Iteration ${treeConf.iteration}: trees growth start")
+    logInfo(s"Iter ${treeConf.iteration}: trees growth start")
 
     var auxilaryBlocks = initializeAuxilaryBlocks[T, N, H](rawPredBlocks, treeIdBlocks)
 

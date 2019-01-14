@@ -330,7 +330,9 @@ object GreedierTree extends Logging {
                   }
 
                   var j = 0
-                  predIter.foreach { pred =>
+                  while (predIter.hasNext) {
+                    val pred = predIter.next()
+
                     val score = objFunc.transform(neh.toDouble(pred))
                     val (grad, hess) = objFunc.compute(neh.toDouble(label), score)
                     require(grad.length == rawSize && hess.length == rawSize)

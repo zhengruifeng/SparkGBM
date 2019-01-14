@@ -734,7 +734,9 @@ object HorizontalGBM extends Logging {
       val colSampled = binVecBlocks
         .mapPartitions { iter =>
           val treeConf = bcTreeConf.value
-          iter.map(_.slice(treeConf.sortedIndices))
+          val sliceBlock = treeConf.sliceMatrix[C, B]
+
+          iter.map(sliceBlock)
         }
 
       colSampled.persist(boostConf.getStorageLevel1)
@@ -813,9 +815,11 @@ object HorizontalGBM extends Logging {
       val colSampled = binVecBlocks
         .mapPartitionsWithIndex { case (partId, iter) =>
           val treeConf = bcTreeConf.value
+          val sliceBlock = treeConf.sliceMatrix[C, B]
+
           val partSelector = bcPartSelector.value
           if (partSelector.contains[Int](partId)) {
-            iter.map(_.slice(treeConf.sortedIndices))
+            iter.map(sliceBlock)
           } else {
             Iterator.empty
           }

@@ -336,7 +336,7 @@ object HorizontalGBM extends Logging {
 
 
     val treeConfig = TreeConfig.createWithAdjustedColSampling(boostConf, iteration)
-    logInfo(s"Iter $iteration: ColSelector ${treeConfig.colSelector}")
+    logInfo(s"Iter $iteration: TreeConfig $treeConfig")
 
     val bcTreeConf = sc.broadcast(treeConfig)
     cleaner.registerBroadcastedObjects(bcTreeConf)

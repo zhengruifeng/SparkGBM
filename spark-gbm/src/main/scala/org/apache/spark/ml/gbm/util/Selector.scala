@@ -2,6 +2,7 @@ package org.apache.spark.ml.gbm.util
 
 import java.{util => ju}
 
+import scala.collection.mutable
 import scala.reflect.ClassTag
 import scala.util.Random
 
@@ -54,43 +55,32 @@ private[gbm] object Selector extends Serializable {
     */
   def create(rate: Double,
              cardinality: Long,
-             numDistinctSets: Int,
-             numReplicated: Int,
+             numDistinct: Int,
+             numReplicas: Int,
              seed: Long): Selector = {
     require(rate >= 0 && rate <= 1)
     require(cardinality > 0)
-    require(numDistinctSets > 0)
-    require(numReplicated > 0)
+    require(numDistinct > 0)
+    require(numReplicas > 0)
 
     if (rate == 1) {
-      TrueSelector(numDistinctSets * numReplicated)
+      TrueSelector(numDistinct * numReplicas)
 
-    } else if (cardinality * rate * numDistinctSets * numReplicated <= 4096) {
+    } else if (cardinality > (1 << 16) || cardinality * rate * numDistinct > (1 << 12)) {
+      val rng = new Random(seed)
+      val maximum = (Int.MaxValue * rate).ceil.toInt
+      val seeds = Array.tabulate(numDistinct)(_ => rng.nextInt)
+
+      HashSelector(maximum, seeds, numReplicas)
+
+    } else {
       // When size of selected elements is small, it is hard for hashing to perform robust sampling,
       // we then switch to `SetSelector` for exactly sampling.
       val rng = new Random(seed)
       val numSelected = (cardinality * rate).ceil.toInt
+      val sets = Array.tabulate(numDistinct)(_ => rng.shuffle(Seq.range(0, cardinality)).take(numSelected).toArray.sorted)
 
-      val sets = Array.range(0, numDistinctSets)
-        .flatMap { _ =>
-          val selected = rng.shuffle(Seq.range(0, cardinality))
-            .take(numSelected).toArray.sorted
-          Iterator.fill(numReplicated)(selected)
-        }
-
-      SetSelector(sets)
-
-    } else {
-      val rng = new Random(seed)
-      val maximum = (Int.MaxValue * rate).ceil.toInt
-
-      val seeds = Array.range(0, numDistinctSets)
-        .flatMap { _ =>
-          val s = rng.nextInt
-          Iterator.fill(numReplicated)(s)
-        }
-
-      HashSelector(maximum, seeds)
+      SetSelector(sets, numReplicas)
     }
   }
 
@@ -105,7 +95,7 @@ private[gbm] object Selector extends Serializable {
     val nonTrues = selectors.flatMap {
       case s: TrueSelector => Iterator.empty
       case s => Iterator.single(s)
-    }
+    }.toArray
 
     if (nonTrues.nonEmpty) {
       UnionSelector(nonTrues)
@@ -132,35 +122,28 @@ private[gbm] case class TrueSelector(size: Int) extends Selector {
 
 
 private[gbm] case class HashSelector(maximum: Int,
-                                     seeds: Array[Int]) extends Selector {
+                                     seeds: Array[Int],
+                                     numReplicas: Int) extends Selector {
   require(maximum >= 0)
+  require(seeds.nonEmpty)
+  require(numReplicas > 0)
 
-  override def size: Int = seeds.length
+  override def size: Int = seeds.length * numReplicas
 
   override def containsById[K, V](setId: K, value: V)
                                  (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
-    Murmur3_x86_32.hashLong(inv.toLong(value), seeds(ink.toInt(setId))).abs < maximum
+    val distinctId = ink.toInt(setId) / numReplicas
+    Murmur3_x86_32.hashLong(inv.toLong(value), seeds(distinctId)).abs < maximum
   }
 
   override def contains[K, V](setIds: Array[K], value: V)
                              (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
     if (setIds.nonEmpty) {
-      val value_ = inv.toLong(value)
+      val value2 = inv.toLong(value)
 
-      var seed = seeds(ink.toInt(setIds.head))
-      var ret = Murmur3_x86_32.hashLong(value_, seed).abs < maximum
-
-      var i = 1
-      while (i < setIds.length && !ret) {
-        val seed_ = seeds(ink.toInt(setIds(i)))
-        if (seed_ != seed) {
-          seed = seed_
-          ret = Murmur3_x86_32.hashLong(value_, seed).abs < maximum
-        }
-        i += 1
-      }
-
-      ret
+      setIds.map { setId => ink.toInt(setId) / numReplicas }
+        .distinct
+        .exists { distinctId => Murmur3_x86_32.hashLong(value2, seeds(distinctId)).abs < maximum }
 
     } else {
       false
@@ -172,26 +155,31 @@ private[gbm] case class HashSelector(maximum: Int,
                            inv: Integral[V]): Array[K] = {
 
     if (setIds.nonEmpty) {
-      val value_ = inv.toLong(value)
+      val value2 = inv.toLong(value)
 
-      var seed = seeds(ink.toInt(setIds.head))
-      var ret = Murmur3_x86_32.hashLong(value_, seed).abs < maximum
+      val builder = mutable.ArrayBuilder.make[K]
 
-      val rets = Array.ofDim[Boolean](setIds.length)
-      rets(0) = ret
+      var prevDistinctId = -1
+      var prevResult = false
 
-      var i = 1
+      var i = 0
       while (i < setIds.length) {
-        val seed_ = seeds(ink.toInt(setIds(i)))
-        if (seed_ != seed) {
-          seed = seed_
-          ret = Murmur3_x86_32.hashLong(value_, seed).abs < maximum
+        val setId = setIds(i)
+        val distinctId = ink.toInt(setId) / numReplicas
+
+        if (distinctId != prevDistinctId) {
+          prevDistinctId = distinctId
+          prevResult = Murmur3_x86_32.hashLong(value2, seeds(distinctId)).abs < maximum
         }
-        rets(i) = ret
+
+        if (prevResult) {
+          builder += setId
+        }
+
         i += 1
       }
 
-      setIds.zip(rets).filter(_._2).map(_._1)
+      builder.result()
 
     } else {
       Array.empty
@@ -199,29 +187,82 @@ private[gbm] case class HashSelector(maximum: Int,
   }
 
   override def toString: String = {
-    s"HashSelector(maximum: $maximum, seeds: ${seeds.mkString("[", ",", "]")})"
+    s"HashSelector(maximum: $maximum, seeds: ${seeds.mkString("[", ",", "]")}, numReplicas: $numReplicas)"
   }
 }
 
 
-private[gbm] case class SetSelector(sets: Array[Array[Long]]) extends Selector {
+private[gbm] case class SetSelector(sets: Array[Array[Long]],
+                                    numReplicas: Int) extends Selector {
   require(sets.nonEmpty)
   require(sets.forall(set => Utils.validateOrdering[Long](set.iterator).size > 0))
+  require(numReplicas > 0)
 
-  override def size: Int = sets.length
+  override def size: Int = sets.length * numReplicas
 
   override def containsById[K, V](setId: K, value: V)
                                  (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
-    ju.Arrays.binarySearch(sets(ink.toInt(setId)), inv.toLong(value)) >= 0
+    val distinctId = ink.toInt(setId) / numReplicas
+    ju.Arrays.binarySearch(sets(distinctId), inv.toLong(value)) >= 0
+  }
+
+  override def contains[K, V](setIds: Array[K], value: V)
+                             (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
+    if (setIds.nonEmpty) {
+      val value2 = inv.toLong(value)
+
+      setIds.map { setId => ink.toInt(setId) / numReplicas }
+        .distinct
+        .exists { distinctId => ju.Arrays.binarySearch(sets(distinctId), inv.toLong(value)) >= 0 }
+
+    } else {
+      false
+    }
+  }
+
+  override def index[K, V](setIds: Array[K], value: V)
+                          (implicit ck: ClassTag[K], ink: Integral[K],
+                           inv: Integral[V]): Array[K] = {
+
+    if (setIds.nonEmpty) {
+      val value2 = inv.toLong(value)
+
+      val builder = mutable.ArrayBuilder.make[K]
+
+      var prevDistinctId = -1
+      var prevResult = false
+
+      var i = 0
+      while (i < setIds.length) {
+        val setId = setIds(i)
+        val distinctId = ink.toInt(setId) / numReplicas
+
+        if (distinctId != prevDistinctId) {
+          prevDistinctId = distinctId
+          prevResult = ju.Arrays.binarySearch(sets(distinctId), value2) >= 0
+        }
+
+        if (prevResult) {
+          builder += setId
+        }
+
+        i += 1
+      }
+
+      builder.result()
+
+    } else {
+      Array.empty
+    }
   }
 
   override def toString: String = {
-    s"SetSelector(sets: ${sets.map(_.mkString("(", ",", ")")).mkString("[", ",", "]")})"
+    s"SetSelector(sets: ${sets.map(_.mkString("(", ",", ")")).mkString("[", ",", "]")}, numReplicas: $numReplicas)"
   }
 }
 
 
-private[gbm] case class UnionSelector(selectors: Seq[Selector]) extends Selector {
+private[gbm] case class UnionSelector(selectors: Array[Selector]) extends Selector {
   require(selectors.nonEmpty)
 
   override def size: Int = selectors.head.size
@@ -229,6 +270,24 @@ private[gbm] case class UnionSelector(selectors: Seq[Selector]) extends Selector
   override def containsById[K, V](setId: K, value: V)
                                  (implicit ink: Integral[K], inv: Integral[V]): Boolean = {
     selectors.forall(_.containsById[K, V](setId, value))
+  }
+
+  override def index[K, V](setIds: Array[K], value: V)
+                          (implicit ck: ClassTag[K], ink: Integral[K],
+                           inv: Integral[V]): Array[K] = {
+
+    if (setIds.nonEmpty) {
+      var result = setIds
+      var i = 0
+      while (i < selectors.length && result.nonEmpty) {
+        result = selectors(i).index[K, V](result, value)
+        i += 1
+      }
+      result
+
+    } else {
+      Array.empty
+    }
   }
 
   override def toString: String = {

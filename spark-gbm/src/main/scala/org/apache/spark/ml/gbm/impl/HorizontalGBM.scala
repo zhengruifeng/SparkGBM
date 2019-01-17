@@ -301,11 +301,15 @@ object HorizontalGBM extends Logging {
         val rawBase = neh.fromDouble(boostConf.getRawBaseScore)
 
         rawSeq: Array[H] =>
-          val raw = rawBase.clone()
-          Iterator.range(rawSize, rawSeq.length)
-            .filterNot(i => dropped.contains(i - rawSize))
-            .foreach { i => raw(i % rawSize) += rawSeq(i) * weights(i - rawSize) }
-          raw
+          val rawPred = rawBase.clone()
+          var i = rawSize
+          while (i < rawSeq.length) {
+            if (!dropped.contains(i - rawSize)) {
+              rawPred(i % rawSize) += rawSeq(i) * weights(i - rawSize)
+            }
+            i += 1
+          }
+          rawPred
     }
 
     val computeGrad = (weight: H, label: Array[H], rawSeq: Array[H]) => {

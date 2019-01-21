@@ -405,7 +405,7 @@ class GBM extends Logging with Serializable {
 
 
   /** maximum number of bins for each column */
-  private var maxBins: Int = 64
+  private var maxBins: Int = 256
 
   def setMaxBins(value: Int): this.type = {
     require(value >= 4)

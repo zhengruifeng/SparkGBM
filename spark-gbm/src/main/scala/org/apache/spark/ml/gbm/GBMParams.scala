@@ -66,7 +66,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     * Maximum number of bins used for discretizing continuous features and for choosing how to split
     * on features at each node.  More bins give higher granularity.
     * Must be >= 4 and >= number of categories in any categorical feature.
-    * (default = 64)
+    * (default = 256)
     *
     * @group param
     */
@@ -77,7 +77,7 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   def getMaxBins: Int = $(maxBins)
 
-  setDefault(maxBins -> 64)
+  setDefault(maxBins -> 256)
 
   /**
     * Maximum number of leaves of the tree (>= 2).

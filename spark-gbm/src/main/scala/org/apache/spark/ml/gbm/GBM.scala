@@ -252,12 +252,12 @@ class GBM extends Logging with Serializable {
 
 
   /** parallelism of histogram computation */
-  def setReduceParallelism(value: Double): this.type = {
-    boostConf.setReduceParallelism(value)
+  def setHistogramParallelism(value: Double): this.type = {
+    boostConf.setHistogramParallelism(value)
     this
   }
 
-  def getReduceParallelism: Double = boostConf.getReduceParallelism
+  def getHistogramParallelism: Double = boostConf.getHistogramParallelism
 
 
   /** parallelism type */

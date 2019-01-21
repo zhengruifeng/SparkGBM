@@ -77,7 +77,7 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
     }
 
     val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
-    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealParallelism, numCols, treeNodeIds)
+    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealHistogramParallelism, numCols, treeNodeIds)
     logInfo(s"Iter ${treeConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
@@ -124,7 +124,7 @@ private[gbm] class SubtractHistogramUpdater[T, N, C, B, H] extends HistogramUpda
     }
 
     val partitioner = HistogramUpdater.updatePartitioner[T, N, C](boostConf, treeConf,
-      treeIds, depth, boostConf.getRealParallelism, prevPartitioner)
+      treeIds, depth, boostConf.getRealHistogramParallelism, prevPartitioner)
     logInfo(s"Iter ${treeConf.iteration}: Depth $depth, minNodeId $minNodeId, partitioner $partitioner")
 
     val histograms = if (depth == 0) {
@@ -216,7 +216,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
     }
 
     val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
-    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealParallelism, numCols, treeNodeIds)
+    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealHistogramParallelism, numCols, treeNodeIds)
     logInfo(s"Iter ${treeConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
@@ -255,7 +255,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
 
     val globalVoted = localVoted
-      .reduceByKey(_.plus(_).compress, boostConf.getRealParallelism)
+      .reduceByKey(_.plus(_).compress, boostConf.getRealHistogramParallelism)
       .mapValues { votes =>
         votes.activeIterator.toArray.sortBy(_._2)
           .takeRight(top2K).map(_._1).sorted
@@ -518,7 +518,7 @@ private[gbm] object HistogramUpdater extends Logging {
     if (boostConf.getNumVLayers == 1) {
       localHistograms
     } else {
-      localHistograms.reduceByKey(_.plus(_).compress, boostConf.getRealParallelism)
+      localHistograms.reduceByKey(_.plus(_).compress, boostConf.getRealHistogramParallelism)
     }
   }
 

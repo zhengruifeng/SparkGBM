@@ -142,7 +142,7 @@ class GBMRegressor(override val uid: String) extends
 
   def setZeroAsMissing(value: Boolean): this.type = set(zeroAsMissing, value)
 
-  def setReduceParallelism(value: Double): this.type = set(reduceParallelism, value)
+  def setHistogramParallelism(value: Double): this.type = set(histogramParallelism, value)
 
   def setSubSampleType(value: String): this.type = set(subSampleType, value)
 
@@ -260,7 +260,7 @@ class GBMRegressor(override val uid: String) extends
       .setMaxBruteBins($(maxBruteBins))
       .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
-      .setReduceParallelism($(reduceParallelism))
+      .setHistogramParallelism($(histogramParallelism))
       .setSubSampleType($(subSampleType))
       .setHistogramComputationType($(histogramComputationType))
       .setForestSize($(forestSize))

@@ -514,15 +514,15 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** parallelism of histogram computation */
-  private var reduceParallelism: Double = -1.0
+  private var histogramParallelism: Double = -1.0
 
-  private[gbm] def setReduceParallelism(value: Double): this.type = {
+  private[gbm] def setHistogramParallelism(value: Double): this.type = {
     require(value != 0 && !value.isNaN && !value.isInfinity)
-    reduceParallelism = value
+    histogramParallelism = value
     this
   }
 
-  def getReduceParallelism: Double = reduceParallelism
+  def getHistogramParallelism: Double = histogramParallelism
 
 
   /** random number seed */
@@ -742,23 +742,23 @@ class BoostConfig extends Logging with Serializable {
 
   private var numBlocksPerPart: Array[Long] = Array.emptyLongArray
 
-  private var realParallelism = -1
+  private var realHistogramParallelism = -1
 
   private[gbm] def setNumBlocksPerPart(value: Array[Long]): this.type = {
     require(value.nonEmpty)
 
     numBlocksPerPart = value
 
-    realParallelism = if (reduceParallelism > 0) {
-      reduceParallelism.ceil.toInt
+    realHistogramParallelism = if (histogramParallelism > 0) {
+      histogramParallelism.ceil.toInt
     } else {
-      (numBlocksPerPart.length * reduceParallelism.abs).ceil.toInt
+      (numBlocksPerPart.length * histogramParallelism.abs).ceil.toInt
     }
 
     this
   }
 
-  private[gbm] def getRealParallelism: Int = realParallelism
+  private[gbm] def getRealHistogramParallelism: Int = realHistogramParallelism
 
   private[gbm] def getNumBlocksPerPart: Array[Long] = numBlocksPerPart
 
@@ -785,12 +785,12 @@ class BoostConfig extends Logging with Serializable {
 
   private[gbm] def updateVPartInfo(): Unit = {
     require(numCols > 0)
-    require(realParallelism > 0)
+    require(realHistogramParallelism > 0)
 
-    numVLayers = (realParallelism.toDouble / numCols).ceil.toInt
+    numVLayers = (realHistogramParallelism.toDouble / numCols).ceil.toInt
     require(numVLayers >= 1)
 
-    val n = realParallelism / numVLayers
+    val n = realHistogramParallelism / numVLayers
 
     colIdsPerBaseVPart = if (n == numCols) {
       Array.tabulate(numCols)(Array(_))

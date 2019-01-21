@@ -573,19 +573,20 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Parallelism of histogram computation. If negative, means times of defaultParallelism of Spark.
+    * Parallelism of histogram computation.
+    * If negative, its absolute value means times of number of input train partitions.
     * (default = -1)
     *
     * @group param
     */
-  final val reduceParallelism: DoubleParam =
-    new DoubleParam(this, "reduceParallelism", "Parallelism of histogram computation. " +
-      "If negative, means times of defaultParallelism of Spark.",
+  final val histogramParallelism: DoubleParam =
+    new DoubleParam(this, "histogramParallelism", "Parallelism of histogram computation." +
+      " If negative, its absolute value means times of number of input train partitions.",
       (value: Double) => value != 0 && !value.isNaN && !value.isInfinity)
 
-  def getReduceParallelism: Double = $(reduceParallelism)
+  def getHistogramParallelism: Double = $(histogramParallelism)
 
-  setDefault(reduceParallelism -> -1.0)
+  setDefault(histogramParallelism -> -1.0)
 
 
   /**

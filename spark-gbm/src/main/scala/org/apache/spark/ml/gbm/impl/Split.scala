@@ -552,7 +552,7 @@ private[gbm] object Split extends Logging {
                    boostConf: BoostConfig): (Float, Float) = {
     if (boostConf.getRegAlpha == 0) {
       val weight = -gradSum / (hessSum + boostConf.getRegLambda)
-      val loss = (hessSum + boostConf.getRegLambda) * weight * weight / 2 + gradSum * weight
+      val loss = (hessSum + boostConf.getRegLambda) * weight * weight + gradSum * weight * 2
       (weight.toFloat, -loss.toFloat)
 
     } else {
@@ -563,8 +563,8 @@ private[gbm] object Split extends Logging {
       } else {
         0.0
       }
-      val loss = (hessSum + boostConf.getRegLambda) * weight * weight / 2 + gradSum * weight +
-        boostConf.getRegAlpha * weight.abs
+      val loss = (hessSum + boostConf.getRegLambda) * weight * weight + gradSum * weight * 2 +
+        boostConf.getRegAlpha * weight.abs * 2
       (weight.toFloat, -loss.toFloat)
     }
   }

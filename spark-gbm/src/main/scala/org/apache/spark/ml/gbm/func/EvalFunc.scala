@@ -53,8 +53,8 @@ trait IncEvalFunc extends EvalFunc {
   /** compute the final metric value */
   def getValue: Double
 
-  /** initial the internal statistics */
-  def init: Unit
+  /** initialize the internal statistics */
+  def reset: Unit
 }
 
 
@@ -74,19 +74,28 @@ private[gbm] object IncEvalFunc {
   def compute(data: RDD[(Double, Array[Double], Array[Double], Array[Double])],
               evals: Array[IncEvalFunc],
               depth: Int): Map[String, Double] = {
-    evals.foreach(_.init)
+    var i = 0
+    while (i < evals.length) {
+      evals(i).reset
+      i += 1
+    }
 
     data.treeAggregate[Array[IncEvalFunc]](evals)(
       seqOp = {
         case (evals, (weight, label, rawScore, score)) =>
-          evals.foreach(eval => eval.update(weight, label, rawScore, score))
+          var i = 0
+          while (i < evals.length) {
+            evals(i).update(weight, label, rawScore, score)
+            i += 1
+          }
           evals
       }, combOp = {
         case (evals1, evals2) =>
           require(evals1.length == evals2.length)
-          evals1.zip(evals2).foreach {
-            case (eval1, eval2) =>
-              eval1.merge(eval2)
+          var i = 0
+          while (i < evals1.length) {
+            evals1(i).merge(evals2(i))
+            i += 1
           }
           evals1
       }, depth = depth)
@@ -129,7 +138,7 @@ trait SimpleEvalFunc extends ScalarIncEvalFunc {
     avg
   }
 
-  override def init: Unit = {
+  override def reset: Unit = {
     count = 0.0
     avg = 0.0
   }
@@ -231,7 +240,7 @@ class R2Eval extends ScalarIncEvalFunc {
   }
 
   /** initial the internal statistics */
-  override def init: Unit = {
+  override def reset: Unit = {
     count = 0.0
     avgLabel = 0.0
     avgLabel2 = 0.0
@@ -249,13 +258,13 @@ class R2Eval extends ScalarIncEvalFunc {
   */
 class LogLossEval extends SimpleEvalFunc {
 
+  private val eps = 1e-16
+
   override def compute(label: Double, score: Double): Double = {
     require(label >= 0 && label <= 1)
     require(score >= 0 && score <= 1)
 
     val pneg = 1.0 - score
-
-    val eps = 1e-16
 
     if (score < eps) {
       -label * math.log(eps) - (1.0 - label) * math.log(1.0 - eps)
@@ -382,7 +391,7 @@ class AUROCEval(val numBins: Int) extends ScalarIncEvalFunc {
     auroc
   }
 
-  override def init: Unit = {
+  override def reset: Unit = {
     var i = 0
     while (i < numBins) {
       histPos(i) = 0.0F
@@ -473,7 +482,7 @@ class AUPRCEval(val numBins: Int) extends ScalarIncEvalFunc {
     auprc
   }
 
-  override def init: Unit = {
+  override def reset: Unit = {
     var i = 0
     while (i < numBins) {
       histPos(i) = 0.0F

@@ -30,7 +30,7 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
                                           (implicit cb: ClassTag[B], inb: Integral[B]): Array[B] = {
     require(vec.size == numCols)
 
-    val bins = Array.fill(numCols)(inb.zero)
+    val bins = Array.ofDim[B](numCols)
 
     val iter = if (zeroAsMissing) {
       Utils.getActiveIter(vec)
@@ -48,11 +48,28 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   }
 
 
-  private[gbm] def transformToGBMVector[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B](vec: Vector)
-                                                                                             (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                                                                              cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): KVVector[C, B] = {
-    val array = transform[B](vec)
-    KVVector.dense[C, B](array).compress
+  private[gbm] def transformToKVVector[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B](vec: Vector)
+                                                                                            (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                                                             cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): KVVector[C, B] = {
+    require(vec.size == numCols)
+
+    vec match {
+      case sv: SparseVector if zeroAsMissing =>
+        val indices = nec.fromInt(sv.indices)
+        val bins = Array.ofDim[B](sv.values.length)
+
+        var i = 0
+        while (i < sv.values.length) {
+          bins(i) = inb.fromInt(discretizeWithIndex(sv.values(i), sv.indices(i)))
+          i += 1
+        }
+        KVVector.sparse[C, B](numCols, indices, bins)
+
+
+      case _ =>
+        val bins = transform[B](vec)
+        KVVector.dense[C, B](bins)
+    }
   }
 
 
@@ -163,16 +180,15 @@ private[gbm] object Discretizer extends Logging {
 
         Iterator.single((cnt, aggs))
 
-      }.treeReduce(
-        f = {
-          case ((cnt1, aggs1), (cnt2, aggs2)) =>
-            var i = 0
-            while (i < numCols) {
-              aggs1(i).merge(aggs2(i))
-              i += 1
-            }
-            (cnt1 + cnt2, aggs1)
-        }, depth = depth)
+      }.treeReduce(f = {
+        case ((cnt1, aggs1), (cnt2, aggs2)) =>
+          var i = 0
+          while (i < numCols) {
+            aggs1(i).merge(aggs2(i))
+            i += 1
+          }
+          (cnt1 + cnt2, aggs1)
+      }, depth = depth)
 
 
     // number of non-missing
@@ -278,26 +294,25 @@ private[gbm] object Discretizer extends Logging {
           Iterator.empty
         }
 
-      }.treeReduce(
-        f = {
-          case ((w1, avg1, cnt1, aggs1), (w2, avg2, cnt2, aggs2)) =>
-            require(avg1.length == avg2.length)
-            val f = w2 / (w1 + w2)
+      }.treeReduce(f = {
+        case ((w1, avg1, cnt1, aggs1), (w2, avg2, cnt2, aggs2)) =>
+          require(avg1.length == avg2.length)
+          val f = w2 / (w1 + w2)
 
-            var i = 0
-            while (i < avg1.length) {
-              avg1(i) += (avg2(i) - avg1(i)) * f
-              i += 1
-            }
+          var i = 0
+          while (i < avg1.length) {
+            avg1(i) += (avg2(i) - avg1(i)) * f
+            i += 1
+          }
 
-            i = 0
-            while (i < numCols) {
-              aggs1(i).merge(aggs2(i))
-              i += 1
-            }
+          i = 0
+          while (i < numCols) {
+            aggs1(i).merge(aggs2(i))
+            i += 1
+          }
 
-            (w1 + w2, avg1, cnt1 + cnt2, aggs1)
-        }, depth = depth)
+          (w1 + w2, avg1, cnt1 + cnt2, aggs1)
+      }, depth = depth)
 
 
     // number of non-missing

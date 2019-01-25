@@ -125,7 +125,7 @@ class GBMModel(val obj: ObjFunc,
     require(features.size == numFeatures)
     require(firstTrees >= -1 && firstTrees <= numTrees)
 
-    val bins = discretizer.transform[Int](features)
+    val bins = discretizer.transformToKVVector[Int, Int](features)
 
     var n = firstTrees
     if (n == -1) {
@@ -135,7 +135,7 @@ class GBMModel(val obj: ObjFunc,
     val raw = rawBase.clone()
     var i = 0
     while (i < n) {
-      raw(i % rawBase.length) += trees(i).predict[Int](bins) * weights(i)
+      raw(i % rawBase.length) += trees(i).predict[Int](bins.apply) * weights(i)
       i += 1
     }
 
@@ -162,7 +162,7 @@ class GBMModel(val obj: ObjFunc,
     require(features.size == numFeatures)
     require(firstTrees >= -1 && firstTrees <= numTrees)
 
-    val bins = discretizer.transform[Int](features)
+    val bins = discretizer.transformToKVVector[Int, Int](features)
 
     var n = firstTrees
     if (n == -1) {
@@ -174,7 +174,7 @@ class GBMModel(val obj: ObjFunc,
       var step = 0
       var i = 0
       while (i < n) {
-        val index = trees(i).index(bins)
+        val index = trees(i).index(bins.apply)
         indices(i) = step + index
         step += numLeaves(i)
         i += 1
@@ -187,7 +187,7 @@ class GBMModel(val obj: ObjFunc,
       val indices = Array.ofDim[Double](n)
       var i = 0
       while (i < n) {
-        indices(i) = trees(i).index(bins)
+        indices(i) = trees(i).index(bins.apply)
         i += 1
       }
 

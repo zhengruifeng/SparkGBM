@@ -719,7 +719,8 @@ private[gbm] object GBM extends Logging {
 
     val binVecBlocks = data.mapPartitions { iter =>
       val discretizer = bcDiscretizer.value
-      iter.map(_._3).map(discretizer.transformToGBMVector[C, B])
+
+      iter.map(t => discretizer.transformToKVVector[C, B](t._3).compress)
         .grouped(blockSize)
         .map(KVMatrix.build[C, B])
     }

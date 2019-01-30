@@ -6,7 +6,6 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.gbm.linalg._
-import org.apache.spark.ml.gbm.rdd.RDDFunctions._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
 
@@ -80,20 +79,12 @@ object VerticalTree extends Logging {
       }
 
 
-      val vdata = if (depth == 0) {
-        subBinVecBlocks.zipPartitions(agTreeIdBlocks, agGradBlocks) {
-          case (subBinVecBlockIter, agTreeIdBlockIter, agGradBlockIter) =>
+      val agNodeIdBlocks = if (depth == 0) {
 
-            Utils.zip3(subBinVecBlockIter, agTreeIdBlockIter, agGradBlockIter)
-              .map { case (subBinVecBlock, treeIdBlock, gradBlock) =>
-                require(subBinVecBlock.size == treeIdBlock.size)
-                require(subBinVecBlock.size == gradBlock.size)
-
-                val iter2 = treeIdBlock.iterator
-                  .map { treeIds => Array.fill(treeIds.length)(inn.one) }
-                val nodeIdBlock = ArrayBlock.build[N](iter2)
-                (subBinVecBlock, treeIdBlock, nodeIdBlock, gradBlock)
-              }
+        agTreeIdBlocks.map { treeIdBlock =>
+          val nodeIdIter = treeIdBlock.iterator
+            .map { treeIds => Array.fill(treeIds.length)(inn.one) }
+          ArrayBlock.build[N](nodeIdIter)
         }
 
       } else {
@@ -110,17 +101,15 @@ object VerticalTree extends Logging {
             colIds.exists(unionSelector.contains[C])
           }.map(_._2).toArray
 
-        val agNodeIdBlocks = VerticalGBM.gatherByLayer(nodeIdBlocks, blockIds,
+        VerticalGBM.gatherByLayer(nodeIdBlocks, blockIds,
           baseVPartIds, boostConf, bcBoostConf, cleaner)
-
-        subBinVecBlocks.zip3(agTreeIdBlocks, agNodeIdBlocks, agGradBlocks, false)
       }
 
 
       // `computeLocalHistograms` will treat an unavailable column on one partititon as
       // all a zero-value column, so we should filter it in `computeHistogramsVertical`.
       val minNodeId = inn.fromInt(1 << depth)
-      val histograms = HistogramUpdater.computeHistogramsVertical[T, N, C, B, H](vdata,
+      val histograms = HistogramUpdater.computeHistogramsVertical[T, N, C, B, H](subBinVecBlocks, agTreeIdBlocks, agNodeIdBlocks, agGradBlocks,
         boostConf, bcBoostConf, bcTreeConf, extraSelector, (n: N) => inn.gteq(n, minNodeId))
         .setName(s"Iter ${treeConf.iteration}, depth $depth: Histograms")
 

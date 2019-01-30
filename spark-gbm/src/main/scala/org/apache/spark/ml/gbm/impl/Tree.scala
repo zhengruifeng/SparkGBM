@@ -198,7 +198,7 @@ private[gbm] object Tree extends Logging {
         // If we update histograms by subtraction, we should compute histogram on all
         // columns selected by `colSamplingByTree`, since the updated histograms will be
         // used in next level, and `colSamplingByNode` in each level perform differently.
-        val histograms = updater.update(binVecBlocks.zip3(treeIdBlocks, nodeIdBlocks, gradBlocks),
+        val histograms = updater.update(binVecBlocks, treeIdBlocks, nodeIdBlocks, gradBlocks,
           boostConf, bcBoostConf, treeConf, bcTreeConf, None, splits, depth)
           .setName(s"Iter ${treeConf.iteration}, depth $depth: Histograms")
 
@@ -271,7 +271,7 @@ private[gbm] object Tree extends Logging {
           nodeIdBlocks
         }
 
-        val histograms = updater.update(binVecBlocks.zip3(treeIdBlocks, sampledNodeIdBlocks, gradBlocks),
+        val histograms = updater.update(binVecBlocks, treeIdBlocks, nodeIdBlocks, gradBlocks,
           boostConf, bcBoostConf, treeConf, bcTreeConf, extraSelector, splits, depth)
           .setName(s"Iter ${treeConf.iteration}, depth $depth: Histograms")
 

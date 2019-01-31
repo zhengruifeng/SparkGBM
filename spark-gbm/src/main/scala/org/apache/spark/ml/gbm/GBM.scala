@@ -729,9 +729,9 @@ private[gbm] object GBM extends Logging {
   }
 
 
-  def touchBlocksAndUpdatePartInfo[H](weightBlocks: RDD[CompactArray[H]],
-                                      boostConf: BoostConfig,
-                                      update: Boolean): Unit = {
+  def touchWeightBlocksAndUpdatePartInfo[H](weightBlocks: RDD[CompactArray[H]],
+                                            boostConf: BoostConfig,
+                                            update: Boolean): Unit = {
     val array = weightBlocks
       .mapPartitionsWithIndex { case (partId, iter) =>
         var numBlocks = 0L
@@ -756,6 +756,34 @@ private[gbm] object GBM extends Logging {
     if (update) {
       boostConf.setNumBlocksPerPart(array.map(_._2))
     }
+  }
+
+
+  def touchBinVecBlocksAndUpdateSparsity[C, B](binVecBlocks: RDD[KVMatrix[C, B]],
+                                               boostConf: BoostConfig)
+                                              (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                               cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): Unit = {
+    val (nnz, size) = binVecBlocks
+      .mapPartitions { iter =>
+        var nnz = 0L
+        var size = 0L
+
+        while (iter.hasNext) {
+          val binVecBlock = iter.next()
+          nnz += binVecBlock.activeKVIterator.size
+          size += binVecBlock.vectorSize * binVecBlock.size
+        }
+
+        Iterator.single((nnz, size))
+
+      }.treeReduce(f = {
+      case (t1, t2) => (t1._1 + t2._1, t1._2 + t2._2)
+    }, depth = boostConf.getAggregationDepth)
+
+    logInfo(s"Train BinVecBlocks: sparsity ${1 - nnz.toDouble / size} =" +
+      s" $nnz non-zero elements / $size elements")
+
+    boostConf.setBinVecSparsity(1 - nnz.toDouble / size)
   }
 
 

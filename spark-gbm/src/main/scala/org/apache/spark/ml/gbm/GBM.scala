@@ -781,7 +781,7 @@ private[gbm] object GBM extends Logging {
     }, depth = boostConf.getAggregationDepth)
 
     logInfo(s"Train BinVecBlocks: sparsity ${1 - nnz.toDouble / size} =" +
-      s" $nnz non-zero elements / $size elements")
+      s" ${size - nnz} zero elements / $size elements")
 
     boostConf.setBinVecSparsity(1 - nnz.toDouble / size)
   }

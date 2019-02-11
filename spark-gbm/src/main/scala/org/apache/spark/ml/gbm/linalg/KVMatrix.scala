@@ -137,8 +137,16 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
   }
 
 
-  def activeKVIterator()
-                      (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+  def elementIterator()
+                     (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
+                      cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): Iterator[Iterator[(K, V)]] = {
+    // TODO : specialize
+    iterator.map(_.iterator)
+  }
+
+
+  def activeElementIterator()
+                           (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
                        cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): Iterator[Iterator[(K, V)]] = {
 
     mode match {
@@ -288,14 +296,6 @@ class KVMatrix[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int) V](val indices
               }
           }
     }
-  }
-
-
-  def totalKVIterator()
-                     (implicit ck: ClassTag[K], ink: Integral[K], nek: NumericExt[K],
-                      cv: ClassTag[V], nuv: Numeric[V], nev: NumericExt[V]): Iterator[Iterator[(K, V)]] = {
-    // TODO : specialize
-    iterator.map(_.iterator)
   }
 
 

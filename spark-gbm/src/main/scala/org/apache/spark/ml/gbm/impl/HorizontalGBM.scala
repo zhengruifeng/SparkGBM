@@ -40,7 +40,6 @@ object HorizontalGBM extends Logging {
     // train blocks
     val (trainWeightBlocks, trainLabelBlocks, trainBinVecBlocks) = trainBlocks
     GBM.touchWeightBlocksAndUpdatePartInfo[H](trainWeightBlocks, boostConf, true)
-    GBM.touchBinVecBlocksAndUpdateSparsity[C, B](trainBinVecBlocks, boostConf)
 
     // test blocks
     testBlocks.foreach { case (testWeightBlocks, _, _) =>

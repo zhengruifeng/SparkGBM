@@ -844,16 +844,6 @@ class BoostConfig extends Logging with Serializable {
                               (implicit cc: ClassTag[C], inc: Integral[C]): Array[C] = {
     colIdsPerBaseVPart(vPartId % colIdsPerBaseVPart.length).map(inc.fromInt)
   }
-
-
-  private var binVecSparsity: Double = -1
-
-  private[gbm] def setBinVecSparsity(value: Double) : Unit = {
-    require(value >= 0 && value <= 1)
-    binVecSparsity = value
-  }
-
-  private[gbm] def getBinVecSparsity: Double = binVecSparsity
 }
 
 

@@ -639,6 +639,7 @@ private[gbm] object Utils extends Logging {
     var i = 0
     while (i < dataframes.length) {
       dataframes(i).write
+        .mode(SaveMode.Overwrite)
         .parquet(new Path(path, names(i)).toString)
       i += 1
     }
@@ -652,7 +653,8 @@ private[gbm] object Utils extends Logging {
                      names: Array[String],
                      path: String): Array[DataFrame] = {
     names.map { name =>
-      spark.read.parquet(new Path(path, name).toString)
+      spark.read
+        .parquet(new Path(path, name).toString)
     }
   }
 

@@ -79,6 +79,22 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   setDefault(maxBins -> 256)
 
+
+  /**
+    * Method to discretize input dataset.
+    * (default = "fit")
+    *
+    * @group param
+    */
+  final val discretizationType: Param[String] =
+    new Param[String](this, "discretizationType", "Method to discretize input dataset.",
+      ParamValidators.inArray[String](Array("fit", "floor", "ceil", "round")))
+
+  def getDiscretizationType: String = $(discretizationType)
+
+  setDefault(discretizationType -> "fit")
+
+
   /**
     * Maximum number of leaves of the tree (>= 2).
     * (default = 1000)

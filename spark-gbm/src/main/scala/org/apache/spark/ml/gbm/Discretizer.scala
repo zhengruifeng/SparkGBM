@@ -6,6 +6,8 @@ import scala.collection.{BitSet, mutable}
 import scala.reflect.ClassTag
 import scala.{specialized => spec}
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.linalg._
 import org.apache.spark.ml.gbm.linalg._
@@ -15,6 +17,282 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.util.QuantileSummaries
 
 
+private[gbm] trait Discretizer extends Serializable {
+
+  def transform[@spec(Byte, Short, Int) B](vec: Vector)
+                                          (implicit cb: ClassTag[B], inb: Integral[B]): Array[B]
+
+
+  private[gbm] def transformToKVVector[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B](vec: Vector)
+                                                                                            (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                                                             cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): KVVector[C, B]
+
+  def numBins: Array[Int]
+
+  def numCols: Int
+
+  def numFeatures: Int = numCols
+
+  def copy(): Discretizer
+
+  def save(spark: SparkSession,
+           path: String)
+}
+
+
+private[gbm] object Discretizer extends Logging {
+
+  val Fit = "fit"
+  val Floor = "floor"
+  val Ceil = "ceil"
+  val Round = "round"
+
+  def load(spark: SparkSession,
+           path: String): Discretizer = {
+    import spark.implicits._
+
+    val className = spark.read
+      .parquet(new Path(path, "class").toString)
+      .select("class")
+      .as[String]
+      .first()
+
+    if (className == classOf[IntDiscretizer].getName) {
+      IntDiscretizer.load(spark, path)
+
+    } else {
+      require(className == classOf[DefaultDiscretizer].getName)
+      DefaultDiscretizer.load(spark, path)
+    }
+  }
+
+
+  def computeAverageLabel(data: RDD[(Double, Array[Double])],
+                          depth: Int): Array[Double] = {
+    val tic = System.nanoTime()
+    logInfo(s"Average label computation start")
+
+    val (_, labelAvg) = data.mapPartitions { iter =>
+      var labelAvg = Array.emptyDoubleArray
+      var weightSum = 0.0
+
+      // only absorb non-zero values
+      while (iter.hasNext) {
+        val (weight, label) = iter.next()
+
+        // update avg of label
+        if (labelAvg.isEmpty) {
+          labelAvg = label
+        } else {
+          require(labelAvg.length == label.length)
+          val f = weight / (weight + weightSum)
+          var i = 0
+          while (i < labelAvg.length) {
+            labelAvg(i) += (label(i) - labelAvg(i)) * f
+            i += 1
+          }
+        }
+        weightSum += weight
+      }
+
+      if (labelAvg.nonEmpty) {
+        Iterator.single((weightSum, labelAvg))
+      } else {
+        Iterator.empty
+      }
+
+    }.treeReduce(f = {
+      case ((w1, avg1), (w2, avg2)) =>
+        require(avg1.length == avg2.length)
+        val f = w2 / (w1 + w2)
+
+        var i = 0
+        while (i < avg1.length) {
+          avg1(i) += (avg2(i) - avg1(i)) * f
+          i += 1
+        }
+
+        (w1 + w2, avg1)
+    }, depth = depth)
+
+    logInfo(s"Average label computation finished, " +
+      s"avgLabel: ${labelAvg.mkString("[", ",", "]")}, " +
+      s"duration: ${(System.nanoTime() - tic) / 1e9} sec")
+
+    labelAvg
+  }
+
+
+  /**
+    * Comupte the proportion of missing value
+    */
+  def computeSparsity(data: RDD[Vector],
+                      numCols: Int,
+                      zeroAsMissing: Boolean,
+                      depth: Int): Double = {
+
+    val tic = System.nanoTime()
+    logInfo(s"Dataset sparsity computation start")
+
+    // compute number of non-missing for each row
+    val countNNM = if (zeroAsMissing) {
+      vec: Vector => {
+        Utils.getActiveIter(vec).count { case (i, v) =>
+          !v.isNaN && !v.isInfinity
+        }
+      }
+
+    } else {
+
+      vec: Vector => {
+        vec.size - Utils.getActiveIter(vec).count { case (i, v) =>
+          v.isNaN || v.isInfinity
+        }
+      }
+    }
+
+    val (_, nnm) = data.treeAggregate[(Long, Double)]((0L, 0.0))(
+      seqOp = {
+        case ((cnt, avg), vec) =>
+          require(vec.size == numCols)
+          val nnm = countNNM(vec)
+          val diff = (nnm - avg) / (cnt + 1)
+          (cnt + 1, avg + diff)
+      },
+      combOp = {
+        case ((cnt1, avg1), (cnt2, avg2)) =>
+          if (cnt1 + cnt2 > 0) {
+            val diff = cnt2 / (cnt1 + cnt2) * (avg2 - avg1)
+            (cnt1 + cnt2, avg1 + diff)
+          } else {
+            (0L, 0.0)
+          }
+      },
+      depth = depth
+    )
+
+    val sparsity = 1 - nnm / numCols
+    logInfo(s"Dataset sparsity computation finished, sparsity: $sparsity, " +
+      s"duration: ${(System.nanoTime() - tic) / 1e9} sec")
+    sparsity
+  }
+}
+
+
+class IntDiscretizer(val numCols: Int,
+                     val maxBins: Int,
+                     val mode: String) extends Discretizer {
+
+  import Discretizer._
+
+  require(numCols > 0)
+  require(maxBins > 0)
+  require(Array(Floor, Ceil, Round).contains(mode))
+
+  @transient private lazy val binFunc = mode match {
+    case Floor =>
+      (v: Double) =>
+        val b = v.floor.toInt
+        math.max(0, math.min(b, maxBins - 1))
+
+    case Ceil =>
+      (v: Double) =>
+        val b = v.ceil.toInt
+        math.max(0, math.min(b, maxBins - 1))
+
+    case Round =>
+      (v: Double) =>
+        val b = v.round.toInt
+        math.max(0, math.min(b, maxBins - 1))
+  }
+
+  override def transform[@spec(Byte, Short, Int) B](vec: Vector)
+                                                   (implicit cb: ClassTag[B], inb: Integral[B]): Array[B] = {
+    require(vec.size == numCols)
+
+    val bins = Array.ofDim[B](numCols)
+
+    val iter = Utils.getActiveIter(vec)
+    while (iter.hasNext) {
+      val (i, v) = iter.next()
+      val bin = binFunc(v)
+      bins(i) = inb.fromInt(bin)
+    }
+
+    bins
+  }
+
+  override private[gbm] def transformToKVVector[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B](vec: Vector)
+                                                                                                     (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                                                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): KVVector[C, B] = {
+    require(vec.size == numCols)
+
+    vec match {
+      case sv: SparseVector =>
+        val indices = nec.fromInt(sv.indices)
+        val bins = Array.ofDim[B](sv.values.length)
+
+        var i = 0
+        while (i < sv.values.length) {
+          bins(i) = inb.fromInt(binFunc(sv.values(i)))
+          i += 1
+        }
+        KVVector.sparse[C, B](numCols, indices, bins)
+
+
+      case _ =>
+        val bins = transform[B](vec)
+        KVVector.dense[C, B](bins)
+    }
+  }
+
+  override def numBins: Array[Int] = {
+    Array.fill(numCols)(maxBins)
+  }
+
+  override def copy(): Discretizer = {
+    new IntDiscretizer(numCols, maxBins, mode)
+  }
+
+  override def save(spark: SparkSession,
+                    path: String): Unit = {
+    IntDiscretizer.save(spark, this, path)
+  }
+}
+
+
+private[gbm] object IntDiscretizer extends Logging {
+
+  def save(spark: SparkSession,
+           model: IntDiscretizer,
+           path: String): Unit = {
+
+    val classDF = spark.createDataFrame(Seq((0, classOf[IntDiscretizer].getName)))
+      .toDF("i", "class")
+
+    val paramDF = spark.createDataFrame(Seq((model.numCols, model.maxBins, model.mode)))
+      .toDF("numCols", "maxBins", "mode")
+
+    Utils.saveDataFrames(Array(classDF, paramDF), Array("class", "param"), path)
+  }
+
+
+  def load(spark: SparkSession,
+           path: String): IntDiscretizer = {
+    import spark.implicits._
+
+    val (numCols, maxBins, mode) =
+      spark.read
+        .parquet(new Path(path, "param").toString)
+        .select("numCols", "maxBins", "mode")
+        .as[(Int, Int, String)]
+        .first()
+
+    new IntDiscretizer(numCols, maxBins, mode)
+  }
+}
+
+
 /**
   * discretizer for the rows
   *
@@ -22,12 +300,12 @@ import org.apache.spark.sql.catalyst.util.QuantileSummaries
   * @param zeroAsMissing   whether zero is viewed as missing value
   * @param sparsity        the sparsity of dataset to create this discretizer
   */
-class Discretizer(val colDiscretizers: Array[ColDiscretizer],
-                  val zeroAsMissing: Boolean,
-                  val sparsity: Double) extends Serializable {
+class DefaultDiscretizer(val colDiscretizers: Array[ColDiscretizer],
+                         val zeroAsMissing: Boolean,
+                         val sparsity: Double) extends Discretizer {
 
-  def transform[@spec(Byte, Short, Int) B](vec: Vector)
-                                          (implicit cb: ClassTag[B], inb: Integral[B]): Array[B] = {
+  override def transform[@spec(Byte, Short, Int) B](vec: Vector)
+                                                   (implicit cb: ClassTag[B], inb: Integral[B]): Array[B] = {
     require(vec.size == numCols)
 
     val bins = Array.ofDim[B](numCols)
@@ -48,9 +326,9 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   }
 
 
-  private[gbm] def transformToKVVector[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B](vec: Vector)
-                                                                                            (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
-                                                                                             cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): KVVector[C, B] = {
+  override private[gbm] def transformToKVVector[@spec(Byte, Short, Int) C, @spec(Byte, Short, Int) B](vec: Vector)
+                                                                                                     (implicit cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
+                                                                                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): KVVector[C, B] = {
     require(vec.size == numCols)
 
     vec match {
@@ -84,23 +362,26 @@ class Discretizer(val colDiscretizers: Array[ColDiscretizer],
   }
 
 
-  def numBins: Array[Int] = {
+  override def numBins: Array[Int] = {
     // zero bin index is always reserved for missing value
     // column discretizers do not handle missing value, and output bin indices starting from 1
     colDiscretizers.map(_.numBins + 1)
   }
 
-  def numCols: Int = colDiscretizers.length
+  override def numCols: Int = colDiscretizers.length
 
-  def numFeatures: Int = numCols
+  override def copy(): DefaultDiscretizer = {
+    new DefaultDiscretizer(colDiscretizers.clone(), zeroAsMissing, sparsity)
+  }
 
-  def copy(): Discretizer = {
-    new Discretizer(colDiscretizers.clone(), zeroAsMissing, sparsity)
+  override def save(spark: SparkSession,
+                    path: String): Unit = {
+    DefaultDiscretizer.save(spark, this, path)
   }
 }
 
 
-private[gbm] object Discretizer extends Logging {
+private[gbm] object DefaultDiscretizer extends Logging {
 
   /**
     * Implementation of training a discretizer
@@ -122,7 +403,7 @@ private[gbm] object Discretizer extends Logging {
           maxBins: Int,
           numericalBinType: String,
           zeroAsMissing: Boolean,
-          depth: Int): Discretizer = {
+          depth: Int): DefaultDiscretizer = {
     require(maxBins >= 4)
     require(numCols >= 1)
 
@@ -199,7 +480,7 @@ private[gbm] object Discretizer extends Logging {
     logInfo(s"Discretizer building finished, sparsity: $sparsity, " +
       s"duration: ${(System.nanoTime() - tic) / 1e9} sec")
 
-    new Discretizer(aggregated.map(_.toColDiscretizer), zeroAsMissing, sparsity)
+    new DefaultDiscretizer(aggregated.map(_.toColDiscretizer), zeroAsMissing, sparsity)
   }
 
 
@@ -213,7 +494,7 @@ private[gbm] object Discretizer extends Logging {
                         maxBins: Int,
                         numericalBinType: String,
                         zeroAsMissing: Boolean,
-                        depth: Int): (Discretizer, Array[Double]) = {
+                        depth: Int): (DefaultDiscretizer, Array[Double]) = {
     require(maxBins >= 4)
     require(numCols >= 1)
 
@@ -323,70 +604,18 @@ private[gbm] object Discretizer extends Logging {
     logInfo(s"Discretizer building finished, sparsity: $sparsity, " +
       s"duration: ${(System.nanoTime() - tic) / 1e9} sec")
 
-    val discretizer = new Discretizer(aggregated.map(_.toColDiscretizer), zeroAsMissing, sparsity)
+    val discretizer = new DefaultDiscretizer(aggregated.map(_.toColDiscretizer), zeroAsMissing, sparsity)
 
     (discretizer, labelAvg)
   }
 
 
-  /**
-    * Comupte the proportion of missing value
-    */
-  def computeSparsity(data: RDD[Vector],
-                      numCols: Int,
-                      zeroAsMissing: Boolean,
-                      depth: Int): Double = {
+  def save(spark: SparkSession,
+           model: DefaultDiscretizer,
+           path: String): Unit = {
 
-    val tic = System.nanoTime()
-    logInfo(s"Dataset sparsity computation start")
-
-    // compute number of non-missing for each row
-    val countNNM = if (zeroAsMissing) {
-      vec: Vector => {
-        Utils.getActiveIter(vec).count { case (i, v) =>
-          !v.isNaN && !v.isInfinity
-        }
-      }
-
-    } else {
-
-      vec: Vector => {
-        vec.size - Utils.getActiveIter(vec).count { case (i, v) =>
-          v.isNaN || v.isInfinity
-        }
-      }
-    }
-
-    val (_, nnm) = data.treeAggregate[(Long, Double)]((0L, 0.0))(
-      seqOp = {
-        case ((cnt, avg), vec) =>
-          require(vec.size == numCols)
-          val nnm = countNNM(vec)
-          val diff = (nnm - avg) / (cnt + 1)
-          (cnt + 1, avg + diff)
-      },
-      combOp = {
-        case ((cnt1, avg1), (cnt2, avg2)) =>
-          if (cnt1 + cnt2 > 0) {
-            val diff = cnt2 / (cnt1 + cnt2) * (avg2 - avg1)
-            (cnt1 + cnt2, avg1 + diff)
-          } else {
-            (0L, 0.0)
-          }
-      },
-      depth = depth
-    )
-
-    val sparsity = 1 - nnm / numCols
-    logInfo(s"Dataset sparsity computation finished, sparsity: $sparsity, " +
-      s"duration: ${(System.nanoTime() - tic) / 1e9} sec")
-    sparsity
-  }
-
-
-  /** helper function to convert Discretizer to dataframes */
-  def toDF(spark: SparkSession,
-           model: Discretizer): Array[DataFrame] = {
+    val classDF = spark.createDataFrame(Seq((0, classOf[DefaultDiscretizer].getName)))
+      .toDF("i", "class")
 
     val colDatum = model.colDiscretizers.zipWithIndex.map {
       case (num: QuantileNumColDiscretizer, i) =>
@@ -406,26 +635,25 @@ private[gbm] object Discretizer extends Logging {
       Seq((model.zeroAsMissing, model.sparsity)))
       .toDF("zeroAsMissing", "sparsity")
 
-    Array(colDF, extraDF)
+    Utils.saveDataFrames(Array(classDF, colDF, extraDF), Array("class", "col", "extra"), path)
   }
 
 
-  /** helper function to convert dataframes back to Discretizer */
-  def fromDF(dataframes: Array[DataFrame]): Discretizer = {
-    val Array(colDF, extraDF) = dataframes
+  def load(spark: SparkSession,
+           path: String): DefaultDiscretizer = {
+    import spark.implicits._
+
+    val Array(colDF, extraDF) = Utils.loadDataFrames(spark, Array("col", "extra"), path)
 
     val (indices, colDiscretizers) =
-      colDF.select("featureIndex", "type", "doubles", "ints").rdd
-        .map { row =>
-          val i = row.getInt(0)
-          val tpe = row.getString(1)
-          val doubles = row.getSeq[Double](2)
-          val ints = row.getSeq[Int](3)
-
+      colDF.select("featureIndex", "type", "doubles", "ints")
+        .as[(Int, String, Array[Double], Array[Int])]
+        .rdd
+        .map { case (i, tpe, doubles, ints) =>
           val col = tpe match {
             case "quantile" =>
               require(ints.isEmpty)
-              new QuantileNumColDiscretizer(doubles.toArray)
+              new QuantileNumColDiscretizer(doubles)
             case "interval" =>
               require(doubles.length == 2 && ints.length == 1)
               new IntervalNumColDiscretizer(doubles.head, doubles.last, ints.head)
@@ -434,7 +662,7 @@ private[gbm] object Discretizer extends Logging {
               new CatColDiscretizer(ints.zipWithIndex.toMap)
             case "rank" =>
               require(doubles.isEmpty)
-              new RankColDiscretizer(ints.toArray)
+              new RankColDiscretizer(ints)
           }
 
           (i, col)
@@ -443,11 +671,12 @@ private[gbm] object Discretizer extends Logging {
     require(indices.length == indices.distinct.length)
     require(indices.length == indices.max + 1)
 
-    val extraRow = extraDF.select("zeroAsMissing", "sparsity").head()
-    val zeroAsMissing = extraRow.getBoolean(0)
-    val sparsity = extraRow.getDouble(1)
+    val (zeroAsMissing, sparsity) =
+      extraDF.select("zeroAsMissing", "sparsity")
+        .as[(Boolean, Double)]
+        .first()
 
-    new Discretizer(colDiscretizers, zeroAsMissing, sparsity)
+    new DefaultDiscretizer(colDiscretizers, zeroAsMissing, sparsity)
   }
 }
 

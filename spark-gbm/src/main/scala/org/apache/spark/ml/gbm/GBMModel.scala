@@ -5,6 +5,8 @@ import java.{util => ju}
 
 import scala.collection.mutable
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.ml.gbm.func.ObjFunc
 import org.apache.spark.ml.gbm.util.Utils
 import org.apache.spark.ml.linalg._
@@ -32,7 +34,7 @@ class GBMModel(val obj: ObjFunc,
 
   @transient lazy val baseScore: Array[Double] = obj.transform(rawBase)
 
-  def numFeatures: Int = discretizer.colDiscretizers.length
+  def numFeatures: Int = discretizer.numCols
 
   def numTrees: Int = trees.length
 
@@ -209,27 +211,13 @@ object GBMModel {
   private[ml] def save(spark: SparkSession,
                        model: GBMModel,
                        path: String): Unit = {
-    val names = Array("obj", "discretizerCol", "discretizerExtra", "trees", "extra")
-    val dataframes = toDF(spark, model)
-    Utils.saveDataFrames(dataframes, names, path)
-  }
+
+    // save discretizer
+    val discretizerPath = new Path(path, "discretizer").toString
+    model.discretizer.save(spark, discretizerPath)
 
 
-  /** load GBMModel from a path */
-  def load(path: String): GBMModel = {
-    val spark = SparkSession.builder().getOrCreate()
-    val names = Array("obj", "discretizerCol", "discretizerExtra", "trees", "extra")
-    val dataframes = Utils.loadDataFrames(spark, names, path)
-    fromDF(dataframes)
-  }
-
-
-  /** helper function to convert GBMModel to dataframes */
-  private[gbm] def toDF(spark: SparkSession,
-                        model: GBMModel): Array[DataFrame] = {
-    val Array(disColDF, disExtraDF) = Discretizer.toDF(spark, model.discretizer)
-
-
+    // save tree models
     val bos = new ByteArrayOutputStream
     val oos = new ObjectOutputStream(bos)
     oos.writeObject(model.obj)
@@ -239,12 +227,12 @@ object GBMModel {
       Seq(("obj", objBytes)))
       .toDF("key", "value")
 
-    val treesDatum = model.trees.zipWithIndex.flatMap {
+    val treeDatum = model.trees.zipWithIndex.flatMap {
       case (tree, index) =>
         val (nodeData, _) = NodeData.createData(tree.root, 0)
         nodeData.map((_, index))
     }
-    val treesDF = spark.createDataFrame(treesDatum)
+    val treeDF = spark.createDataFrame(treeDatum)
       .toDF("node", "treeIndex")
 
     val extraDF = spark.createDataFrame(
@@ -252,18 +240,21 @@ object GBMModel {
         ("rawBase", model.rawBase)))
       .toDF("key", "value")
 
-    Array(objDF, disColDF, disExtraDF, treesDF, extraDF)
+    Utils.saveDataFrames(Array(objDF, treeDF, extraDF), Array("obj", "tree", "extra"), path)
   }
 
 
-  /** helper function to convert dataframes back to GBMModel */
-  private[gbm] def fromDF(dataframes: Array[DataFrame]): GBMModel = {
-    val Array(objDF, disColDF, disExtraDF, treesDF, extraDF) = dataframes
-
-    val spark = objDF.sparkSession
+  private[ml] def load(spark: SparkSession,
+                       path: String): GBMModel = {
     import spark.implicits._
 
-    val discretizer = Discretizer.fromDF(Array(disColDF, disExtraDF))
+    // load discretizer
+    val discretizerPath = new Path(path, "discretizer").toString
+    val discretizer = Discretizer.load(spark, discretizerPath)
+
+
+    // load tree models
+    val Array(objDF, treeDF, extraDF) = Utils.loadDataFrames(spark, Array("obj", "tree", "extra"), path)
 
     val objBytes = objDF.first().get(1).asInstanceOf[Array[Byte]]
     val bis = new ByteArrayInputStream(objBytes)
@@ -271,11 +262,14 @@ object GBMModel {
     val obj = ois.readObject().asInstanceOf[ObjFunc]
 
     val (indice, trees) =
-      treesDF.select("treeIndex", "node").as[(Int, NodeData)].rdd
-        .groupByKey().map { case (index, nodes) =>
-        val root = NodeData.createNode(nodes.toArray)
-        (index, new TreeModel(root))
-      }.collect().sortBy(_._1).unzip
+      treeDF.select("treeIndex", "node")
+        .as[(Int, NodeData)]
+        .rdd
+        .groupByKey()
+        .map { case (index, nodes) =>
+          val root = NodeData.createNode(nodes.toArray)
+          (index, new TreeModel(root))
+        }.collect().sortBy(_._1).unzip
 
     require(indice.length == indice.distinct.length)
     require(indice.length == indice.fold(0)(math.max) + 1)
@@ -295,5 +289,12 @@ object GBMModel {
     require(rawBase.forall(v => !v.isNaN && !v.isInfinity))
 
     new GBMModel(obj, discretizer, rawBase, trees, weights)
+  }
+
+
+  /** load GBMModel from a path */
+  def load(path: String): GBMModel = {
+    val spark = SparkSession.builder().getOrCreate()
+    load(spark, path)
   }
 }

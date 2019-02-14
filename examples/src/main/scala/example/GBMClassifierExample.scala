@@ -33,6 +33,7 @@ object GBMClassifierExample {
     val gbmc = new GBMClassifier
     gbmc.setBoostType("gbtree")
       .setHistogramComputationType("basic")
+      .setDiscretizationType("round")
       .setStepSize(0.2)
       .setMaxIter(10)
       .setMaxDepth(5)

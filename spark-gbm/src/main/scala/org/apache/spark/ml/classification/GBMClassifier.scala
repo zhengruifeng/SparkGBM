@@ -76,6 +76,8 @@ class GBMClassifier(override val uid: String)
 
   def setMaxBins(value: Int): this.type = set(maxBins, value)
 
+  def setDiscretizationType(value: String): this.type = set(discretizationType, value)
+
   def setMaxLeaves(value: Int): this.type = set(maxLeaves, value)
 
   def setBaseScore(value: Array[Double]): this.type = set(baseScore, value)
@@ -245,6 +247,7 @@ class GBMClassifier(override val uid: String)
       .setMaxDepth($(maxDepth))
       .setMaxLeaves($(maxLeaves))
       .setMaxBins($(maxBins))
+      .setDiscretizationType($(discretizationType))
       .setMinGain($(minGain))
       .setMinNodeHess($(minNodeHess))
       .setBaseScore($(baseScore))
@@ -462,16 +465,18 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
   private[GBMClassificationModel] class GBMClassificationModelWriter(instance: GBMClassificationModel) extends MLWriter {
 
     override protected def saveImpl(path: String): Unit = {
-      DefaultParamsWriter.saveMetadata(instance, path, sparkSession.sparkContext, None)
+      val spark = sparkSession
 
-      GBMModel.save(sparkSession, instance.model, path)
+      DefaultParamsWriter.saveMetadata(instance, path, spark.sparkContext, None)
 
-      val otherDF = sparkSession.createDataFrame(Seq(
+      val otherDF = spark.createDataFrame(Seq(
         ("type", "classification"),
         ("numClasses", instance.numClasses.toString),
         ("time", System.nanoTime().toString))).toDF("key", "value")
       val otherPath = new Path(path, "other").toString
       otherDF.write.parquet(otherPath)
+
+      GBMModel.save(spark, instance.model, path)
     }
   }
 
@@ -481,25 +486,27 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
     private val className = classOf[GBMClassificationModel].getName
 
     override def load(path: String): GBMClassificationModel = {
+      val spark = sparkSession
+      import spark.implicits._
+
       val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
 
       val otherPath = new Path(path, "other").toString
-      val otherDF = sparkSession.read.parquet(otherPath)
+      val otherDF = spark.read.parquet(otherPath)
       var numClasses = -1
-      otherDF.select("key", "value").collect()
-        .foreach { row =>
-          val key = row.getString(0)
-          val value = row.getString(1)
-          key match {
-            case "type" =>
-              require(value == "classification")
 
-            case "numClasses" =>
-              numClasses = value.toInt
-              require(numClasses > 1)
+      otherDF.select("key", "value")
+        .as[(String, String)]
+        .collect()
+        .foreach {
+          case ("type", value) =>
+            require(value == "classification")
 
-            case "time" =>
-          }
+          case ("numClasses", value) =>
+            numClasses = value.toInt
+            require(numClasses > 1)
+
+          case ("time", _) =>
         }
 
       val gbModel = GBMModel.load(path)
@@ -509,5 +516,5 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
       model
     }
   }
-
 }
+

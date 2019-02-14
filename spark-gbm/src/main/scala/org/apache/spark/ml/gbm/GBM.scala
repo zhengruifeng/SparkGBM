@@ -416,6 +416,19 @@ class GBM extends Logging with Serializable {
   def getMaxBins: Int = maxBins
 
 
+  /** method to discretize input dataset */
+  private var discretizationType: String = "fit"
+
+  def setDiscretizationType(value: String): this.type = {
+    import Discretizer._
+    require(Array(Fit, Floor, Ceil, Round).contains(value))
+    discretizationType = value
+    this
+  }
+
+  def getDiscretizationType: String = discretizationType
+
+
   /** method to discretize numerical columns */
   private var numericalBinType: String = GBM.Width
 
@@ -477,36 +490,57 @@ class GBM extends Logging with Serializable {
 
     var discretizer: Discretizer = null
 
-    if (initialModel.nonEmpty) {
-      require(numCols == initialModel.get.discretizer.numCols)
+    (initialModel.nonEmpty, boostConf.getBaseScore.nonEmpty, discretizationType == "fit") match {
 
-      discretizer = initialModel.get.discretizer
-      logWarning(s"Discretizer is already provided in the initial model, related params are ignored: " +
-        s"maxBins,catCols,rankCols,numericalBinType,zeroAsMissing")
+      case (true, _, _) =>
+        require(numCols == initialModel.get.discretizer.numCols)
 
-      val baseScore_ = initialModel.get.baseScore
-      boostConf.setBaseScore(baseScore_)
-      logWarning(s"BaseScore is already provided in the initial model, related param is overridden: " +
-        s"${boostConf.getBaseScore.mkString(",")} -> ${baseScore_.mkString(",")}")
+        discretizer = initialModel.get.discretizer
+        logWarning(s"Discretizer is already provided in the initial model, related params are ignored: " +
+          s"discretizationType,maxBins,catCols,rankCols,numericalBinType,zeroAsMissing")
 
-    } else if (boostConf.getBaseScore.nonEmpty) {
-      require(row._2.length == boostConf.getBaseScore.length)
+        val baseScore_ = initialModel.get.baseScore
+        boostConf.setBaseScore(baseScore_)
+        logWarning(s"BaseScore is already provided in the initial model, related param is overridden: " +
+          s"${boostConf.getBaseScore.mkString(",")} -> ${baseScore_.mkString(",")}")
 
-      discretizer = Discretizer.fit(data.map(_._3), numCols, boostConf.getCatCols, boostConf.getRankCols,
-        maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
 
-    } else {
-      val (discretizer_, labelAvg) = Discretizer.fit2(data, numCols, boostConf.getCatCols, boostConf.getRankCols,
-        maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
+      case (false, true, true) =>
+        require(row._2.length == boostConf.getBaseScore.length)
 
-      discretizer = discretizer_
+        discretizer = DefaultDiscretizer.fit(data.map(_._3), numCols, boostConf.getCatCols, boostConf.getRankCols,
+          maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
 
-      boostConf.setBaseScore(labelAvg)
-      logInfo(s"Basescore is not provided, assign it to average label value " +
-        s"${boostConf.getBaseScore.mkString(",")}")
+
+      case (false, false, true) =>
+        val (discretizer_, labelAvg) = DefaultDiscretizer.fit2(data, numCols, boostConf.getCatCols, boostConf.getRankCols,
+          maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
+
+        discretizer = discretizer_
+
+        boostConf.setBaseScore(labelAvg)
+        logInfo(s"Basescore is not provided, assign it to average label value " +
+          s"${boostConf.getBaseScore.mkString(",")}")
+
+
+      case (false, true, false) =>
+        require(row._2.length == boostConf.getBaseScore.length)
+
+        discretizer = new IntDiscretizer(numCols, maxBins, discretizationType)
+
+
+      case (false, false, false) =>
+        discretizer = new IntDiscretizer(numCols, maxBins, discretizationType)
+
+        val labelAvg = Discretizer.computeAverageLabel(data.map(t => (t._1, t._2)), getAggregationDepth)
+        boostConf.setBaseScore(labelAvg)
+        logInfo(s"Basescore is not provided, assign it to average label value " +
+          s"${boostConf.getBaseScore.mkString(",")}")
     }
 
+
     boostConf.updateRawBaseScoreInfo()
+
 
     val rawBase = boostConf.getRawBaseScore
     logInfo(s"base score vector: ${boostConf.getBaseScore.mkString(",")}, " +
@@ -528,9 +562,6 @@ private[gbm] object GBM extends Logging {
 
   val GBTree = "gbtree"
   val Dart = "dart"
-
-  val Upstream = "upstream"
-  val Eager = "eager"
 
   val Row = "row"
   val Block = "block"
@@ -1090,8 +1121,4 @@ private[gbm] object GBM extends Logging {
     result.toMap
   }
 }
-
-
-
-
 

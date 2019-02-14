@@ -72,6 +72,8 @@ class GBMRegressor(override val uid: String) extends
 
   def setMaxBins(value: Int): this.type = set(maxBins, value)
 
+  def setDiscretizationType(value: String): this.type = set(discretizationType, value)
+
   def setMaxLeaves(value: Int): this.type = set(maxLeaves, value)
 
   def setBaseScore(value: Array[Double]): this.type = set(baseScore, value)
@@ -227,6 +229,7 @@ class GBMRegressor(override val uid: String) extends
       .setMaxDepth($(maxDepth))
       .setMaxLeaves($(maxLeaves))
       .setMaxBins($(maxBins))
+      .setDiscretizationType($(discretizationType))
       .setMinGain($(minGain))
       .setMinNodeHess($(minNodeHess))
       .setBaseScore($(baseScore))
@@ -382,15 +385,17 @@ object GBMRegressionModel extends MLReadable[GBMRegressionModel] {
   private[GBMRegressionModel] class GBMRegressionModelWriter(instance: GBMRegressionModel) extends MLWriter {
 
     override protected def saveImpl(path: String): Unit = {
-      DefaultParamsWriter.saveMetadata(instance, path, sparkSession.sparkContext, None)
+      val spark = sparkSession
 
-      GBMModel.save(sparkSession, instance.model, path)
+      DefaultParamsWriter.saveMetadata(instance, path, spark.sparkContext, None)
 
-      val otherDF = sparkSession.createDataFrame(Seq(
+      val otherDF = spark.createDataFrame(Seq(
         ("type", "regression"),
         ("time", System.nanoTime().toString))).toDF("key", "value")
       val otherPath = new Path(path, "other").toString
       otherDF.write.parquet(otherPath)
+
+      GBMModel.save(spark, instance.model, path)
     }
   }
 
@@ -400,19 +405,22 @@ object GBMRegressionModel extends MLReadable[GBMRegressionModel] {
     private val className = classOf[GBMRegressionModel].getName
 
     override def load(path: String): GBMRegressionModel = {
+      val spark = sparkSession
+      import spark.implicits._
+
       val metadata = DefaultParamsReader.loadMetadata(path, sc, className)
 
       val otherPath = new Path(path, "other").toString
-      val otherDF = sparkSession.read.parquet(otherPath)
-      otherDF.select("key", "value").collect()
-        .foreach { row =>
-          val key = row.getString(0)
-          val value = row.getString(1)
-          key match {
-            case "type" =>
-              require(value == "regression")
-            case "time" =>
-          }
+      val otherDF = spark.read.parquet(otherPath)
+
+      otherDF.select("key", "value")
+        .as[(String, String)]
+        .collect()
+        .foreach {
+          case ("type", value) =>
+            require(value == "regression")
+
+          case ("time", _) =>
         }
 
       val gbModel = GBMModel.load(path)
@@ -422,5 +430,5 @@ object GBMRegressionModel extends MLReadable[GBMRegressionModel] {
       model
     }
   }
-
 }
+

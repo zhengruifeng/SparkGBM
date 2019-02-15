@@ -35,6 +35,7 @@ trait GBMClassificationParams extends GBMParams with HasThreshold {
 
   setDefault(objectiveFunc -> GBMClassifier.LogisticObj)
 
+
   /**
     * Metric functions.
     *
@@ -42,7 +43,12 @@ trait GBMClassificationParams extends GBMParams with HasThreshold {
     */
   final val evaluateFunc: StringArrayParam =
     new StringArrayParam(this, "evaluateFunc", "Metric functions",
-      (evals: Array[String]) => evals.forall(GBMClassifier.supportedEvals.contains))
+      (evals: Array[String]) => evals.forall { eval =>
+        GBMClassifier.supportedEvals.contains(eval) ||
+          (eval.startsWith("error@") &&
+            eval.substring(6).toDouble >= 0 &&
+            eval.substring(6).toDouble <= 1)
+      })
 
   def getEvaluateFunc: Array[String] = $(evaluateFunc)
 
@@ -175,6 +181,9 @@ class GBMClassifier(override val uid: String)
                       testDataset: Option[Dataset[_]]): GBMClassificationModel = instrumented { instr =>
     transformSchema(dataset.schema, logging = true)
 
+    val spark = dataset.sparkSession
+    import spark.implicits._
+
     if ($(parallelismType) == "feature") {
       require(dataset.sparkSession.sparkContext.getCheckpointDir.nonEmpty)
     }
@@ -191,9 +200,11 @@ class GBMClassifier(override val uid: String)
     }
 
     val labelWeights = dataset
-      .groupBy(col($(labelCol)).cast(IntegerType)).agg(sum(w))
-      .collect().map { row => (row.getInt(0), row.getDouble(1)) }
-      .toMap
+      .groupBy(col($(labelCol)).cast(IntegerType).as("label"))
+      .agg(sum(w).as("sum"))
+      .select("label", "sum")
+      .as[(Int, Double)]
+      .collect().toMap
 
     val numClasses = labelWeights.size
     require(labelWeights.keys.forall(i => i >= 0 && i < numClasses))
@@ -218,6 +229,8 @@ class GBMClassifier(override val uid: String)
           new AUPRCEval
         case GBMClassifier.ErrorEval =>
           new ErrorEval($(threshold))
+        case eval if eval.startsWith("error@") =>
+          new ErrorEval(eval.substring(6).toDouble)
       }
 
     val callBackFunc = mutable.ArrayBuffer.empty[CallbackFunc]
@@ -294,7 +307,7 @@ class GBMClassifier(override val uid: String)
       label: Double =>
         require(label == label.toInt)
         val array = Array.ofDim[Double](numClasses)
-        array(label.toInt) = 1.0F
+        array(label.toInt) = 1.0
         array
     }
 
@@ -516,5 +529,6 @@ object GBMClassificationModel extends MLReadable[GBMClassificationModel] {
       model
     }
   }
+
 }
 

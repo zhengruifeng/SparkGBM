@@ -303,7 +303,7 @@ class ErrorEval(val threshold: Double) extends SimpleEvalFunc {
 
   override def isLargerBetter = false
 
-  override def name = s"Error-$threshold"
+  override def name = s"Error@$threshold"
 }
 
 

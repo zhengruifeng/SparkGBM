@@ -244,43 +244,45 @@ private[gbm] object Discretizer extends Logging {
     logInfo(s"Discretizer building start")
 
 
-    // zero bin index is always reserved for missing value
-    val emptyAggs = numericalMode match {
-      case Width =>
-        Iterator.range(0, numCols)
-          .filterNot(nonNumericalCols.contains)
-          .map((_, new WidthNumColAgg(maxBins - 1)))
-          .toMap
-
-      case Depth =>
-        Iterator.range(0, numCols)
-          .filterNot(nonNumericalCols.contains)
-          .map((_, new DepthNumColAgg(maxBins - 1)))
-          .toMap
-    }
-
-
     val (count, aggregated) =
       vectors.mapPartitions { iter =>
         var cnt = 0L
-        val aggs = emptyAggs
+
+        // count of nan and infinity
         val nans = mutable.OpenHashMap.empty[Int, Long]
 
-        // only absorb non-zero values
+        // zero bin index is always reserved for missing value
+        val aggs = numericalMode match {
+          case Width =>
+            Iterator.range(0, numCols)
+              .filterNot(nonNumericalCols.contains)
+              .map((_, new WidthNumColAgg(maxBins - 1)))
+              .toMap
+
+          case Depth =>
+            Iterator.range(0, numCols)
+              .filterNot(nonNumericalCols.contains)
+              .map((_, new DepthNumColAgg(maxBins - 1)))
+              .toMap
+        }
+
+
         while (iter.hasNext) {
           val vec = iter.next()
           require(vec.size == numCols)
 
+          // only absorb non-zero values, treat zero as missing
           val iter2 = Utils.getActiveIter(vec)
-            .filterNot(t => nonNumericalCols.contains(t._1))
-
           while (iter2.hasNext) {
             val (i, v) = iter2.next()
-            if (!v.isNaN && !v.isInfinity) {
-              aggs(i).update(v)
-            } else if (!zeroAsMissing) {
-              val cnt = nans.getOrElse(i, 0L)
-              nans.update(i, cnt + 1)
+            val agg = aggs.get(i)
+            if (agg.nonEmpty) {
+              if (!v.isNaN && !v.isInfinity) {
+                agg.get.update(v)
+              } else if (!zeroAsMissing) {
+                val cnt = nans.getOrElse(i, 0L)
+                nans.update(i, cnt + 1)
+              }
             }
           }
 
@@ -291,9 +293,10 @@ private[gbm] object Discretizer extends Logging {
         if (!zeroAsMissing) {
           var i = 0
           while (i < numCols) {
-            if (!nonNumericalCols.contains(i)) {
-              val nz = cnt - aggs(i).count - nans.getOrElse(i, 0L)
-              aggs(i).updateZeros(nz)
+            val agg = aggs.get(i)
+            if (agg.nonEmpty) {
+              val nz = cnt - agg.get.count - nans.getOrElse(i, 0L)
+              agg.get.updateZeros(nz)
             }
             i += 1
           }
@@ -309,12 +312,19 @@ private[gbm] object Discretizer extends Logging {
 
       }.treeReduce(f = {
         case ((cnt1, aggs1), (cnt2, aggs2)) =>
-          var i = 0
-          while (i < numCols) {
-            aggs1(i).merge(aggs2(i))
-            i += 1
+          val aggs = mutable.OpenHashMap.empty[Int, ColAgg]
+          val iter = aggs1.iterator ++ aggs2.iterator
+          while (iter.hasNext) {
+            val (col, agg) = iter.next()
+            val agg0 = aggs.get(col)
+            if (agg0.nonEmpty) {
+              agg0.get.merge(agg)
+            } else {
+              aggs.update(col, agg)
+            }
           }
-          (cnt1 + cnt2, aggs1)
+
+          (cnt1 + cnt2, aggs.toMap)
       }, depth = depth)
 
     val colDiscretizers = aggregated.map { case (col, agg) => (col, agg.toColDiscretizer) }
@@ -353,32 +363,32 @@ private[gbm] object Discretizer extends Logging {
     logInfo(s"Discretizer building start")
 
 
-    // zero bin index is always reserved for missing value
-    val emptyAggs = numericalMode match {
-      case Width =>
-        Iterator.range(0, numCols)
-          .filterNot(nonNumericalCols.contains)
-          .map((_, new WidthNumColAgg(maxBins - 1)))
-          .toMap
-
-      case Depth =>
-        Iterator.range(0, numCols)
-          .filterNot(nonNumericalCols.contains)
-          .map((_, new DepthNumColAgg(maxBins - 1)))
-          .toMap
-    }
-
-
     val (_, labelAvg, count, aggregated) =
       instances.mapPartitions { iter =>
         var cnt = 0L
-        val aggs = emptyAggs
+
+        // count of nan and infinity
         val nans = mutable.OpenHashMap.empty[Int, Long]
+
+        // zero bin index is always reserved for missing value
+        val aggs = numericalMode match {
+          case Width =>
+            Iterator.range(0, numCols)
+              .filterNot(nonNumericalCols.contains)
+              .map((_, new WidthNumColAgg(maxBins - 1)))
+              .toMap
+
+          case Depth =>
+            Iterator.range(0, numCols)
+              .filterNot(nonNumericalCols.contains)
+              .map((_, new DepthNumColAgg(maxBins - 1)))
+              .toMap
+        }
 
         var labelAvg = Array.emptyDoubleArray
         var weightSum = 0.0
 
-        // only absorb non-zero values
+
         while (iter.hasNext) {
           val (weight, label, vec) = iter.next()
           require(vec.size == numCols)
@@ -397,17 +407,19 @@ private[gbm] object Discretizer extends Logging {
           }
           weightSum += weight
 
-          // update column metrics
-          val iter2 = Utils.getActiveIter(vec)
-            .filterNot(t => nonNumericalCols.contains(t._1))
 
+          // only absorb non-zero values, treat zero as missing
+          val iter2 = Utils.getActiveIter(vec)
           while (iter2.hasNext) {
             val (i, v) = iter2.next()
-            if (!v.isNaN && !v.isInfinity) {
-              aggs(i).update(v)
-            } else if (!zeroAsMissing) {
-              val cnt = nans.getOrElse(i, 0L)
-              nans.update(i, cnt + 1)
+            val agg = aggs.get(i)
+            if (agg.nonEmpty) {
+              if (!v.isNaN && !v.isInfinity) {
+                agg.get.update(v)
+              } else if (!zeroAsMissing) {
+                val cnt = nans.getOrElse(i, 0L)
+                nans.update(i, cnt + 1)
+              }
             }
           }
 
@@ -418,9 +430,10 @@ private[gbm] object Discretizer extends Logging {
         if (!zeroAsMissing) {
           var i = 0
           while (i < numCols) {
-            if (!nonNumericalCols.contains(i)) {
-              val nz = cnt - aggs(i).count - nans.getOrElse(i, 0L)
-              aggs(i).updateZeros(nz)
+            val agg = aggs.get(i)
+            if (agg.nonEmpty) {
+              val nz = cnt - agg.get.count - nans.getOrElse(i, 0L)
+              agg.get.updateZeros(nz)
             }
             i += 1
           }
@@ -445,13 +458,20 @@ private[gbm] object Discretizer extends Logging {
             i += 1
           }
 
-          i = 0
-          while (i < numCols) {
-            aggs1(i).merge(aggs2(i))
-            i += 1
+
+          val aggs = mutable.OpenHashMap.empty[Int, ColAgg]
+          val iter = aggs1.iterator ++ aggs2.iterator
+          while (iter.hasNext) {
+            val (col, agg) = iter.next()
+            val agg0 = aggs.get(col)
+            if (agg0.nonEmpty) {
+              agg0.get.merge(agg)
+            } else {
+              aggs.update(col, agg)
+            }
           }
 
-          (w1 + w2, avg1, cnt1 + cnt2, aggs1)
+          (w1 + w2, avg1, cnt1 + cnt2, aggs.toMap)
       }, depth = depth)
 
 

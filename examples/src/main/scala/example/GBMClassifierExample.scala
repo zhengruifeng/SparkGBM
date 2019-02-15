@@ -46,7 +46,7 @@ object GBMClassifierExample {
       .setRegAlpha(0.1)
       .setRegLambda(1.0)
       .setObjectiveFunc("logistic")
-      .setEvaluateFunc(Array("logloss", "auroc", "auprc", "error"))
+      .setEvaluateFunc(Array("logloss", "auroc", "auprc", "error", "error@0.2"))
       .setCheckpointInterval(3)
       .setEarlyStopIters(5)
       .setModelCheckpointInterval(4)

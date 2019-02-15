@@ -82,17 +82,29 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
   /**
     * Method to discretize input dataset.
-    * (default = "fit")
+    * In format of "mode1:mode2", the first `mode1` means how to discretize numerical featreus,
+    * the second `mode2` means how to discretize categorical and ranking features.
+    * Or in format "mode1", alias to "mode1:round".
+    * `mode1` can be "floor", "ceil", "round", "width", "depth".
+    * `mode2` can only be "floor", "ceil", "round".
+    * Options "floor", "ceil", "round" mean directly casting a double value to integer.
+    * Option "width" means interval-equal discretization, and "depth" means quantile based discretization.
+    * (default = "width:round")
     *
     * @group param
     */
   final val discretizationType: Param[String] =
     new Param[String](this, "discretizationType", "Method to discretize input dataset.",
-      ParamValidators.inArray[String](Array("fit", "floor", "ceil", "round")))
+      (discretizationType: String) =>
+        Array("floor", "ceil", "round", "width", "depth").contains(discretizationType) || {
+          val Array(mode1, mode2) = discretizationType.split(":")
+          Array("floor", "ceil", "round", "width", "depth").contains(mode1) &&
+            Array("floor", "ceil", "round").contains(mode2)
+        })
 
   def getDiscretizationType: String = $(discretizationType)
 
-  setDefault(discretizationType -> "fit")
+  setDefault(discretizationType -> "width:round")
 
 
   /**
@@ -542,23 +554,6 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
 
 
   /**
-    * Method to discretize numerical columns, set "width" for interval-equal discretization, "depth" for
-    * quantile based discretization.
-    * (default = "width")
-    *
-    * @group param
-    */
-  final val numericalBinType: Param[String] =
-    new Param[String](this, "numericalBinType", "Method to discretize numerical columns, " +
-      "set width for interval-equal discretization, depth for quantile based discretization.",
-      ParamValidators.inArray[String](Array("width", "depth")))
-
-  def getNumericalBinType: String = $(numericalBinType)
-
-  setDefault(numericalBinType -> "width")
-
-
-  /**
     * Float precision to represent internal gradient, hessian and prediction.
     * (default = "float")
     *
@@ -693,20 +688,5 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
   def getGreedierSearch: Boolean = $(greedierSearch)
 
   setDefault(greedierSearch -> false)
-
-
-//  /**
-//    * Step size for gradient node boosting.
-//    * (default = 0.1)
-//    *
-//    * @group param
-//    */
-//  final val stepSizeByNode: DoubleParam =
-//    new DoubleParam(this, "stepSizeByNode", "Step size for gradient node boosting.",
-//      ParamValidators.inRange(0, 1, true, true))
-//
-//  def getStepSizeByNode: Double = $(stepSizeByNode)
-//
-//  setDefault(stepSizeByNode -> 0.1)
 }
 

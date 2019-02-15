@@ -716,17 +716,13 @@ private[gbm] object Utils extends Logging {
 
           classOf[ColDiscretizer],
           classOf[Array[ColDiscretizer]],
-          classOf[QuantileNumColDiscretizer],
-          classOf[IntervalNumColDiscretizer],
-          classOf[CatColDiscretizer],
-          classOf[RankColDiscretizer],
+          classOf[DepthNumColDiscretizer],
+          classOf[WidthNumColDiscretizer],
 
           classOf[ColAgg],
           classOf[Array[ColAgg]],
-          classOf[QuantileNumColAgg],
-          classOf[IntervalNumColAgg],
-          classOf[CatColAgg],
-          classOf[RankColAgg],
+          classOf[DepthNumColAgg],
+          classOf[WidthNumColAgg],
 
           classOf[Split],
           classOf[SeqSplit],

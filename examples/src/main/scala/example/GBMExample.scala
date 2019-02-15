@@ -92,7 +92,7 @@ object GBMExample {
       .setMaxDepth(5)
       .setStepSize(0.2)
       .setMinNodeHess(1e-2)
-      .setNumericalBinType("depth")
+      .setDiscretizationType("depth")
       .setObjFunc(obj)
       .setEvalFunc(Array(r2Eval, maeEval, new R2Eval))
       .setCallbackFunc(Array(lrUpdater, recoder))

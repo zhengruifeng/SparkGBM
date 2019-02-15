@@ -144,8 +144,6 @@ class GBMClassifier(override val uid: String)
 
   def setModelCheckpointPath(value: String): this.type = set(modelCheckpointPath, value)
 
-  def setNumericalBinType(value: String): this.type = set(numericalBinType, value)
-
   def setEnableOneHot(value: Boolean): this.type = set(enableOneHot, value)
 
   def setFirstTrees(value: Int): this.type = set(firstTrees, value)
@@ -292,7 +290,6 @@ class GBMClassifier(override val uid: String)
       .setTopRate($(topRate))
       .setOtherRate($(otherRate))
       .setMaxBruteBins($(maxBruteBins))
-      .setNumericalBinType($(numericalBinType))
       .setZeroAsMissing($(zeroAsMissing))
       .setHistogramParallelism($(histogramParallelism))
       .setSubSampleType($(subSampleType))

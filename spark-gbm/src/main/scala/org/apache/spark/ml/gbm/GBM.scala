@@ -22,6 +22,8 @@ import org.apache.spark.storage.StorageLevel
   */
 class GBM extends Logging with Serializable {
 
+  import GBM._
+
   val boostConf = new BoostConfig
 
   private[spark] def setSparkSession(value: SparkSession): this.type = {
@@ -417,28 +419,30 @@ class GBM extends Logging with Serializable {
 
 
   /** method to discretize input dataset */
-  private var discretizationType: String = "fit"
+  private var discretizationType: String = "width:round"
 
   def setDiscretizationType(value: String): this.type = {
-    import Discretizer._
-    require(Array(Fit, Floor, Ceil, Round).contains(value))
+    require(Array(Width, Depth, Floor, Ceil, Round).contains(value) || {
+
+      val Array(mode1, mode2) = value.split(":")
+
+      Array(Floor, Ceil, Round, Width, Depth).contains(mode1) &&
+        Array(Floor, Ceil, Round).contains(mode2)
+    })
+
     discretizationType = value
     this
   }
 
   def getDiscretizationType: String = discretizationType
 
-
-  /** method to discretize numerical columns */
-  private var numericalBinType: String = GBM.Width
-
-  def setNumericalBinType(value: String): this.type = {
-    require(value == GBM.Width || value == GBM.Depth)
-    numericalBinType = value
-    this
+  def getNormalizedDiscretizationType: String = {
+    if (Array(Width, Depth, Floor, Ceil, Round).contains(discretizationType)) {
+      s"$discretizationType:round"
+    } else {
+      discretizationType
+    }
   }
-
-  def getNumericalBinType: String = numericalBinType
 
 
   /** whether zero is viewed as missing value */
@@ -490,49 +494,34 @@ class GBM extends Logging with Serializable {
 
     var discretizer: Discretizer = null
 
-    (initialModel.nonEmpty, boostConf.getBaseScore.nonEmpty, discretizationType == "fit") match {
+    (initialModel.nonEmpty, boostConf.getBaseScore.nonEmpty) match {
 
-      case (true, _, _) =>
+      case (true, _) =>
         require(numCols == initialModel.get.discretizer.numCols)
 
         discretizer = initialModel.get.discretizer
         logWarning(s"Discretizer is already provided in the initial model, related params are ignored: " +
-          s"discretizationType,maxBins,catCols,rankCols,numericalBinType,zeroAsMissing")
+          s"discretizationType,maxBins,catCols,rankCols,zeroAsMissing")
 
         val baseScore_ = initialModel.get.baseScore
         boostConf.setBaseScore(baseScore_)
-        logWarning(s"BaseScore is already provided in the initial model, related param is overridden: " +
+        logWarning(s"BaseScore is already provided in the initial model, related param BaseScore is overridden: " +
           s"${boostConf.getBaseScore.mkString(",")} -> ${baseScore_.mkString(",")}")
 
 
-      case (false, true, true) =>
+      case (false, true) =>
         require(row._2.length == boostConf.getBaseScore.length)
 
-        discretizer = DefaultDiscretizer.fit(data.map(_._3), numCols, boostConf.getCatCols, boostConf.getRankCols,
-          maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
+        discretizer = Discretizer.fit(data.map(_._3), numCols, getMaxBins, boostConf.getCatCols | boostConf.getRankCols,
+          getNormalizedDiscretizationType, getZeroAsMissing, getAggregationDepth)
 
 
-      case (false, false, true) =>
-        val (discretizer_, labelAvg) = DefaultDiscretizer.fit2(data, numCols, boostConf.getCatCols, boostConf.getRankCols,
-          maxBins, numericalBinType, zeroAsMissing, getAggregationDepth)
+      case (false, false) =>
+        val (discretizer_, labelAvg) = Discretizer.fit2(data, numCols, getMaxBins, boostConf.getCatCols | boostConf.getRankCols,
+          getNormalizedDiscretizationType, getZeroAsMissing, getAggregationDepth)
 
         discretizer = discretizer_
 
-        boostConf.setBaseScore(labelAvg)
-        logInfo(s"Basescore is not provided, assign it to average label value " +
-          s"${boostConf.getBaseScore.mkString(",")}")
-
-
-      case (false, true, false) =>
-        require(row._2.length == boostConf.getBaseScore.length)
-
-        discretizer = new IntDiscretizer(numCols, maxBins, discretizationType)
-
-
-      case (false, false, false) =>
-        discretizer = new IntDiscretizer(numCols, maxBins, discretizationType)
-
-        val labelAvg = Discretizer.computeAverageLabel(data.map(t => (t._1, t._2)), getAggregationDepth)
         boostConf.setBaseScore(labelAvg)
         logInfo(s"Basescore is not provided, assign it to average label value " +
           s"${boostConf.getBaseScore.mkString(",")}")
@@ -570,6 +559,9 @@ private[gbm] object GBM extends Logging {
 
   val Width = "width"
   val Depth = "depth"
+  val Floor = "floor"
+  val Ceil = "ceil"
+  val Round = "round"
 
   val SinglePrecision = "float"
   val DoublePrecision = "double"
@@ -627,7 +619,7 @@ private[gbm] object GBM extends Logging {
     val columnIndexType = Utils.getTypeByRange(discretizer.numCols)
     logInfo(s"DataType of ColumnId: $columnIndexType")
 
-    val binType = Utils.getTypeByRange(discretizer.numBins.max * 2 - 1)
+    val binType = Utils.getTypeByRange(discretizer.maxBins * 2 - 1)
     logInfo(s"DataType of Bin: $binType")
 
     (columnIndexType, binType) match {

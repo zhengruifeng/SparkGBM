@@ -7,6 +7,7 @@ import scala.reflect.ClassTag
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.collection.ExternalSorter
 
 
@@ -47,8 +48,11 @@ private[gbm] class PairRDDFunctions[K, V](self: RDD[(K, V)])
       if (ordering.nonEmpty) {
         val sorter = new ExternalSorter[K, V, C](context, Some(aggregator), None, ordering)
         sorter.insertAll(iter)
-        val outIter = sorter.iterator.asInstanceOf[Iterator[(K, C)]]
-        new InterruptibleIterator(context, outIter)
+        context.taskMetrics().incDiskBytesSpilled(sorter.diskBytesSpilled)
+        context.taskMetrics().incMemoryBytesSpilled(sorter.memoryBytesSpilled)
+        context.taskMetrics().incPeakExecutionMemory(sorter.peakMemoryUsedBytes)
+        val outputIter = new InterruptibleIterator(context, sorter.iterator.asInstanceOf[Iterator[(K, C)]])
+        CompletionIterator[(K, C), Iterator[(K, C)]](outputIter, sorter.stop())
 
       } else {
         val outIter = aggregator.combineValuesByKey(iter, context)

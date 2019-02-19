@@ -379,7 +379,7 @@ private[gbm] object HistogramUpdater extends Logging {
     val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
 
 
-    if (boostConf.getForestSize * numCols < (1 << (16 - depth))) {
+    if (boostConf.getNumTrees * numCols < (1 << (16 - depth))) {
 
       computeLocalHistograms[T, N, C, B, H](binVecBlocks, treeIdBlocks, nodeIdBlocks, gradBlocks,
         bcBoostConf, bcTreeConf, extraColSelector, nodeIdFilter)

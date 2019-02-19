@@ -5,6 +5,7 @@ import java.{util => ju}
 import scala.collection.mutable
 import scala.reflect.ClassTag
 
+import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm.linalg._
@@ -13,7 +14,7 @@ import org.apache.spark.ml.gbm.rdd.PairRDDFunctions._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.ml.gbm._
 import org.apache.spark.rdd.RDD
-import org.apache.spark._
+import org.apache.spark.unsafe.hash.Murmur3_x86_32
 
 
 private[gbm] trait HistogramUpdater[T, N, C, B, H] extends Logging {
@@ -83,8 +84,8 @@ private[gbm] class BasicHistogramUpdater[T, N, C, B, H] extends HistogramUpdater
         }.toArray.sorted
     }
 
-    val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
-    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealHistogramParallelism, numCols, treeNodeIds)
+    val seed = (boostConf.getSeed.toInt + treeConf.iteration) << depth
+    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealHistogramParallelism, treeNodeIds, seed)
     logInfo(s"Iter ${treeConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
@@ -231,8 +232,8 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
         }.toArray.sorted
     }
 
-    val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
-    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealHistogramParallelism, numCols, treeNodeIds)
+    val seed = (boostConf.getSeed.toInt + treeConf.iteration) << depth
+    val partitioner = new RangePratitioner[T, N, C](boostConf.getRealHistogramParallelism, treeNodeIds, seed)
     logInfo(s"Iter ${treeConf.iteration}: Depth $depth, partitioner $partitioner")
 
 
@@ -1020,12 +1021,14 @@ private[gbm] object HistogramUpdater extends Logging {
         val expectedNumKeys = treeIds.length * numCols *
           boostConf.getColSampleRateByTree * boostConf.getColSampleRateByNode
 
+        val seed = (boostConf.getSeed.toInt + treeConf.iteration) << depth
+
         if (expectedNumKeys >= (parallelism << 3)) {
-          new SkipNodePratitioner[T, N, C](parallelism, numCols, treeIds)
+          new SkipNodePratitioner[T, N, C](parallelism, treeIds, seed)
 
         } else if (depth > 2 && expectedNumKeys * (1 << (depth - 1)) >= (parallelism << 3)) {
           // check the parent level (not current level)
-          new DepthPratitioner[T, N, C](parallelism, numCols, depth - 1, treeIds)
+          new DepthPratitioner[T, N, C](parallelism, treeIds, depth - 1, seed)
 
         } else {
           new HashPartitioner(parallelism)
@@ -1041,21 +1044,20 @@ private[gbm] object HistogramUpdater extends Logging {
   */
 
 private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
-                                                val numCols: Int,
-                                                val treeIds: Array[T])
+                                                val treeIds: Array[T],
+                                                val seed: Int)
                                                (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                                 cn: ClassTag[N], inn: Integral[N],
                                                 cc: ClassTag[C], inc: Integral[C]) extends Partitioner {
   require(numPartitions > 0)
-  require(numCols > 0)
   require(treeIds.nonEmpty)
   require(Utils.validateOrdering[T](treeIds.iterator).forall(t => int.gteq(t, int.zero)))
 
-  private val hash = numPartitions * (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
+  private val hash = numPartitions * (seed + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
 
   private val treeInterval = numPartitions.toDouble / treeIds.length
 
-  private val colInterval = treeInterval / numCols
+  private val colInterval = treeInterval / Int.MaxValue
 
   override def getPartition(key: Any): Int = key match {
 
@@ -1063,13 +1065,13 @@ private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
       val i = net.search(treeIds, treeId)
       require(i >= 0, s"Can not index key $treeId in ${treeIds.mkString("[", ",", "]")}")
 
-      val p = i * treeInterval + inc.toInt(colId) * colInterval
+      val p = i * treeInterval + Murmur3_x86_32.hashInt(inc.toInt(colId), seed).abs * colInterval
       math.min(numPartitions - 1, p.toInt)
   }
 
   override def equals(other: Any): Boolean = other match {
     case p: SkipNodePratitioner[T, N, C] =>
-      numPartitions == p.numPartitions && numCols == p.numCols &&
+      numPartitions == p.numPartitions && seed == p.seed &&
         treeIds.length == p.treeIds.length &&
         Iterator.range(0, treeIds.length).forall(i => treeIds(i) == p.treeIds(i))
 
@@ -1081,8 +1083,8 @@ private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
 
   override def toString: String = {
     s"SkipNodePratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, " +
-      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, numCols=$numCols, " +
-      s"treeIds=${treeIds.mkString("[", ",", "]")})"
+      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, " +
+      s"treeIds=${treeIds.mkString("[", ",", "]")}, seed=$seed)"
   }
 }
 
@@ -1095,14 +1097,13 @@ private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
   * this will avoid unnecessary shuffle in histogram subtraction and reduce communication cost in following split-searching.
   */
 private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
-                                             val numCols: Int,
+                                             val treeIds: Array[T],
                                              val depth: Int,
-                                             val treeIds: Array[T])
+                                             val seed: Int)
                                             (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
                                              cn: ClassTag[N], inn: Integral[N],
                                              cc: ClassTag[C], inc: Integral[C]) extends Partitioner {
   require(numPartitions > 0)
-  require(numCols > 0)
   require(depth > 1)
   require(treeIds.nonEmpty)
   require(Utils.validateOrdering[T](treeIds.iterator).forall(t => int.gteq(t, int.zero)))
@@ -1112,13 +1113,13 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
   private val upperBound: Int = lowerBound << 1
 
   private val hash = numPartitions * depth *
-    (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
+    (seed + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max))
 
   private val treeInterval = numPartitions.toDouble / treeIds.length
 
   private val nodeInterval = treeInterval / lowerBound
 
-  private val colInterval = nodeInterval / numCols
+  private val colInterval = nodeInterval / Int.MaxValue
 
   override def getPartition(key: Any): Int = key match {
 
@@ -1128,7 +1129,8 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
 
       val nodeId2 = adjust(inn.toInt(nodeId))
 
-      val p = i * treeInterval + (nodeId2 - lowerBound) * nodeInterval + inc.toDouble(colId) * colInterval
+      val p = i * treeInterval + (nodeId2 - lowerBound) * nodeInterval +
+        Murmur3_x86_32.hashInt(inc.toInt(colId), seed).abs * colInterval
       math.min(numPartitions - 1, p.toInt)
   }
 
@@ -1144,7 +1146,7 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
   override def equals(other: Any): Boolean = other match {
     case p: DepthPratitioner[T, N, C] =>
       numPartitions == p.numPartitions &&
-        numCols == p.numCols && depth == p.depth &&
+        seed == p.seed && depth == p.depth &&
         treeIds.length == p.treeIds.length &&
         Iterator.range(0, treeIds.length).forall(i => treeIds(i) == p.treeIds(i))
 
@@ -1156,8 +1158,8 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
 
   override def toString: String = {
     s"DepthPratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, " +
-      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, numCols=$numCols, " +
-      s"depth=$depth, treeIds=${treeIds.mkString("[", ",", "]")})"
+      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, " +
+      s"treeIds=${treeIds.mkString("[", ",", "]")}, depth=$depth, seed=$seed)"
   }
 }
 
@@ -1167,14 +1169,13 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
   * reduce communication cost in following split-searching.
   */
 private[gbm] class RangePratitioner[T, N, C](val numPartitions: Int,
-                                             val numCols: Int,
-                                             val treeNodeIds: Array[(T, N)])
+                                             val treeNodeIds: Array[(T, N)],
+                                             val seed: Int)
                                             (implicit ct: ClassTag[T], int: Integral[T],
                                              cn: ClassTag[N], inn: Integral[N],
                                              cc: ClassTag[C], inc: Integral[C],
                                              order: Ordering[(T, N)]) extends Partitioner {
   require(numPartitions > 0)
-  require(numCols > 0)
   require(treeNodeIds.nonEmpty)
   require(Utils.validateOrdering[(T, N)](treeNodeIds.iterator)
     .forall { case (treeId, nodeId) => int.gteq(treeId, int.zero) && inn.gteq(nodeId, inn.zero) })
@@ -1182,13 +1183,13 @@ private[gbm] class RangePratitioner[T, N, C](val numPartitions: Int,
   private val hash = {
     val treeIds = treeNodeIds.map(_._1)
     val nodeIds = treeNodeIds.map(_._2)
-    numPartitions * (numCols + int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max)
-      + inn.toInt(nodeIds.sum) + inn.toInt(nodeIds.max) + inn.toInt(nodeIds.min))
+    numPartitions * (int.toInt(treeIds.sum) + int.toInt(treeIds.min) + int.toInt(treeIds.max)
+      + inn.toInt(nodeIds.sum) + inn.toInt(nodeIds.max) + inn.toInt(nodeIds.min)) + seed
   }
 
   private val nodeInterval = numPartitions.toDouble / treeNodeIds.length
 
-  private val colInterval = nodeInterval / numCols
+  private val colInterval = nodeInterval / Int.MaxValue
 
   override def getPartition(key: Any): Int = key match {
 
@@ -1197,14 +1198,14 @@ private[gbm] class RangePratitioner[T, N, C](val numPartitions: Int,
         order.asInstanceOf[ju.Comparator[(T, N)]])
       require(i >= 0, s"Can not index key ${(treeId, nodeId)} in ${treeNodeIds.mkString("[", ",", "]")}")
 
-      val p = i * nodeInterval + inc.toDouble(colId) * colInterval
+      val p = i * nodeInterval + Murmur3_x86_32.hashInt(inc.toInt(colId), seed).abs * colInterval
       math.min(numPartitions - 1, p.toInt)
   }
 
   override def equals(other: Any): Boolean = other match {
     case p: RangePratitioner[T, N, C] =>
       numPartitions == p.numPartitions &&
-        numCols == p.numCols && treeNodeIds.length == p.treeNodeIds.length &&
+        seed == p.seed && treeNodeIds.length == p.treeNodeIds.length &&
         Iterator.range(0, treeNodeIds.length).forall(i => order.equiv(treeNodeIds(i), p.treeNodeIds(i)))
 
     case _ =>
@@ -1215,8 +1216,8 @@ private[gbm] class RangePratitioner[T, N, C](val numPartitions: Int,
 
   override def toString: String = {
     s"RangePratitioner[${ct.runtimeClass.toString.capitalize}, ${cn.runtimeClass.toString.capitalize}, " +
-      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, numCols=$numCols, " +
-      s"treeNodeIds=${treeNodeIds.mkString("[", ",", "]")})"
+      s"${cc.runtimeClass.toString.capitalize}](numPartitions=$numPartitions, " +
+      s"treeNodeIds=${treeNodeIds.mkString("[", ",", "]")}, seed=$seed)"
   }
 }
 

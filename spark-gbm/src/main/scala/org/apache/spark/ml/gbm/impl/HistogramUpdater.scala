@@ -527,12 +527,9 @@ private[gbm] object HistogramUpdater extends Logging {
                                             cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                             ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
-    binVecBlocks.zipPartitions(treeIdBlocks, nodeIdBlocks, gradBlocks) {
+    val flattened = binVecBlocks.zipPartitions(treeIdBlocks, nodeIdBlocks, gradBlocks) {
       case (binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter) =>
-        val boostConf = bcBoostConf.value
         val treeConf = bcTreeConf.value
-
-        val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
 
         val selector = if (extraColSelector.nonEmpty) {
           Selector.union(treeConf.colSelector, extraColSelector.get)
@@ -540,245 +537,151 @@ private[gbm] object HistogramUpdater extends Logging {
           treeConf.colSelector
         }
 
-        val nzHists = mutable.OpenHashMap.empty[(T, N, C), KVVector[B, H]]
-        val histSums = mutable.OpenHashMap.empty[(T, N), (H, H)]
+        val sum = mutable.OpenHashMap.empty[(T, N), (H, H)]
 
-        val iter = Utils.zip4(binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter)
+        Utils.zip4(binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter)
+          .flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
+            Utils.zip4(binVecBlock.activeElementIterator, treeIdBlock.iterator,
+              nodeIdBlock.iterator, gradBlock.iterator)
 
-        while (iter.hasNext) {
-          val (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) = iter.next()
+          }.flatMap { case (binIter, treeIds, nodeIds, gradHess) =>
+          require(treeIds.length == nodeIds.length)
 
-          val iter2 = Utils.zip4(binVecBlock.activeElementIterator, treeIdBlock.iterator,
-            nodeIdBlock.iterator, gradBlock.iterator)
+          val indices = Iterator.range(0, nodeIds.length)
+            .filter(i => nodeIdFilter(nodeIds(i))).toArray
 
-          while (iter2.hasNext) {
-            val (binIter, treeIds, nodeIds, gradHess) = iter2.next()
-            require(treeIds.length == nodeIds.length)
+          if (indices.nonEmpty) {
+            val size = gradHess.length >> 1
 
-            val indices = Iterator.range(0, nodeIds.length)
-              .filter(i => nodeIdFilter(nodeIds(i))).toArray
+            // update gradSum & hessSum
+            var j = 0
+            while (j < indices.length) {
+              val i = indices(j)
+              val treeId = treeIds(i)
+              val nodeId = nodeIds(i)
+              val indexGrad = (i % size) << 1
+              val grad = gradHess(indexGrad)
+              val hess = gradHess(indexGrad + 1)
+              val (gradSum, hessSum) = sum.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
+              sum.update((treeId, nodeId), (nuh.plus(gradSum, grad), nuh.plus(hessSum, hess)))
+              j += 1
+            }
 
-            if (indices.nonEmpty) {
-              val size = gradHess.length >> 1
-
-              // update gradSum & hessSum
-              var j = 0
-              while (j < indices.length) {
-                val i = indices(j)
+            binIter.flatMap { case (colId, bin) =>
+              indices.iterator.flatMap { i =>
                 val treeId = treeIds(i)
-                val nodeId = nodeIds(i)
-                val indexGrad = (i % size) << 1
-                val grad = gradHess(indexGrad)
-                val hess = gradHess(indexGrad + 1)
-                val (gradSum, hessSum) = histSums.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
-                histSums.update((treeId, nodeId), (nuh.plus(gradSum, grad), nuh.plus(hessSum, hess)))
-                j += 1
-              }
-
-              // update non-zero bin histogram vectors
-              while (binIter.hasNext) {
-                val (colId, bin) = binIter.next()
-
-                var j = 0
-                while (j < indices.length) {
-                  val i = indices(j)
-                  val treeId = treeIds(i)
-                  if (selector.containsById[T, C](treeId, colId)) {
-                    val nodeId = nodeIds(i)
-                    val ig = (i % size) << 1
-                    val grad = gradHess(ig)
-                    val hess = gradHess(ig + 1)
-
-                    val nzHist = nzHists.getOrElse((treeId, nodeId, colId), KVVector.empty[B, H])
-
-                    val indexGrad = inb.plus(bin, bin)
-                    val indexHess = inb.plus(indexGrad, inb.one)
-
-                    nzHists.update((treeId, nodeId, colId), nzHist.plus(indexHess, hess).plus(indexGrad, grad))
-                  }
-                  j += 1
+                if (selector.containsById[T, C](treeId, colId)) {
+                  val nodeId = nodeIds(i)
+                  val indexGrad = (i % size) << 1
+                  val grad = gradHess(indexGrad)
+                  val hess = gradHess(indexGrad + 1)
+                  Iterator.single((treeId, nodeId, colId), (bin, grad, hess))
+                } else {
+                  Iterator.empty
                 }
               }
             }
+          } else {
+            Iterator.empty
           }
-        }
 
-        histSums.iterator.flatMap { case ((treeId, nodeId), (gradSum, hessSum)) =>
-          lazy val zHist = KVVector.dense[B, H](Array(gradSum, hessSum))
-
-          Iterator.range(0, numCols)
-            .filter(colId => selector.containsById(treeId, colId))
-            .map(inc.fromInt)
-            .map { colId =>
-              val nzHist = nzHists.get((treeId, nodeId, colId))
-
-              if (nzHist.nonEmpty) {
-                ((treeId, nodeId, colId),
-                  adjustHistVec(nzHist.get, gradSum, hessSum).compress)
-              } else {
-                ((treeId, nodeId, colId), zHist)
-              }
-
-            }
+        } ++ sum.iterator.map { case ((treeId, nodeId), (gradSum, hessSum)) =>
+          ((treeId, nodeId, inc.fromInt(-1)), (inb.zero, gradSum, hessSum))
         }
     }
 
-//
-//    val flattened = binVecBlocks.zipPartitions(treeIdBlocks, nodeIdBlocks, gradBlocks) {
-//      case (binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter) =>
-//        val treeConf = bcTreeConf.value
-//
-//        val selector = if (extraColSelector.nonEmpty) {
-//          Selector.union(treeConf.colSelector, extraColSelector.get)
-//        } else {
-//          treeConf.colSelector
-//        }
-//
-//        val sum = mutable.OpenHashMap.empty[(T, N), (H, H)]
-//
-//        Utils.zip4(binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter)
-//          .flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
-//            Utils.zip4(binVecBlock.activeElementIterator, treeIdBlock.iterator,
-//              nodeIdBlock.iterator, gradBlock.iterator)
-//
-//          }.flatMap { case (binIter, treeIds, nodeIds, gradHess) =>
-//          require(treeIds.length == nodeIds.length)
-//
-//          val indices = Iterator.range(0, nodeIds.length)
-//            .filter(i => nodeIdFilter(nodeIds(i))).toArray
-//
-//          if (indices.nonEmpty) {
-//            val size = gradHess.length >> 1
-//
-//            // update gradSum & hessSum
-//            var j = 0
-//            while (j < indices.length) {
-//              val i = indices(j)
-//              val treeId = treeIds(i)
-//              val nodeId = nodeIds(i)
-//              val indexGrad = (i % size) << 1
-//              val grad = gradHess(indexGrad)
-//              val hess = gradHess(indexGrad + 1)
-//              val (gradSum, hessSum) = sum.getOrElse((treeId, nodeId), (nuh.zero, nuh.zero))
-//              sum.update((treeId, nodeId), (nuh.plus(gradSum, grad), nuh.plus(hessSum, hess)))
-//              j += 1
-//            }
-//
-//            binIter.flatMap { case (colId, bin) =>
-//              indices.iterator.flatMap { i =>
-//                val treeId = treeIds(i)
-//                if (selector.containsById[T, C](treeId, colId)) {
-//                  val nodeId = nodeIds(i)
-//                  val indexGrad = (i % size) << 1
-//                  val grad = gradHess(indexGrad)
-//                  val hess = gradHess(indexGrad + 1)
-//                  Iterator.single((treeId, nodeId, colId), (bin, grad, hess))
-//                } else {
-//                  Iterator.empty
-//                }
-//              }
-//            }
-//          } else {
-//            Iterator.empty
-//          }
-//
-//        } ++ sum.iterator.map { case ((treeId, nodeId), (gradSum, hessSum)) =>
-//          ((treeId, nodeId, inc.fromInt(-1)), (inb.zero, gradSum, hessSum))
-//        }
-//    }
-//
-//
-//    val localAgged = flattened
-//      .aggregateByKeyWithinPartitions(KVVector.empty[B, H], Some(Ordering.Tuple3[T, N, C]))(
-//        seqOp = {
-//          case (hist, (bin, grad, hess)) =>
-//            val indexGrad = inb.plus(bin, bin)
-//            val indexHess = inb.plus(indexGrad, inb.one)
-//            hist.plus(indexHess, hess)
-//              .plus(indexGrad, grad)
-//
-//        }, combOp = _.plus(_))
-//
-//
-//    localAgged.mapPartitions { iter =>
-//      val boostConf = bcBoostConf.value
-//      val treeConf = bcTreeConf.value
-//
-//      val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
-//
-//      val selector = if (extraColSelector.nonEmpty) {
-//        Selector.union(treeConf.colSelector, extraColSelector.get)
-//      } else {
-//        treeConf.colSelector
-//      }
-//
-//      var prevTreeId = int.fromInt(-1)
-//      var prevNodeId = inn.fromInt(-1)
-//      var prevGradSum = nuh.zero
-//      var prevHessSum = nuh.zero
-//      var prevHist = KVVector.dense[B, H](Array(nuh.zero, nuh.zero))
-//      var validColIdIter = Array.empty[C].iterator
-//
-//      Utils.validateKeyOrdering(iter)
-//        .flatMap { case ((treeId, nodeId, colId), hist) =>
-//
-//          require((inc.equiv(colId, inc.fromInt(-1)) && hist.size == 2) ||
-//            (int.equiv(treeId, prevTreeId) && inn.equiv(nodeId, prevNodeId)))
-//
-//          if (inc.equiv(colId, inc.fromInt(-1))) {
-//
-//            validColIdIter.map { validColId =>
-//              ((prevTreeId, prevNodeId, validColId), prevHist)
-//
-//            } ++ {
-//              prevTreeId = treeId
-//              prevNodeId = nodeId
-//
-//              prevGradSum = hist(0)
-//              prevHessSum = hist(1)
-//              prevHist = hist
-//
-//              validColIdIter = Iterator.range(0, numCols)
-//                .filter(colId => selector.containsById(treeId, colId))
-//                .map(inc.fromInt)
-//
-//              Iterator.empty
-//            }
-//
-//          } else {
-//
-//            require(validColIdIter.hasNext)
-//
-//            var validColId = validColIdIter.next()
-//            require(inc.lteq(validColId, colId))
-//
-//            if (inc.equiv(validColId, colId)) {
-//
-//              Iterator.single(((treeId, nodeId, colId),
-//                adjustHistVec(hist, prevGradSum, prevHessSum).compress))
-//
-//            } else {
-//
-//              val builder = mutable.ArrayBuilder.make[C]
-//              while (inc.lt(validColId, colId)) {
-//                builder += validColId
-//                validColId = validColIdIter.next()
-//              }
-//
-//              require(inc.equiv(validColId, colId))
-//
-//              builder.result().map { validColId =>
-//                ((prevTreeId, prevNodeId, validColId), prevHist)
-//
-//              } ++ Iterator.single(((treeId, nodeId, colId),
-//                adjustHistVec(hist, prevGradSum, prevHessSum).compress))
-//            }
-//          }
-//
-//        } ++ validColIdIter.map { validColId =>
-//        ((prevTreeId, prevNodeId, validColId), prevHist)
-//      }
-//    }
+
+    val localAgged = flattened
+      .aggregateByKeyWithinPartitions(KVVector.empty[B, H], Some(Ordering.Tuple3[T, N, C]))(
+        seqOp = {
+          case (hist, (bin, grad, hess)) =>
+            val indexGrad = inb.plus(bin, bin)
+            val indexHess = inb.plus(indexGrad, inb.one)
+            hist.plus(indexHess, hess)
+              .plus(indexGrad, grad)
+
+        }, combOp = _.plus(_))
+
+
+    localAgged.mapPartitions { iter =>
+      val boostConf = bcBoostConf.value
+      val treeConf = bcTreeConf.value
+
+      val numCols = treeConf.getNumCols.getOrElse(boostConf.getNumCols)
+
+      val selector = if (extraColSelector.nonEmpty) {
+        Selector.union(treeConf.colSelector, extraColSelector.get)
+      } else {
+        treeConf.colSelector
+      }
+
+      var prevTreeId = int.fromInt(-1)
+      var prevNodeId = inn.fromInt(-1)
+      var prevGradSum = nuh.zero
+      var prevHessSum = nuh.zero
+      var prevHist = KVVector.dense[B, H](Array(nuh.zero, nuh.zero))
+      var validColIdIter = Array.empty[C].iterator
+
+      Utils.validateKeyOrdering(iter)
+        .flatMap { case ((treeId, nodeId, colId), hist) =>
+
+          require((inc.equiv(colId, inc.fromInt(-1)) && hist.size == 2) ||
+            (int.equiv(treeId, prevTreeId) && inn.equiv(nodeId, prevNodeId)))
+
+          if (inc.equiv(colId, inc.fromInt(-1))) {
+
+            validColIdIter.map { validColId =>
+              ((prevTreeId, prevNodeId, validColId), prevHist)
+
+            } ++ {
+              prevTreeId = treeId
+              prevNodeId = nodeId
+
+              prevGradSum = hist(0)
+              prevHessSum = hist(1)
+              prevHist = hist
+
+              validColIdIter = Iterator.range(0, numCols)
+                .filter(colId => selector.containsById(treeId, colId))
+                .map(inc.fromInt)
+
+              Iterator.empty
+            }
+
+          } else {
+
+            require(validColIdIter.hasNext)
+
+            var validColId = validColIdIter.next()
+            require(inc.lteq(validColId, colId))
+
+            if (inc.equiv(validColId, colId)) {
+
+              Iterator.single(((treeId, nodeId, colId),
+                adjustHistVec(hist, prevGradSum, prevHessSum).compress))
+
+            } else {
+
+              val builder = mutable.ArrayBuilder.make[C]
+              while (inc.lt(validColId, colId)) {
+                builder += validColId
+                validColId = validColIdIter.next()
+              }
+
+              require(inc.equiv(validColId, colId))
+
+              builder.result().map { validColId =>
+                ((prevTreeId, prevNodeId, validColId), prevHist)
+
+              } ++ Iterator.single(((treeId, nodeId, colId),
+                adjustHistVec(hist, prevGradSum, prevHessSum).compress))
+            }
+          }
+
+        } ++ validColIdIter.map { validColId =>
+        ((prevTreeId, prevNodeId, validColId), prevHist)
+      }
+    }
   }
 
 
@@ -802,7 +705,7 @@ private[gbm] object HistogramUpdater extends Logging {
                                                       cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B],
                                                       ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): RDD[((T, N, C), KVVector[B, H])] = {
 
-    binVecBlocks.zipPartitions(treeIdBlocks, nodeIdBlocks, gradBlocks) {
+    val flattened = binVecBlocks.zipPartitions(treeIdBlocks, nodeIdBlocks, gradBlocks) {
       case (binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter) =>
         val treeConf = bcTreeConf.value
 
@@ -812,115 +715,51 @@ private[gbm] object HistogramUpdater extends Logging {
           treeConf.colSelector
         }
 
-        val nzHists = mutable.OpenHashMap.empty[(T, N, C), KVVector[B, H]]
+        Utils.zip4(binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter)
+          .flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
+            Utils.zip4(binVecBlock.activeElementIterator, treeIdBlock.iterator,
+              nodeIdBlock.iterator, gradBlock.iterator)
 
-        val iter = Utils.zip4(binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter)
+          }.flatMap { case (binIter, treeIds, nodeIds, gradHess) =>
+          require(treeIds.length == nodeIds.length)
 
-        while (iter.hasNext) {
-          val (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) = iter.next()
+          val indices = Iterator.range(0, nodeIds.length)
+            .filter(i => nodeIdFilter(nodeIds(i))).toArray
 
-          val iter2 = Utils.zip4(binVecBlock.activeElementIterator, treeIdBlock.iterator,
-            nodeIdBlock.iterator, gradBlock.iterator)
+          if (indices.nonEmpty) {
+            val size = gradHess.length >> 1
 
-          while (iter2.hasNext) {
-            val (binIter, treeIds, nodeIds, gradHess) = iter2.next()
-            require(treeIds.length == nodeIds.length)
-
-            val indices = Iterator.range(0, nodeIds.length)
-              .filter(i => nodeIdFilter(nodeIds(i))).toArray
-
-            if (indices.nonEmpty) {
-              val size = gradHess.length >> 1
-
-              // update non-zero bin histogram vectors
-              while (binIter.hasNext) {
-                val (colId, bin) = binIter.next()
-
-                var j = 0
-                while (j < indices.length) {
-                  val i = indices(j)
-                  val treeId = treeIds(i)
-                  if (selector.containsById[T, C](treeId, colId)) {
-                    val nodeId = nodeIds(i)
-                    val ig = (i % size) << 1
-                    val grad = gradHess(ig)
-                    val hess = gradHess(ig + 1)
-
-                    val nzHist = nzHists.getOrElse((treeId, nodeId, colId), KVVector.empty[B, H])
-
-                    val indexGrad = inb.plus(bin, bin)
-                    val indexHess = inb.plus(indexGrad, inb.one)
-
-                    nzHists.update((treeId, nodeId, colId), nzHist.plus(indexHess, hess).plus(indexGrad, grad))
-                  }
-                  j += 1
+            binIter.flatMap { case (colId, bin) =>
+              indices.iterator.flatMap { i =>
+                val treeId = treeIds(i)
+                if (selector.containsById[T, C](treeId, colId)) {
+                  val nodeId = nodeIds(i)
+                  val indexGrad = (i % size) << 1
+                  val grad = gradHess(indexGrad)
+                  val hess = gradHess(indexGrad + 1)
+                  Iterator.single((treeId, nodeId, colId), (bin, grad, hess))
+                } else {
+                  Iterator.empty
                 }
               }
             }
+          } else {
+            Iterator.empty
           }
-        }
-
-        nzHists.iterator.map {
-          case ((treeId, nodeId, colId), nzHist) =>
-            ((treeId, nodeId, colId), nzHist.compress)
         }
     }
 
-//    val flattened = binVecBlocks.zipPartitions(treeIdBlocks, nodeIdBlocks, gradBlocks) {
-//      case (binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter) =>
-//        val treeConf = bcTreeConf.value
-//
-//        val selector = if (extraColSelector.nonEmpty) {
-//          Selector.union(treeConf.colSelector, extraColSelector.get)
-//        } else {
-//          treeConf.colSelector
-//        }
-//
-//        Utils.zip4(binVecBlockIter, treeIdBlockIter, nodeIdBlockIter, gradBlockIter)
-//          .flatMap { case (binVecBlock, treeIdBlock, nodeIdBlock, gradBlock) =>
-//            Utils.zip4(binVecBlock.activeElementIterator, treeIdBlock.iterator,
-//              nodeIdBlock.iterator, gradBlock.iterator)
-//
-//          }.flatMap { case (binIter, treeIds, nodeIds, gradHess) =>
-//          require(treeIds.length == nodeIds.length)
-//
-//          val indices = Iterator.range(0, nodeIds.length)
-//            .filter(i => nodeIdFilter(nodeIds(i))).toArray
-//
-//          if (indices.nonEmpty) {
-//            val size = gradHess.length >> 1
-//
-//            binIter.flatMap { case (colId, bin) =>
-//              indices.iterator.flatMap { i =>
-//                val treeId = treeIds(i)
-//                if (selector.containsById[T, C](treeId, colId)) {
-//                  val nodeId = nodeIds(i)
-//                  val indexGrad = (i % size) << 1
-//                  val grad = gradHess(indexGrad)
-//                  val hess = gradHess(indexGrad + 1)
-//                  Iterator.single((treeId, nodeId, colId), (bin, grad, hess))
-//                } else {
-//                  Iterator.empty
-//                }
-//              }
-//            }
-//          } else {
-//            Iterator.empty
-//          }
-//        }
-//    }
-//
-//    flattened
-//      .aggregateByKeyWithinPartitions(KVVector.empty[B, H], Some(Ordering.Tuple3[T, N, C]))(
-//        seqOp = {
-//          case (hist, (bin, grad, hess)) =>
-//            val indexGrad = inb.plus(bin, bin)
-//            val indexHess = inb.plus(indexGrad, inb.one)
-//            hist.plus(indexHess, hess)
-//              .plus(indexGrad, grad)
-//              .compress
-//
-//        }, combOp = _.plus(_))
+    flattened
+      .aggregateByKeyWithinPartitions(KVVector.empty[B, H], Some(Ordering.Tuple3[T, N, C]))(
+        seqOp = {
+          case (hist, (bin, grad, hess)) =>
+            val indexGrad = inb.plus(bin, bin)
+            val indexHess = inb.plus(indexGrad, inb.one)
+            hist.plus(indexHess, hess)
+              .plus(indexGrad, grad)
+              .compress
+
+        }, combOp = _.plus(_))
   }
 
 

@@ -750,7 +750,7 @@ private[gbm] object HistogramUpdater extends Logging {
     }
 
     flattened
-      .aggregateByKeyWithinPartitions(KVVector.empty[B, H], Some(Ordering.Tuple3[T, N, C]))(
+      .aggregateByKeyWithinPartitions(KVVector.empty[B, H])(
         seqOp = {
           case (hist, (bin, grad, hess)) =>
             val indexGrad = inb.plus(bin, bin)

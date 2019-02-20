@@ -1199,7 +1199,9 @@ private[gbm] class RangePratitioner[T, N, C](val numPartitions: Int,
       require(i >= 0, s"Can not index key ${(treeId, nodeId)} in ${treeNodeIds.mkString("[", ",", "]")}")
 
       val p = i * nodeInterval + Murmur3_x86_32.hashInt(inc.toInt(colId), seed).abs * colInterval
-      math.min(numPartitions - 1, p.toInt)
+      val pid = math.min(numPartitions - 1, p.toInt)
+      require(pid >= 0 && pid < numPartitions, s"p=$p, pid=$pid")
+      pid
   }
 
   override def equals(other: Any): Boolean = other match {

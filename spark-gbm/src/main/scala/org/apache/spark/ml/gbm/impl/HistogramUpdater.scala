@@ -667,8 +667,8 @@ private[gbm] object HistogramUpdater extends Logging {
 
               require(inc.equiv(selectedColId, colId))
 
-              builder.result().map { validColId =>
-                ((curTreeId, curNodeId, validColId), curHist)
+              builder.result().map { c =>
+                ((curTreeId, curNodeId, c), curHist)
 
               } ++ Iterator.single(((treeId, nodeId, colId),
                 adjustHistVec(hist, curGradSum, curHessSum).compress))

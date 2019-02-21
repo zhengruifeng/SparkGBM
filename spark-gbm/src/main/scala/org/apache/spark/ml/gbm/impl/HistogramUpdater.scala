@@ -615,33 +615,31 @@ private[gbm] object HistogramUpdater extends Logging {
         treeConf.colSelector
       }
 
-      var prevTreeId = int.fromInt(-1)
-      var prevNodeId = inn.fromInt(-1)
-      var prevGradSum = nuh.zero
-      var prevHessSum = nuh.zero
-      var prevHist = KVVector.dense[B, H](Array(nuh.zero, nuh.zero))
-      var validColIdIter = Array.empty[C].iterator
+      var curTreeId = int.fromInt(-1)
+      var curNodeId = inn.fromInt(-1)
+      var curGradSum = nuh.zero
+      var curHessSum = nuh.zero
+      var curHist = KVVector.dense[B, H](Array(nuh.zero, nuh.zero))
+      var selectedColIdIter = Array.empty[C].iterator
 
       Utils.validateKeyOrdering(iter)
         .flatMap { case ((treeId, nodeId, colId), hist) =>
 
           require((inc.equiv(colId, inc.fromInt(-1)) && hist.size == 2) ||
-            (int.equiv(treeId, prevTreeId) && inn.equiv(nodeId, prevNodeId)))
+            (int.equiv(treeId, curTreeId) && inn.equiv(nodeId, curNodeId)))
 
           if (inc.equiv(colId, inc.fromInt(-1))) {
 
-            validColIdIter.map { validColId =>
-              ((prevTreeId, prevNodeId, validColId), prevHist)
+            selectedColIdIter.map { selectedColId =>
+              ((curTreeId, curNodeId, selectedColId), curHist)
 
             } ++ {
-              prevTreeId = treeId
-              prevNodeId = nodeId
-
-              prevGradSum = hist(0)
-              prevHessSum = hist(1)
-              prevHist = hist
-
-              validColIdIter = Iterator.range(0, numCols)
+              curTreeId = treeId
+              curNodeId = nodeId
+              curGradSum = hist(0)
+              curHessSum = hist(1)
+              curHist = hist
+              selectedColIdIter = Iterator.range(0, numCols)
                 .filter(colId => selector.containsById(treeId, colId))
                 .map(inc.fromInt)
 
@@ -650,36 +648,35 @@ private[gbm] object HistogramUpdater extends Logging {
 
           } else {
 
-            require(validColIdIter.hasNext)
+            require(selectedColIdIter.hasNext)
+            var selectedColId = selectedColIdIter.next()
+            require(inc.lteq(selectedColId, colId))
 
-            var validColId = validColIdIter.next()
-            require(inc.lteq(validColId, colId))
-
-            if (inc.equiv(validColId, colId)) {
+            if (inc.equiv(selectedColId, colId)) {
 
               Iterator.single(((treeId, nodeId, colId),
-                adjustHistVec(hist, prevGradSum, prevHessSum).compress))
+                adjustHistVec(hist, curGradSum, curHessSum).compress))
 
             } else {
 
               val builder = mutable.ArrayBuilder.make[C]
-              while (inc.lt(validColId, colId)) {
-                builder += validColId
-                validColId = validColIdIter.next()
+              while (inc.lt(selectedColId, colId)) {
+                builder += selectedColId
+                selectedColId = selectedColIdIter.next()
               }
 
-              require(inc.equiv(validColId, colId))
+              require(inc.equiv(selectedColId, colId))
 
               builder.result().map { validColId =>
-                ((prevTreeId, prevNodeId, validColId), prevHist)
+                ((curTreeId, curNodeId, validColId), curHist)
 
               } ++ Iterator.single(((treeId, nodeId, colId),
-                adjustHistVec(hist, prevGradSum, prevHessSum).compress))
+                adjustHistVec(hist, curGradSum, curHessSum).compress))
             }
           }
 
-        } ++ validColIdIter.map { validColId =>
-        ((prevTreeId, prevNodeId, validColId), prevHist)
+        } ++ selectedColIdIter.map { selectedColId =>
+        ((curTreeId, curNodeId, selectedColId), curHist)
       }
     }
   }
@@ -757,9 +754,9 @@ private[gbm] object HistogramUpdater extends Logging {
             val indexHess = inb.plus(indexGrad, inb.one)
             hist.plus(indexHess, hess)
               .plus(indexGrad, grad)
-              .compress
 
         }, combOp = _.plus(_))
+      .mapValues(_.compress)
   }
 
 
@@ -864,32 +861,29 @@ private[gbm] object HistogramUpdater extends Logging {
 
 
     localAgged.mapPartitions { iter =>
-
-      var prevTreeId = int.fromInt(-1)
-      var prevNodeId = inn.fromInt(-1)
-      var prevGradSum = nuh.zero
-      var prevHessSum = nuh.zero
+      var curTreeId = int.fromInt(-1)
+      var curNodeId = inn.fromInt(-1)
+      var curGradSum = nuh.zero
+      var curHessSum = nuh.zero
 
       Utils.validateKeyOrdering(iter)
         .flatMap { case ((treeId, nodeId, colId), hist) =>
 
           require((inc.equiv(colId, inc.fromInt(-1)) && hist.size == 2) ||
-            (int.equiv(treeId, prevTreeId) && inn.equiv(nodeId, prevNodeId)))
+            (int.equiv(treeId, curTreeId) && inn.equiv(nodeId, curNodeId)))
 
           if (inc.equiv(colId, inc.fromInt(-1))) {
-
-            prevTreeId = treeId
-            prevNodeId = nodeId
-
-            prevGradSum = hist(0)
-            prevHessSum = hist(1)
+            curTreeId = treeId
+            curNodeId = nodeId
+            curGradSum = hist(0)
+            curHessSum = hist(1)
 
             Iterator.empty
 
           } else {
 
             Iterator.single(((treeId, nodeId, colId),
-              adjustHistVec(hist, prevGradSum, prevHessSum).compress))
+              adjustHistVec(hist, curGradSum, curHessSum).compress))
           }
         }
     }

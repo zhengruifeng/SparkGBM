@@ -1065,8 +1065,16 @@ private[gbm] class SkipNodePratitioner[T, N, C](val numPartitions: Int,
       val i = net.search(treeIds, treeId)
       require(i >= 0, s"Can not index key $treeId in ${treeIds.mkString("[", ",", "]")}")
 
-      val p = i * treeInterval + Murmur3_x86_32.hashInt(inc.toInt(colId), seed).abs * colInterval
-      math.min(numPartitions - 1, p.toInt)
+      val p = i * treeInterval +
+        Murmur3_x86_32.hashInt(inc.toInt(colId), seed).toDouble.abs * colInterval
+
+      if (p >= numPartitions) {
+        numPartitions - 1
+      } else if (p < 0) {
+        0
+      } else {
+        p.toInt
+      }
   }
 
   override def equals(other: Any): Boolean = other match {
@@ -1129,9 +1137,17 @@ private[gbm] class DepthPratitioner[T, N, C](val numPartitions: Int,
 
       val nodeId2 = adjust(inn.toInt(nodeId))
 
-      val p = i * treeInterval + (nodeId2 - lowerBound) * nodeInterval +
-        Murmur3_x86_32.hashInt(inc.toInt(colId), seed).abs * colInterval
-      math.min(numPartitions - 1, p.toInt)
+      val p = i * treeInterval +
+        (nodeId2 - lowerBound) * nodeInterval +
+        Murmur3_x86_32.hashInt(inc.toInt(colId), seed).toDouble.abs * colInterval
+
+      if (p >= numPartitions) {
+        numPartitions - 1
+      } else if (p < 0) {
+        0
+      } else {
+        p.toInt
+      }
   }
 
   private def adjust(nodeId: Int): Int = {
@@ -1198,10 +1214,19 @@ private[gbm] class RangePratitioner[T, N, C](val numPartitions: Int,
         order.asInstanceOf[ju.Comparator[(T, N)]])
       require(i >= 0, s"Can not index key ${(treeId, nodeId)} in ${treeNodeIds.mkString("[", ",", "]")}")
 
-      val p = i * nodeInterval + Murmur3_x86_32.hashInt(inc.toInt(colId), seed).abs * colInterval
-      val pid = math.min(numPartitions - 1, p.toInt)
-      require(pid >= 0 && pid < numPartitions, s"p=$p, pid=$pid")
-      pid
+
+      // Do not use Murmur3_x86_32.hashInt(inc.toInt(colId), seed).abs
+      // hash value maybe Int.MinValue < 0, whose abs value is itself
+      val p = i * nodeInterval +
+        Murmur3_x86_32.hashInt(inc.toInt(colId), seed).toDouble.abs * colInterval
+
+      if (p >= numPartitions) {
+        numPartitions - 1
+      } else if (p < 0) {
+        0
+      } else {
+        p.toInt
+      }
   }
 
   override def equals(other: Any): Boolean = other match {

@@ -638,7 +638,9 @@ private[gbm] object Utils extends Logging {
 
     var i = 0
     while (i < dataframes.length) {
-      dataframes(i).write
+      dataframes(i)
+        .repartition(1)
+        .write
         .mode(SaveMode.Overwrite)
         .parquet(new Path(path, names(i)).toString)
       i += 1

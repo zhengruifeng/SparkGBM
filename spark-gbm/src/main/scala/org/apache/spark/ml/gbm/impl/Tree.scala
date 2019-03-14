@@ -205,7 +205,7 @@ private[gbm] object Tree extends Logging {
 
         val sampledHistograms = if (boostConf.getColSampleRateByNode < 1) {
 
-          // perform column sampling by node
+          // perform node-wise col-sampling
 
           val threshold = (boostConf.getColSampleRateByNode * Long.MaxValue).toLong
           val seed = boostConf.getSeed.toInt * treeConf.iteration + depth
@@ -224,7 +224,7 @@ private[gbm] object Tree extends Logging {
 
       case _ =>
         // For other types, we do not need to cache intermediate histograms,
-        // so we create extra column selector to perform node-wise colsample at one time,
+        // so we create extra column selector to perform node-wise col-sampling at one time,
         // and randomly mask nodeIds in `nodeIdBlocks` to perform node-wise rowsample.
 
         val seed = boostConf.getSeed.toInt * treeConf.iteration + depth
@@ -241,9 +241,9 @@ private[gbm] object Tree extends Logging {
         }
 
 
-        val sampledNodeIdBlocks = if (boostConf.getSubSampleRateByNode < 1) {
+        val maskedNodeIdBlocks = if (boostConf.getSubSampleRateByNode < 1) {
 
-          // perform instances sampling by node
+          // perform node-wise row-sampling
           // randomly mask some nodes in histogram computation by setting zero values
           nodeIdBlocks.mapPartitionsWithIndex { case (partId, iter) =>
             val rate = bcBoostConf.value.getSubSampleRateByNode
@@ -255,6 +255,7 @@ private[gbm] object Tree extends Logging {
                   var i = 0
                   while (i < nodeIds.length) {
                     if (rng.nextDouble() < rate) {
+                      // nodeIds of zero value will be ignored in histogram computation
                       nodeIds(i) = inn.zero
                     }
                     i += 1
@@ -271,7 +272,7 @@ private[gbm] object Tree extends Logging {
           nodeIdBlocks
         }
 
-        val histograms = updater.update(binVecBlocks, treeIdBlocks, nodeIdBlocks, gradBlocks,
+        val histograms = updater.update(binVecBlocks, treeIdBlocks, maskedNodeIdBlocks, gradBlocks,
           boostConf, bcBoostConf, treeConf, bcTreeConf, extraSelector, splits, depth)
           .setName(s"Iter ${treeConf.iteration}, depth $depth: Histograms")
 

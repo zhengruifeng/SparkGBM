@@ -60,7 +60,7 @@ private[gbm] object Tree extends Logging {
         remainingLeaves(treeId) -= count
       }
 
-      updateRoots[T, N](roots, depth, splits, additive)
+      updateTreesImpl[T, N](roots, depth, splits, additive)
 
       logInfo(s"Iter ${treeConf.iteration}: Depth $depth: splitting finished, $numFinished trees" +
         s" growth finished, ${splits.size} leaves split, total gain=${splits.valuesIterator.map(_.gain).sum}.")
@@ -79,12 +79,12 @@ private[gbm] object Tree extends Logging {
     * @param roots  roots of trees
     * @param splits splits of leaves
     */
-  def updateRoots[T, N](roots: Array[LearningNode],
-                        depth: Int,
-                        splits: Map[(T, N), Split],
-                        additive: Boolean)
-                       (implicit ct: ClassTag[T], int: Integral[T],
-                        cn: ClassTag[N], inn: Integral[N]): Unit = {
+  def updateTreesImpl[T, N](roots: Array[LearningNode],
+                            depth: Int,
+                            splits: Map[(T, N), Split],
+                            additive: Boolean)
+                           (implicit ct: ClassTag[T], int: Integral[T],
+                            cn: ClassTag[N], inn: Integral[N]): Unit = {
     if (splits.nonEmpty) {
       val minNodeId = inn.fromInt(1 << depth)
 
@@ -141,6 +141,7 @@ private[gbm] object Tree extends Logging {
 
     binVecBlocks.zipPartitions(treeIdBlocks, nodeIdBlocks) {
       case (binVecBlockIter, treeIdBlockIter, nodeIdBlockIter) =>
+
         Utils.zip3(binVecBlockIter, treeIdBlockIter, nodeIdBlockIter)
           .map { case (binVecBlock, treeIdBlock, nodeIdBlock) =>
             require(binVecBlock.size == treeIdBlock.size)

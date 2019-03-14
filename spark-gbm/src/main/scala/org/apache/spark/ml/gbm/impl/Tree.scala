@@ -7,7 +7,6 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
 import org.apache.spark.ml.gbm.linalg._
-import org.apache.spark.ml.gbm.rdd.RDDFunctions._
 import org.apache.spark.ml.gbm.util._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.unsafe.hash.Murmur3_x86_32
@@ -139,38 +138,42 @@ private[gbm] object Tree extends Logging {
                                      cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
                                      cc: ClassTag[C], inc: Integral[C], nec: NumericExt[C],
                                      cb: ClassTag[B], inb: Integral[B], neb: NumericExt[B]): RDD[ArrayBlock[N]] = {
-    binVecBlocks.zip2(treeIdBlocks, nodeIdBlocks)
-      .map { case (binVecBlock, treeIdBlock, nodeIdBlock) =>
-        require(binVecBlock.size == treeIdBlock.size)
-        require(binVecBlock.size == nodeIdBlock.size)
 
-        val iter = Utils.zip3(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator)
-          .map { case (binVec, treeIds, nodeIds) =>
-            require(treeIds.length == nodeIds.length)
+    binVecBlocks.zipPartitions(treeIdBlocks, nodeIdBlocks) {
+      case (binVecBlockIter, treeIdBlockIter, nodeIdBlockIter) =>
+        Utils.zip3(binVecBlockIter, treeIdBlockIter, nodeIdBlockIter)
+          .map { case (binVecBlock, treeIdBlock, nodeIdBlock) =>
+            require(binVecBlock.size == treeIdBlock.size)
+            require(binVecBlock.size == nodeIdBlock.size)
 
-            var i = 0
-            while (i < treeIds.length) {
-              val treeId = treeIds(i)
-              val nodeId = nodeIds(i)
+            val iter = Utils.zip3(binVecBlock.iterator, treeIdBlock.iterator, nodeIdBlock.iterator)
+              .map { case (binVec, treeIds, nodeIds) =>
+                require(treeIds.length == nodeIds.length)
 
-              splits.get((treeId, nodeId))
-                .foreach { split =>
-                  val leftNodeId = inn.plus(nodeId, nodeId)
-                  if (split.goLeft[B](binVec.apply)) {
-                    nodeIds(i) = leftNodeId
-                  } else {
-                    nodeIds(i) = inn.plus(leftNodeId, inn.one)
-                  }
+                var i = 0
+                while (i < treeIds.length) {
+                  val treeId = treeIds(i)
+                  val nodeId = nodeIds(i)
+
+                  splits.get((treeId, nodeId))
+                    .foreach { split =>
+                      val leftNodeId = inn.plus(nodeId, nodeId)
+                      if (split.goLeft[B](binVec.apply)) {
+                        nodeIds(i) = leftNodeId
+                      } else {
+                        nodeIds(i) = inn.plus(leftNodeId, inn.one)
+                      }
+                    }
+
+                  i += 1
                 }
 
-              i += 1
-            }
+                nodeIds
+              }
 
-            nodeIds
+            ArrayBlock.build(iter)
           }
-
-        ArrayBlock.build(iter)
-      }
+    }
   }
 
 

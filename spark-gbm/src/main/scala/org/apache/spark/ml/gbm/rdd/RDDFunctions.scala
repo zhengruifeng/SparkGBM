@@ -41,7 +41,7 @@ private[gbm] class RDDFunctions[T: ClassTag](self: RDD[T]) extends Serializable 
         } else if (w == 1) {
           iter
         } else {
-          val rng = new XORShiftRandom(pid + seed)
+          val rng = new XORShiftRandom(seed + pid)
           iter.filter(_ => rng.nextDouble < w)
         }
       }

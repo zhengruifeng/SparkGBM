@@ -3,6 +3,7 @@ package org.apache.spark.ml.gbm.impl
 import scala.collection.mutable
 import scala.reflect.ClassTag
 
+import org.apache.spark.TaskContext
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.gbm._
@@ -184,6 +185,7 @@ object GreedierTree extends Logging {
 
     auxilaryBlocks.zipPartitions(treeIdBlocks) {
       case (auxilaryBlockIter, treeIdBlockIter) =>
+
         Utils.zip2(auxilaryBlockIter, treeIdBlockIter)
           .map { case ((nodeIdBlock, nodePredBlock), treeIdBlock) =>
             require(nodeIdBlock.size == nodePredBlock.size)
@@ -369,10 +371,12 @@ object GreedierTree extends Logging {
 
     gradBlocks.zipPartitions(treeIdBlocks) {
       case (gradBlockIter, treeIdBlockIter) =>
+
+        val pid = TaskContext.getPartitionId()
+        val rng = new XORShiftRandom(seed + pid)
+
         val iter = Utils.zip2(gradBlockIter, treeIdBlockIter)
         val sum = mutable.OpenHashMap.empty[T, (H, H)]
-
-        val rng = new XORShiftRandom(seed)
 
         while (iter.hasNext) {
           val (gradBlock, treeIdBlock) = iter.next()

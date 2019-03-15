@@ -251,7 +251,7 @@ private[gbm] object Tree extends Logging {
           // randomly mask some nodes in histogram computation by setting zero values
           nodeIdBlocks.mapPartitionsWithIndex { case (partId, iter) =>
             val rate = bcBoostConf.value.getSubSampleRateByNode
-            val rng = new XORShiftRandom(seed * partId + 1)
+            val rng = new XORShiftRandom(seed + partId)
 
             iter.map { nodeIdBlock =>
               val iter2 = nodeIdBlock.iterator

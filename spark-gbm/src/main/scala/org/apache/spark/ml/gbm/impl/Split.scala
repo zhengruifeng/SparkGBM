@@ -557,28 +557,34 @@ private[gbm] object Split extends Logging {
                    leafWeight: Option[Float],
                    boostConf: BoostConfig): (Float, Float) = {
 
-    val gradSum2 = if (leafWeight.nonEmpty) {
+    val g = if (leafWeight.nonEmpty) {
       gradSum + leafWeight.get * boostConf.getRegLambda
     } else {
       gradSum
     }
 
+    val h = hessSum + boostConf.getRegLambda
+
     if (boostConf.getRegAlpha == 0) {
-      val weight = -gradSum2 / (hessSum + boostConf.getRegLambda)
-      val loss = (hessSum + boostConf.getRegLambda) * weight * weight + gradSum2 * weight * 2
+      val weight = -g / h
+
+      val loss = h * weight * weight + g * weight * 2
+
       (weight.toFloat, -loss.toFloat)
 
     } else {
 
-      val weight = if (gradSum2 + boostConf.getRegAlpha < 0) {
-        -(boostConf.getRegAlpha + gradSum2) / (hessSum + boostConf.getRegLambda)
-      } else if (gradSum2 - boostConf.getRegAlpha > 0) {
-        (boostConf.getRegAlpha - gradSum2) / (hessSum + boostConf.getRegLambda)
+      val weight = if (g + boostConf.getRegAlpha < 0) {
+        -(boostConf.getRegAlpha + g) / h
+      } else if (g - boostConf.getRegAlpha > 0) {
+        (boostConf.getRegAlpha - g) / h
       } else {
         0.0
       }
-      val loss = (hessSum + boostConf.getRegLambda) * weight * weight + gradSum2 * weight * 2 +
+
+      val loss = h * weight * weight + g * weight * 2 +
         boostConf.getRegAlpha * weight.abs * 2
+
       (weight.toFloat, -loss.toFloat)
     }
   }

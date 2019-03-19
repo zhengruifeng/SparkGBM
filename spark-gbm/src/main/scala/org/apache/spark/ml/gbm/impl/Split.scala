@@ -139,7 +139,7 @@ private[gbm] object Split extends Logging {
     */
   def split[@spec(Float, Double) H](colId: Int,
                                     hist: Array[H],
-                                    leafWeight: Option[H],
+                                    baseWeight: Option[H],
                                     boostConf: BoostConfig,
                                     treeConf: TreeConfig)
                                    (implicit nuh: Numeric[H]): Option[Split] = {
@@ -196,11 +196,11 @@ private[gbm] object Split extends Logging {
     }
 
     val split = if (colIsSeq) {
-      splitSeq(colId, gradSeq, hessSeq, leafWeight.map(nuh.toFloat), boostConf)
+      splitSeq(colId, gradSeq, hessSeq, baseWeight.map(nuh.toFloat), boostConf)
     } else if (nnz <= boostConf.getMaxBruteBins) {
-      splitSetBrute(colId, gradSeq, hessSeq, leafWeight.map(nuh.toFloat), boostConf)
+      splitSetBrute(colId, gradSeq, hessSeq, baseWeight.map(nuh.toFloat), boostConf)
     } else {
-      splitSetHeuristic(colId, gradSeq, hessSeq, leafWeight.map(nuh.toFloat), boostConf)
+      splitSetHeuristic(colId, gradSeq, hessSeq, baseWeight.map(nuh.toFloat), boostConf)
     }
 
     if (split.isEmpty ||
@@ -244,11 +244,11 @@ private[gbm] object Split extends Logging {
   def splitSeq(colId: Int,
                gradSeq: Array[Float],
                hessSeq: Array[Float],
-               leafWeight: Option[Float],
+               baseWeight: Option[Float],
                boostConf: BoostConfig): Option[SeqSplit] = {
     // missing go left
     // find best split on indices of [i0, i1, i2, i3, i4]
-    val search1 = seqSearch(gradSeq, hessSeq, leafWeight, boostConf)
+    val search1 = seqSearch(gradSeq, hessSeq, baseWeight, boostConf)
 
     val search2 = if (gradSeq.head == 0 && hessSeq.head == 0) {
       // if hist of missing value is zero
@@ -267,7 +267,7 @@ private[gbm] object Split extends Logging {
       System.arraycopy(hessSeq, 1, hessSeq, 0, hessSeq.length - 1)
       hessSeq(hessSeq.length - 1) = h0
 
-      seqSearch(gradSeq, hessSeq, leafWeight, boostConf)
+      seqSearch(gradSeq, hessSeq, baseWeight, boostConf)
     }
 
     (search1, search2) match {
@@ -303,7 +303,7 @@ private[gbm] object Split extends Logging {
   def splitSetHeuristic(colId: Int,
                         gradSeq: Array[Float],
                         hessSeq: Array[Float],
-                        leafWeight: Option[Float],
+                        baseWeight: Option[Float],
                         boostConf: BoostConfig): Option[SetSplit] = {
     // sort the hist according to the relevance of gain
     // [g0, g1, g2, g3], [h0, h1, h2, h3] -> [g1, g3, g0, g2], [h1, h3, h0, h2]
@@ -316,7 +316,7 @@ private[gbm] object Split extends Logging {
         grad / (hess + epsion)
       }.unzip3
 
-    val search = seqSearch(sortedGradSeq, sortedHessSeq, leafWeight, boostConf)
+    val search = seqSearch(sortedGradSeq, sortedHessSeq, baseWeight, boostConf)
 
     if (search.isEmpty) {
       return None
@@ -342,12 +342,12 @@ private[gbm] object Split extends Logging {
   def splitSetBrute(colId: Int,
                     gradSeq: Array[Float],
                     hessSeq: Array[Float],
-                    leafWeight: Option[Float],
+                    baseWeight: Option[Float],
                     boostConf: BoostConfig): Option[SetSplit] = {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
-    val (_, baseScore) = computeScore(gradSum, hessSum, leafWeight, boostConf)
+    val (_, baseScore) = computeScore(gradSum, hessSum, baseWeight, boostConf)
     if (!validate(baseScore)) {
       return None
     }
@@ -408,8 +408,8 @@ private[gbm] object Split extends Logging {
 
       if (hess1 >= boostConf.getMinNodeHess && hess2 >= boostConf.getMinNodeHess) {
 
-        val (weight1, score1) = computeScore(grad1, hess1, leafWeight, boostConf)
-        val (weight2, score2) = computeScore(grad2, hess2, leafWeight, boostConf)
+        val (weight1, score1) = computeScore(grad1, hess1, baseWeight, boostConf)
+        val (weight2, score2) = computeScore(grad2, hess2, baseWeight, boostConf)
 
         if (validate(weight1, score1, weight2, score2)) {
           val score = score1 + score2
@@ -474,12 +474,12 @@ private[gbm] object Split extends Logging {
     */
   def seqSearch(gradSeq: Array[Float],
                 hessSeq: Array[Float],
-                leafWeight: Option[Float],
+                baseWeight: Option[Float],
                 boostConf: BoostConfig): Option[(Int, Float, Array[Float])] = {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
-    val (_, baseScore) = computeScore(gradSum, hessSum, leafWeight, boostConf)
+    val (_, baseScore) = computeScore(gradSum, hessSum, baseWeight, boostConf)
     if (!validate(baseScore)) {
       return None
     }
@@ -506,8 +506,8 @@ private[gbm] object Split extends Logging {
 
         if (hessLeft >= boostConf.getMinNodeHess && hessRight >= boostConf.getMinNodeHess) {
 
-          val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, leafWeight, boostConf)
-          val (weightRight, scoreRight) = computeScore(gradRight, hessRight, leafWeight, boostConf)
+          val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, baseWeight, boostConf)
+          val (weightRight, scoreRight) = computeScore(gradRight, hessRight, baseWeight, boostConf)
 
           if (validate(weightLeft, scoreLeft, weightRight, scoreRight)) {
             val score = scoreLeft + scoreRight
@@ -545,7 +545,19 @@ private[gbm] object Split extends Logging {
 
 
   /**
-    * Compute the weight and score, given the sum of hist.
+    * Compute the optimal weight w* and score obj*, given the sum of hist.
+    *
+    * Obj(w) = 1/2 * hessSum * w^2^
+    *        + gradSum * w
+    *        + alpha * |w_base + w|
+    *        + 1/2 * lambda * (w_base + w)^2^
+    *
+    *        = 1/2 * (hessSum + lambda) * w^2^
+    *        + (gradSum + lambda * w_base) * w
+    *        + alpha * |w_base + w|
+    *
+    * where w_bias is used in gradient leaf boosting to represent sum of
+    * weights from root to current leaf node.
     *
     * @param gradSum   sum of grad
     * @param hessSum   sum of hess
@@ -554,38 +566,41 @@ private[gbm] object Split extends Logging {
     */
   def computeScore(gradSum: Float,
                    hessSum: Float,
-                   leafWeight: Option[Float],
+                   baseWeight: Option[Float],
                    boostConf: BoostConfig): (Float, Float) = {
+    val base = baseWeight.getOrElse(0.0F)
 
-    val g = if (leafWeight.nonEmpty) {
-      gradSum + leafWeight.get * boostConf.getRegLambda
-    } else {
-      gradSum
-    }
-
-    val h = hessSum + boostConf.getRegLambda
+    val a = (hessSum + boostConf.getRegLambda) / 2
+    val b = gradSum + boostConf.getRegLambda * base
 
     if (boostConf.getRegAlpha == 0) {
-      val weight = -g / h
+      // Obj(w) = a * w^2 + b * w
 
-      val loss = h * weight * weight + g * weight * 2
+      val w = -b / a / 2
 
-      (weight.toFloat, -loss.toFloat)
+      val obj = a * w * w + b * w
+
+      (w.toFloat, -obj.toFloat)
 
     } else {
+      // Obj(w) = a * w^2 + b * w + c * |w + d|
+      // z = w + d
+      // Obj(z) = a * z^2 + (b - 2 * a * d) * z + c * |z|
 
-      val weight = if (g + boostConf.getRegAlpha < 0) {
-        -(boostConf.getRegAlpha + g) / h
-      } else if (g - boostConf.getRegAlpha > 0) {
-        (boostConf.getRegAlpha - g) / h
+      val c = boostConf.getRegAlpha
+      val d = base
+
+      val w = if (b - a * d * 2 + c < 0) {
+        -(c + b - a * d * 2) / a / 2 - d
+      } else if (b - a * d * 2 - c > 0) {
+        (c - b + a * d * 2) / a / 2 - d
       } else {
-        0.0
+        -d
       }
 
-      val loss = h * weight * weight + g * weight * 2 +
-        boostConf.getRegAlpha * weight.abs * 2
+      val obj = a * w * w + b * w + c * (w + d).abs
 
-      (weight.toFloat, -loss.toFloat)
+      (w.toFloat, -obj.toFloat)
     }
   }
 

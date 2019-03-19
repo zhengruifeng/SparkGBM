@@ -542,14 +542,14 @@ class BoostConfig extends Logging with Serializable {
 
 
   /** whether to update prediction and gradient after each level */
-  private var greedierSearch: Boolean = false
+  private var leafBoosting: Boolean = false
 
-  private[gbm] def setGreedierSearch(value: Boolean): this.type = {
-    greedierSearch = value
+  private[gbm] def setLeafBoosting(value: Boolean): this.type = {
+    leafBoosting = value
     this
   }
 
-  def getGreedierSearch: Boolean = greedierSearch
+  def getLeafBoosting: Boolean = leafBoosting
 
 
   /** objective function */

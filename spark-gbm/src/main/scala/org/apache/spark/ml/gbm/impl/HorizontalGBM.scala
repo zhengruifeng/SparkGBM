@@ -541,7 +541,7 @@ object HorizontalGBM extends Logging {
     cleaner.registerCachedRDDs(treeIdBlocks)
 
 
-    if (boostConf.getGreedierSearch) {
+    if (boostConf.getLeafBoosting) {
 
       val sampledWeightBlocks = weightBlocks.zipPartitions(gradNormBlocks) {
         case (weightBlockIter, gradNormBlockIter) =>
@@ -642,7 +642,7 @@ object HorizontalGBM extends Logging {
       }.setName(s"Iter ${treeConf.iteration}: RawPreds (GOSS)")
 
 
-      GreedierTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
+      LeafBoostingTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
         sampledRawPredBlocks, treeIdBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)
 
 
@@ -752,7 +752,7 @@ object HorizontalGBM extends Logging {
     }
 
 
-    if (boostConf.getGreedierSearch) {
+    if (boostConf.getLeafBoosting) {
 
       val rawPredBlocks = boostConf.getBoostType match {
         case GBM.GBTree =>
@@ -766,7 +766,7 @@ object HorizontalGBM extends Logging {
       }
       rawPredBlocks.setName(s"Iter ${treeConf.iteration}: RawPreds")
 
-      GreedierTree.train[T, N, C, B, H](weightBlocks, labelBlocks, sampledBinVecBlocks,
+      LeafBoostingTree.train[T, N, C, B, H](weightBlocks, labelBlocks, sampledBinVecBlocks,
         rawPredBlocks, treeIdBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)
 
     } else {
@@ -878,7 +878,7 @@ object HorizontalGBM extends Logging {
     cleaner.registerCachedRDDs(treeIdBlocks)
 
 
-    if (boostConf.getGreedierSearch) {
+    if (boostConf.getLeafBoosting) {
 
       val sampledWeightBlocks = weightBlocks
         .mapPartitionsWithIndex { case (partId, iter) =>
@@ -930,7 +930,7 @@ object HorizontalGBM extends Logging {
       }
       sampledRawPredBlocks.setName(s"Iter ${treeConf.iteration}: RawPreds (Partition-Sampled)")
 
-      GreedierTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
+      LeafBoostingTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
         sampledRawPredBlocks, treeIdBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)
 
     } else {
@@ -1033,7 +1033,7 @@ object HorizontalGBM extends Logging {
     cleaner.registerCachedRDDs(treeIdBlocks)
 
 
-    if (boostConf.getGreedierSearch) {
+    if (boostConf.getLeafBoosting) {
       val sampledWeightBlocks = weightBlocks
         .mapPartitionsWithIndex { case (partId, iter) =>
           val boostConf = bcBoostConf.value
@@ -1116,7 +1116,7 @@ object HorizontalGBM extends Logging {
       }
       sampledRawPredBlocks.setName(s"Iter ${treeConf.iteration}: RawPreds (Block-Sampled)")
 
-      GreedierTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
+      LeafBoostingTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
         sampledRawPredBlocks, treeIdBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)
 
     } else {
@@ -1239,7 +1239,7 @@ object HorizontalGBM extends Logging {
     cleaner.registerCachedRDDs(treeIdBlocks)
 
 
-    if (boostConf.getGreedierSearch) {
+    if (boostConf.getLeafBoosting) {
 
       val sampledWeightBlocks = weightBlocks
         .mapPartitionsWithIndex { case (partId, iter) =>
@@ -1324,7 +1324,7 @@ object HorizontalGBM extends Logging {
             .map(ArrayBlock.build[H])
         }.setName(s"Iter ${treeConf.iteration}: RawPreds (Row-Sampled)")
 
-      GreedierTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
+      LeafBoostingTree.train[T, N, C, B, H](sampledWeightBlocks, sampledLabelBlocks, sampledBinVecBlocks,
         sampledRawPredBlocks, treeIdBlocks, boostConf, bcBoostConf, treeConf, bcTreeConf)
 
     } else {

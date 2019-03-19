@@ -681,12 +681,12 @@ private[ml] trait GBMParams extends PredictorParams with HasWeightCol with HasMa
     *
     * @group param
     */
-  final val greedierSearch: BooleanParam =
-    new BooleanParam(this, "greedierSearch", "Whether to update " +
+  final val leafBoosting: BooleanParam =
+    new BooleanParam(this, "leafBoosting", "Whether to update " +
       "prediction and gradient after each level.")
 
-  def getGreedierSearch: Boolean = $(greedierSearch)
+  def getLeafBoosting: Boolean = $(leafBoosting)
 
-  setDefault(greedierSearch -> false)
+  setDefault(leafBoosting -> false)
 }
 

@@ -154,7 +154,7 @@ class GBMRegressor(override val uid: String) extends
 
   def setImportanceType(value: String): this.type = set(importanceType, value)
 
-  def setGreedierSearch(value: Boolean): this.type = set(greedierSearch, value)
+  def setLeafBoosting(value: Boolean): this.type = set(leafBoosting, value)
 
   override def fit(dataset: Dataset[_]): GBMRegressionModel = {
     fit(dataset, None)
@@ -250,7 +250,7 @@ class GBMRegressor(override val uid: String) extends
       .setAggregationDepth($(aggregationDepth))
       .setSeed($(seed))
       .setParallelismType($(parallelismType))
-      .setGreedierSearch($(greedierSearch))
+      .setLeafBoosting($(leafBoosting))
       .setBoostType($(boostType))
       .setDropRate($(dropRate))
       .setDropSkip($(dropSkip))

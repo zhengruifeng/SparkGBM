@@ -13,7 +13,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.util.random.XORShiftRandom
 
 
-object GreedierTree extends Logging {
+object LeafBoostingTree extends Logging {
 
 
   /**

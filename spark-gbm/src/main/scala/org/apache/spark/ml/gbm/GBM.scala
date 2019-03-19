@@ -272,12 +272,12 @@ class GBM extends Logging with Serializable {
 
 
   /** whether to update prediction and gradient after each level */
-  def setGreedierSearch(value: Boolean): this.type = {
-    boostConf.setGreedierSearch(value)
+  def setLeafBoosting(value: Boolean): this.type = {
+    boostConf.setLeafBoosting(value)
     this
   }
 
-  def getGreedierSearch: Boolean = boostConf.getGreedierSearch
+  def getLeafBoosting: Boolean = boostConf.getLeafBoosting
 
 
   /** boosting type */

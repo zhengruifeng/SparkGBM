@@ -77,7 +77,7 @@ object HorizontalTree extends Logging {
 
 
       splits = Tree.findSplits[T, N, C, B, H](binVecBlocks, treeIdBlocks, nodeIdBlocks, gradBlocks, updater,
-        boostConf, bcBoostConf, treeConf, bcTreeConf, splits, remainingLeaves, depth)
+        boostConf, bcBoostConf, treeConf, bcTreeConf, splits, Map.empty, remainingLeaves, depth)
 
 
       // update trees

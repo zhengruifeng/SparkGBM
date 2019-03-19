@@ -89,9 +89,10 @@ object GreedierTree extends Logging {
       val gradBlocks = computeGradBlocks[T, N, C, B, H](auxilaryBlocks, weightBlocks, labelBlocks, bcBoostConf)
         .setName(s"Iter ${treeConf.iteration}, depth $depth: Grads")
 
+      val leafWeights = computeLeaveWeights[T, N, H](roots)
 
       splits = Tree.findSplits[T, N, C, B, H](binVecBlocks, treeIdBlocks, nodeIdBlocks, gradBlocks, updater,
-        boostConf, bcBoostConf, treeConf, bcTreeConf, splits, remainingLeaves, depth)
+        boostConf, bcBoostConf, treeConf, bcTreeConf, splits, leafWeights, remainingLeaves, depth)
 
 
       // update trees
@@ -122,6 +123,25 @@ object GreedierTree extends Logging {
     } else {
       roots.map(TreeModel.createModel)
     }
+  }
+
+
+  def computeLeaveWeights[T, N, H](roots: Array[LearningNode])
+                                  (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
+                                   cn: ClassTag[N], inn: Integral[N], nen: NumericExt[N],
+                                   ch: ClassTag[H], nuh: Numeric[H], neh: NumericExt[H]): Map[(T, N), H] = {
+
+    roots.iterator.zipWithIndex
+      .flatMap { case (root, id) =>
+        val treeId = int.fromInt(id)
+        root.nodeIterator.flatMap { node =>
+          if (node.isLeaf && node.prediction != 0) {
+            Iterator.single(((treeId, inn.fromInt(node.nodeId)), neh.fromFloat(node.prediction)))
+          } else {
+            Iterator.empty
+          }
+        }
+      }.toMap
   }
 
 
@@ -372,8 +392,8 @@ object GreedierTree extends Logging {
     gradBlocks.zipPartitions(treeIdBlocks) {
       case (gradBlockIter, treeIdBlockIter) =>
 
-        val pid = TaskContext.getPartitionId()
-        val rng = new XORShiftRandom(seed + pid)
+        val partId = TaskContext.getPartitionId()
+        val rng = new XORShiftRandom(seed + partId)
 
         val iter = Utils.zip2(gradBlockIter, treeIdBlockIter)
         val sum = mutable.OpenHashMap.empty[T, (H, H)]
@@ -418,7 +438,7 @@ object GreedierTree extends Logging {
     }, depth = boostConf.getAggregationDepth)
 
       .map { case (treeId, (gradSum, hessSum)) =>
-        val (weight, _) = Split.computeScore(nuh.toFloat(gradSum), nuh.toFloat(hessSum), boostConf)
+        val (weight, _) = Split.computeScore(nuh.toFloat(gradSum), nuh.toFloat(hessSum), None, boostConf)
         (int.toInt(treeId), weight)
       }.toMap
   }

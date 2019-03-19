@@ -255,7 +255,7 @@ private[gbm] class VoteHistogramUpdater[T, N, C, B, H] extends HistogramUpdater[
 
       val gainIter = Utils.validateKeyOrdering(iter).flatMap {
         case ((treeId, nodeId, colId), hist) =>
-          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, treeConf)
+          Split.split[H](inc.toInt(colId), hist.toArray, None, boostConf, treeConf)
             .map(s => ((treeId, nodeId), (colId, s.gain)))
       }
 

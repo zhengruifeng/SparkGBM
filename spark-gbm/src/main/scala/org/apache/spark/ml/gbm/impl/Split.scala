@@ -139,6 +139,7 @@ private[gbm] object Split extends Logging {
     */
   def split[@spec(Float, Double) H](colId: Int,
                                     hist: Array[H],
+                                    leafWeight: Option[H],
                                     boostConf: BoostConfig,
                                     treeConf: TreeConfig)
                                    (implicit nuh: Numeric[H]): Option[Split] = {
@@ -195,11 +196,11 @@ private[gbm] object Split extends Logging {
     }
 
     val split = if (colIsSeq) {
-      splitSeq(colId, gradSeq, hessSeq, boostConf)
+      splitSeq(colId, gradSeq, hessSeq, leafWeight.map(nuh.toFloat), boostConf)
     } else if (nnz <= boostConf.getMaxBruteBins) {
-      splitSetBrute(colId, gradSeq, hessSeq, boostConf)
+      splitSetBrute(colId, gradSeq, hessSeq, leafWeight.map(nuh.toFloat), boostConf)
     } else {
-      splitSetHeuristic(colId, gradSeq, hessSeq, boostConf)
+      splitSetHeuristic(colId, gradSeq, hessSeq, leafWeight.map(nuh.toFloat), boostConf)
     }
 
     if (split.isEmpty ||
@@ -243,10 +244,11 @@ private[gbm] object Split extends Logging {
   def splitSeq(colId: Int,
                gradSeq: Array[Float],
                hessSeq: Array[Float],
+               leafWeight: Option[Float],
                boostConf: BoostConfig): Option[SeqSplit] = {
     // missing go left
     // find best split on indices of [i0, i1, i2, i3, i4]
-    val search1 = seqSearch(gradSeq, hessSeq, boostConf)
+    val search1 = seqSearch(gradSeq, hessSeq, leafWeight, boostConf)
 
     val search2 = if (gradSeq.head == 0 && hessSeq.head == 0) {
       // if hist of missing value is zero
@@ -265,7 +267,7 @@ private[gbm] object Split extends Logging {
       System.arraycopy(hessSeq, 1, hessSeq, 0, hessSeq.length - 1)
       hessSeq(hessSeq.length - 1) = h0
 
-      seqSearch(gradSeq, hessSeq, boostConf)
+      seqSearch(gradSeq, hessSeq, leafWeight, boostConf)
     }
 
     (search1, search2) match {
@@ -301,6 +303,7 @@ private[gbm] object Split extends Logging {
   def splitSetHeuristic(colId: Int,
                         gradSeq: Array[Float],
                         hessSeq: Array[Float],
+                        leafWeight: Option[Float],
                         boostConf: BoostConfig): Option[SetSplit] = {
     // sort the hist according to the relevance of gain
     // [g0, g1, g2, g3], [h0, h1, h2, h3] -> [g1, g3, g0, g2], [h1, h3, h0, h2]
@@ -313,7 +316,7 @@ private[gbm] object Split extends Logging {
         grad / (hess + epsion)
       }.unzip3
 
-    val search = seqSearch(sortedGradSeq, sortedHessSeq, boostConf)
+    val search = seqSearch(sortedGradSeq, sortedHessSeq, leafWeight, boostConf)
 
     if (search.isEmpty) {
       return None
@@ -339,11 +342,12 @@ private[gbm] object Split extends Logging {
   def splitSetBrute(colId: Int,
                     gradSeq: Array[Float],
                     hessSeq: Array[Float],
+                    leafWeight: Option[Float],
                     boostConf: BoostConfig): Option[SetSplit] = {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
-    val (_, baseScore) = computeScore(gradSum, hessSum, boostConf)
+    val (_, baseScore) = computeScore(gradSum, hessSum, leafWeight, boostConf)
     if (!validate(baseScore)) {
       return None
     }
@@ -404,8 +408,8 @@ private[gbm] object Split extends Logging {
 
       if (hess1 >= boostConf.getMinNodeHess && hess2 >= boostConf.getMinNodeHess) {
 
-        val (weight1, score1) = computeScore(grad1, hess1, boostConf)
-        val (weight2, score2) = computeScore(grad2, hess2, boostConf)
+        val (weight1, score1) = computeScore(grad1, hess1, leafWeight, boostConf)
+        val (weight2, score2) = computeScore(grad2, hess2, leafWeight, boostConf)
 
         if (validate(weight1, score1, weight2, score2)) {
           val score = score1 + score2
@@ -470,11 +474,12 @@ private[gbm] object Split extends Logging {
     */
   def seqSearch(gradSeq: Array[Float],
                 hessSeq: Array[Float],
+                leafWeight: Option[Float],
                 boostConf: BoostConfig): Option[(Int, Float, Array[Float])] = {
     val gradSum = gradSeq.sum
     val hessSum = hessSeq.sum
 
-    val (_, baseScore) = computeScore(gradSum, hessSum, boostConf)
+    val (_, baseScore) = computeScore(gradSum, hessSum, leafWeight, boostConf)
     if (!validate(baseScore)) {
       return None
     }
@@ -501,8 +506,8 @@ private[gbm] object Split extends Logging {
 
         if (hessLeft >= boostConf.getMinNodeHess && hessRight >= boostConf.getMinNodeHess) {
 
-          val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, boostConf)
-          val (weightRight, scoreRight) = computeScore(gradRight, hessRight, boostConf)
+          val (weightLeft, scoreLeft) = computeScore(gradLeft, hessLeft, leafWeight, boostConf)
+          val (weightRight, scoreRight) = computeScore(gradRight, hessRight, leafWeight, boostConf)
 
           if (validate(weightLeft, scoreLeft, weightRight, scoreRight)) {
             val score = scoreLeft + scoreRight
@@ -544,26 +549,35 @@ private[gbm] object Split extends Logging {
     *
     * @param gradSum   sum of grad
     * @param hessSum   sum of hess
-    * @param boostConf boosting config info containing the regulization parameters
+    * @param boostConf boosting config info containing the regularization parameters
     * @return weight and score
     */
   def computeScore(gradSum: Float,
                    hessSum: Float,
+                   leafWeight: Option[Float],
                    boostConf: BoostConfig): (Float, Float) = {
+
+    val gradSum2 = if (leafWeight.nonEmpty) {
+      gradSum + leafWeight.get * boostConf.getRegLambda
+    } else {
+      gradSum
+    }
+
     if (boostConf.getRegAlpha == 0) {
-      val weight = -gradSum / (hessSum + boostConf.getRegLambda)
-      val loss = (hessSum + boostConf.getRegLambda) * weight * weight + gradSum * weight * 2
+      val weight = -gradSum2 / (hessSum + boostConf.getRegLambda)
+      val loss = (hessSum + boostConf.getRegLambda) * weight * weight + gradSum2 * weight * 2
       (weight.toFloat, -loss.toFloat)
 
     } else {
-      val weight = if (gradSum + boostConf.getRegAlpha < 0) {
-        -(boostConf.getRegAlpha + gradSum) / (hessSum + boostConf.getRegLambda)
-      } else if (gradSum - boostConf.getRegAlpha > 0) {
-        (boostConf.getRegAlpha - gradSum) / (hessSum + boostConf.getRegLambda)
+
+      val weight = if (gradSum2 + boostConf.getRegAlpha < 0) {
+        -(boostConf.getRegAlpha + gradSum2) / (hessSum + boostConf.getRegLambda)
+      } else if (gradSum2 - boostConf.getRegAlpha > 0) {
+        (boostConf.getRegAlpha - gradSum2) / (hessSum + boostConf.getRegLambda)
       } else {
         0.0
       }
-      val loss = (hessSum + boostConf.getRegLambda) * weight * weight + gradSum * weight * 2 +
+      val loss = (hessSum + boostConf.getRegLambda) * weight * weight + gradSum2 * weight * 2 +
         boostConf.getRegAlpha * weight.abs * 2
       (weight.toFloat, -loss.toFloat)
     }

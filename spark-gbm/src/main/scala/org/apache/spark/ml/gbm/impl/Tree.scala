@@ -188,6 +188,7 @@ private[gbm] object Tree extends Logging {
                                 treeConf: TreeConfig,
                                 bcTreeConf: Broadcast[TreeConfig],
                                 splits: Map[(T, N), Split],
+                                leaveWeights: Map[(T, N), H],
                                 remainingLeaves: Array[Int],
                                 depth: Int)
                                (implicit ct: ClassTag[T], int: Integral[T], net: NumericExt[T],
@@ -223,7 +224,7 @@ private[gbm] object Tree extends Logging {
         }
 
         findSplitsImpl[T, N, C, B, H](sampledHistograms, boostConf, bcBoostConf,
-          treeConf, bcTreeConf, remainingLeaves, depth)
+          treeConf, bcTreeConf, leaveWeights, remainingLeaves, depth)
 
 
       case _ =>
@@ -281,7 +282,7 @@ private[gbm] object Tree extends Logging {
           .setName(s"Iter ${treeConf.iteration}, depth $depth: Histograms")
 
         findSplitsImpl[T, N, C, B, H](histograms, boostConf, bcBoostConf,
-          treeConf, bcTreeConf, remainingLeaves, depth)
+          treeConf, bcTreeConf, leaveWeights, remainingLeaves, depth)
     }
   }
 
@@ -297,6 +298,7 @@ private[gbm] object Tree extends Logging {
                                     bcBoostConf: Broadcast[BoostConfig],
                                     treeConf: TreeConfig,
                                     bcTreeConf: Broadcast[TreeConfig],
+                                    leaveWeights: Map[(T, N), H],
                                     remainingLeaves: Array[Int],
                                     depth: Int)
                                    (implicit ct: ClassTag[T], int: Integral[T],
@@ -305,6 +307,7 @@ private[gbm] object Tree extends Logging {
                                     cb: ClassTag[B], inb: Integral[B],
                                     ch: ClassTag[H], nuh: Numeric[H]): Map[(T, N), Split] = {
     val sc = histograms.sparkContext
+    val bcLeaveWeights = sc.broadcast(leaveWeights)
     val bcRemainingLeaves = sc.broadcast(remainingLeaves)
 
 
@@ -312,6 +315,7 @@ private[gbm] object Tree extends Logging {
       histograms.mapPartitionsWithIndex { case (partId, iter) =>
         val boostConf = bcBoostConf.value
         val treeConf = bcTreeConf.value
+        val leaveWeights = bcLeaveWeights.value
 
         val splits = mutable.OpenHashMap.empty[(T, N), Split]
 
@@ -330,7 +334,9 @@ private[gbm] object Tree extends Logging {
             numDenses += 1
           }
 
-          Split.split[H](inc.toInt(colId), hist.toArray, boostConf, treeConf)
+          val leafWeight = leaveWeights.get((treeId, nodeId))
+
+          Split.split[H](inc.toInt(colId), hist.toArray, leafWeight, boostConf, treeConf)
             .foreach { split =>
               numSplits += 1
               val prevSplit = splits.get((treeId, nodeId))
@@ -384,7 +390,8 @@ private[gbm] object Tree extends Logging {
       s"fraction of sparse vectors: ${1 - numDenses.toDouble / numTrials}, " +
       s"sparsity of histogram elements: ${1 - nnz.toDouble / sumSize}")
 
-    bcRemainingLeaves.destroy(true)
+    bcLeaveWeights.destroy(false)
+    bcRemainingLeaves.destroy(false)
 
     splits.toMap
   }

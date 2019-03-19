@@ -115,7 +115,7 @@ object VerticalTree extends Logging {
 
 
       splits = Tree.findSplitsImpl[T, N, C, B, H](histograms, boostConf, bcBoostConf,
-        treeConf, bcTreeConf, remainingLeaves, depth)
+        treeConf, bcTreeConf, Map.empty, remainingLeaves, depth)
 
 
       // update trees

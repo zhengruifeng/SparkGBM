@@ -24,7 +24,7 @@ object GBMTest {
       .getOrCreate
 
     spark.sparkContext.setLogLevel("DEBUG")
-    spark.sparkContext.setCheckpointDir("/tmp/sparkGBM/checkpoints")
+    spark.sparkContext.setCheckpointDir(s"/tmp/sparkGBM/${spark.sparkContext.applicationId}/checkpoints/")
 
 
     println(s"args: ${args.mkString(",")}")

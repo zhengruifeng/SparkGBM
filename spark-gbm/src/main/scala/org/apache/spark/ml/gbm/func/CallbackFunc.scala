@@ -126,7 +126,7 @@ class ModelCheckpoint(val interval: Int,
         val tic = System.nanoTime()
         val spark = boostConf.getSparkSession
 
-        val currentPath = new Path(path, s"model-${model.numTrees}").toString
+        val currentPath = new Path(path, s"model-$iteration-${model.numTrees}").toString
         GBMModel.save(spark, model, currentPath)
         (System.nanoTime() - tic) / 1e9
 
@@ -168,7 +168,7 @@ class ClassificationModelCheckpoint(val interval: Int,
         val tic = System.nanoTime()
         val spark = boostConf.getSparkSession
 
-        val currentPath = new Path(path, s"model-$iteration").toString
+        val currentPath = new Path(path, s"model-$iteration-${model.numTrees}").toString
 
         DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
 
@@ -220,7 +220,7 @@ class RegressionModelCheckpoint(val interval: Int,
         val tic = System.nanoTime()
         val spark = boostConf.getSparkSession
 
-        val currentPath = new Path(path, s"model-$iteration").toString
+        val currentPath = new Path(path, s"model-$iteration-${model.numTrees}").toString
 
         DefaultParamsWriter.saveMetadata(params, currentPath, spark.sparkContext, None)
 

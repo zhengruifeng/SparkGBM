@@ -80,9 +80,9 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
       checkpointQueue.enqueue(data)
       // Remove checkpoints before the latest one.
       var canDelete = true
-      while (checkpointQueue.length > 3 && canDelete) {
+      while (checkpointQueue.length > 1 && canDelete) {
         // Delete the oldest checkpoint only if the next checkpoint exists.
-        if (checkpointQueue.head.isCheckpointed) {
+        if (checkpointQueue.tail.head.isCheckpointed) {
           Utils.removeCheckpointFile(checkpointQueue.dequeue, false)
         } else {
           canDelete = false

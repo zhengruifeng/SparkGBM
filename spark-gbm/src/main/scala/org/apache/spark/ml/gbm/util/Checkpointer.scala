@@ -41,12 +41,14 @@ import org.apache.spark.storage.StorageLevel
 private[gbm] class Checkpointer[T](val sc: SparkContext,
                                    val checkpointInterval: Int,
                                    val storageLevel: StorageLevel,
-                                   val maxPersisted: Int) extends Logging {
+                                   val maxPersisted: Int,
+                                   val maxCheckpointed: Int) extends Logging {
   def this(sc: SparkContext, checkpointInterval: Int, storageLevel: StorageLevel) =
-    this(sc, checkpointInterval, storageLevel, 2)
+    this(sc, checkpointInterval, storageLevel, 2, 3)
 
   require(storageLevel != StorageLevel.NONE)
   require(maxPersisted > 1)
+  require(maxCheckpointed > 2)
 
   /** FIFO queue of past checkpointed Datasets */
   private val checkpointQueue = mutable.Queue.empty[RDD[T]]
@@ -80,7 +82,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
       checkpointQueue.enqueue(data)
       // Remove checkpoints before the latest one.
       var canDelete = true
-      while (checkpointQueue.length > 1 && canDelete) {
+      while (checkpointQueue.length > maxCheckpointed && canDelete) {
         // Delete the oldest checkpoint only if the next checkpoint exists.
         if (checkpointQueue.tail.head.isCheckpointed) {
           Utils.removeCheckpointFile(checkpointQueue.dequeue, false)

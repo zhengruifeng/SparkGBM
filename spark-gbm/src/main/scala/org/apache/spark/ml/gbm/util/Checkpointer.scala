@@ -44,7 +44,7 @@ private[gbm] class Checkpointer[T](val sc: SparkContext,
                                    val maxPersisted: Int,
                                    val maxCheckpointed: Int) extends Logging {
   def this(sc: SparkContext, checkpointInterval: Int, storageLevel: StorageLevel) =
-    this(sc, checkpointInterval, storageLevel, 2, 2)
+    this(sc, checkpointInterval, storageLevel, 3, 3)
 
   require(storageLevel != StorageLevel.NONE)
   require(maxPersisted > 1)

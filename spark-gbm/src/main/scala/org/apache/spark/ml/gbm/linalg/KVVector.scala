@@ -483,26 +483,24 @@ class SparseKVVector[@spec(Byte, Short, Int) K, @spec(Byte, Short, Int, Long, Fl
   override def iterator()
                        (implicit ink: Integral[K],
                         nuv: Numeric[V]): Iterator[(K, V)] = {
-    val size_ = size
+    val localIndices = indices
+    val localValues = values
+    val localSize = size
+    val localNumActives = localIndices.length
 
     new Iterator[(K, V)]() {
       private var i = 0
       private var j = 0
+      private var k = indices.headOption.map(ink.toInt).getOrElse(-1)
 
-      override def hasNext: Boolean = i < size_
+      override def hasNext: Boolean = i < localSize
 
       override def next: (K, V) = {
-        val v = if (j == indices.length) {
-          nuv.zero
-        } else {
-          val k = ink.toInt(indices(j))
-          if (i == k) {
-            j += 1
-            values(j - 1)
-          } else {
-            nuv.zero
-          }
-        }
+        val v = if (i == k) {
+          j += 1
+          k = if (j < localNumActives) ink.toInt(localIndices(j)) else -1
+          localValues(j - 1)
+        } else nuv.zero
         i += 1
         (ink.fromInt(i - 1), v)
       }

@@ -22,7 +22,7 @@ private[gbm] class PartitionConcatenatedRDDPartition[T](val index: Int,
   */
 private[gbm] class PartitionConcatenatedRDD[T: ClassTag](@transient val parent: RDD[T],
                                                          val partIds: Array[Array[Int]]) extends RDD[T](parent) {
-  require(partIds.iterator.flatten
+  require(partIds.iterator.flatMap(t => t.iterator)
     .forall(p => p >= 0 && p < parent.getNumPartitions))
 
   override def compute(split: Partition, context: TaskContext): Iterator[T] = {

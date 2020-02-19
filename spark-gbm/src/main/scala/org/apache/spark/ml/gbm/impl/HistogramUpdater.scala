@@ -397,7 +397,7 @@ private[gbm] object HistogramUpdater extends Logging {
   /**
     * Compute the histogram of nodes
     *
-    * @param filterNodeId function to filter nodeIds
+    * @param nodeIdFilter function to filter nodeIds
     * @return histogram data containing (treeId, nodeId, columnId, histogram)
     */
   def computeHistogramsVertical[T, N, C, B, H](binVecBlocks: RDD[KVMatrix[C, B]],
